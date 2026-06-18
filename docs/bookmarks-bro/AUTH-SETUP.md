@@ -182,3 +182,37 @@ Extension: Chrome → Load unpacked → `extensions/bookmarks-bro/` (manifest ve
 | `ADMIN-MULTIUSER.md` | Workspaces, Telegram |
 | `TESTING.md` | Smoke tests, extension |
 | `ops/bookmarks-bro-supabase/README.md` | BB stack ops (RU) |
+
+---
+
+## 11. Antigravity bootstrap (clone + tools)
+
+**Primary mirror repo** (Antigravity should clone this):
+
+```bash
+git clone -b bookmarks-bro https://github.com/autorotech-tech/AuthRAG.git
+cd AuthRAG
+bash scripts/link-antigravity-skills.sh    # from synced website scripts
+bash scripts/setup-understand-anything.sh  # code map skills
+```
+
+**Read first:** `docs/bookmarks-bro/ANTIGRAVITY-HANDOFF.md` → paste entire file into Antigravity chat.
+
+| Need | Doc / command |
+|------|----------------|
+| Architecture Swoop × Keept | `ANTIGRAVITY-SWOOP-KEEPT.md` |
+| Phase 1 tasks | `ANTIGRAVITY-KEEPT-BRIEF.md` |
+| Auth & staging URLs (this file) | `AUTH-SETUP.md` |
+| Code map | `/understand src/bookmarksBro agent-api extensions/bookmarks-bro --language en` |
+| Local build | `npm install && npm run dev` (requires synced `package.json`, `src/`, Vite configs) |
+| Sync from Cursor | `npm run keept:sync-authrag:apply` in **website** repo |
+
+**Secrets:** never in git. Operator provides BB anon key via secure channel or VPS:
+
+```bash
+ssh vladx@46.250.228.229
+grep BOOKMARKS_ ~/website/.env
+# or BB stack dir: /home/vladx/supabase-bookmarks-bro/.env
+```
+
+Copy into local `.env` (gitignored) using placeholders from §3.

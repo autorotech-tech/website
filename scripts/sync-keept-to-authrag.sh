@@ -74,6 +74,7 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='GEMINI.md' \
   --include='DESIGN.md' \
   --include='.env.example' \
+  --include='.env.example.keept' \
   --include='package.json' \
   --include='package-lock.json' \
   --include='vite.config.ts' \
@@ -106,6 +107,11 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='scripts/link-antigravity-skills.sh' \
   --exclude='*' \
   "$WEBSITE_ROOT/" "$AUTHRAG_ROOT/"
+
+# AuthRAG root README (Antigravity entry point)
+if [[ -f "$WEBSITE_ROOT/docs/bookmarks-bro/AUTHRAG-README.md" ]]; then
+  cp "$WEBSITE_ROOT/docs/bookmarks-bro/AUTHRAG-README.md" "$AUTHRAG_ROOT/README.md"
+fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo

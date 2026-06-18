@@ -112,7 +112,7 @@ AuthRAG/                              # YOUR MIRROR (branch bookmarks-bro)
 
 ### Phase 1 open items (your priority)
 
-- [ ] `docs/bookmarks-bro/AUTH-SETUP.md` (EN) — **missing**
+- [x] `docs/bookmarks-bro/AUTH-SETUP.md` (EN) — staging URLs, env templates, OAuth, VPS access paths
 - [ ] `agent-api/schemas/categories.json` + `normalize_tags()` + tests — **missing**
 - [ ] Full **English** UI in `BookmarksBroApp.tsx`, extension HTML/JS
 - [ ] User-visible brand **Keep It For Me** / **Keept** (not "Bookmarks Bro")
