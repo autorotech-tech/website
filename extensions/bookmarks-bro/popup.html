@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bookmarks Bro</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: Arial, sans-serif;
+        box-sizing: border-box;
+      }
+      * { box-sizing: inherit; }
+      body {
+        width: 360px;
+        min-width: 360px;
+        max-width: none;
+        padding: 12px;
+        overflow-x: hidden;
+      }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      button {
+        width: 100%;
+        min-height: 40px;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        background: #4f46e5;
+        color: #fff;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      button.sync-primary {
+        font-weight: 700;
+        font-size: 14px;
+        min-height: 44px;
+        background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      }
+      #status { margin-top: 10px; font-size: 12px; color: #374151; white-space: pre-wrap; }
+      .hint {
+        margin: 0 0 10px;
+        font-size: 11px;
+        color: #64748b;
+        line-height: 1.35;
+      }
+      .row { display: flex; gap: 8px; margin-top: 8px; }
+      .row button { width: 100%; }
+      .muted { margin-top: 8px; font-size: 11px; color: #6b7280; line-height: 1.4; }
+      .search-wrap { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 8px 0; }
+      .search-wrap input { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 12px; }
+      .search-wrap button { width: auto; padding: 10px 12px; }
+      .link-btn { background: #0f172a; }
+      .outline-btn {
+        background: #fff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Bookmarks Bro</h1>
+    <p class="hint" id="buildHint"></p>
+    <p class="hint" id="authHint">Loading...</p>
+    <button type="button" id="syncBtn" class="sync-primary">Sync</button>
+    <div class="search-wrap">
+      <input id="aiTaskInput" type="text" placeholder="AI Search: what to find?" />
+      <button id="aiSearchBtn">AI Search</button>
+    </div>
+    <div class="row">
+      <select id="searchModeSelect" style="width:100%; min-height:40px; border:1px solid #d1d5db; border-radius:8px; padding:8px; font-size:12px; color:#0f172a; background:#fff;">
+        <option value="bookmarks">Search my bookmarks</option>
+        <option value="web_research">Web Research</option>
+      </select>
+    </div>
+    <div class="row">
+      <button type="button" id="appBtn" class="outline-btn">Knowledge App</button>
+      <button type="button" id="libraryBtn" class="outline-btn">Library</button>
+    </div>
+    <div class="row">
+      <button type="button" id="settingsBtn" class="link-btn">Settings</button>
+    </div>
+    <div class="row">
+      <button type="button" id="statusBtn">Job status</button>
+    </div>
+    <div class="muted">
+      Last Job: <span id="lastJob">—</span><br/>
+      Last Sync: <span id="lastSync">—</span>
+    </div>
+    <div id="status"></div>
+    <script src="extension-config.js"></script>
+    <script src="extension-api.js"></script>
+    <script src="oauth-helpers.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

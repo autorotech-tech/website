@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  agent-api:
+    environment:
+      # изолированный Auth/Postgres для Bookmarks Bro
+      - BOOKMARKS_SUPABASE_URL=${BOOKMARKS_SUPABASE_URL}
+      - BOOKMARKS_SUPABASE_ANON_KEY=${BOOKMARKS_SUPABASE_ANON_KEY}
+      - BOOKMARKS_PGHOST=${BOOKMARKS_PGHOST}
+      - BOOKMARKS_PGPORT=${BOOKMARKS_PGPORT}
+      - BOOKMARKS_PGDATABASE=${BOOKMARKS_PGDATABASE}
+      - BOOKMARKS_PGUSER=${BOOKMARKS_PGUSER}
+      - BOOKMARKS_PGPASSWORD=${BOOKMARKS_PGPASSWORD}
+    networks:
+      - bookmarks_bro_supabase_net
+
+networks:
+  bookmarks_bro_supabase_net:
+    external: true
+    name: bookmarks_bro_supabase_net
+

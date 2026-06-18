@@ -1,0 +1,540 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import { MultiKeyField } from './MultiKeyField'
+import { ApiKeyGroupsField, normalizeApiGroupId, type ApiKeyGroup } from './ApiKeyGroupsField'
+import {
+  Settings, Save, Loader2, AlertCircle, X, Key, Bot,
+  Copy, Eye, EyeOff, RefreshCw, Shield, ExternalLink,
+} from 'lucide-react'
+
+interface ServiceSettings {
+  gemini_api_key: string
+  gologin_api_token: string
+  agent_api_key: string
+  agent_enabled: boolean
+  agent_rate_limit: number
+  gemini_keys: string[]
+  groq_keys: string[]
+  glm_keys: string[]
+  openai_keys: string[]
+  openrouter_keys: string[]
+  openrouter_qwen_keys: string[]
+  brave_keys: string[]
+  tavily_keys: string[]
+  api_key_groups: ApiKeyGroup[]
+}
+
+function parseApiKeyGroups(raw: unknown): ApiKeyGroup[] {
+  if (!raw) return []
+  let arr: unknown[] = []
+  if (Array.isArray(raw)) arr = raw
+  else if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw)
+      arr = Array.isArray(p) ? p : []
+    } catch {
+      return []
+    }
+  } else return []
+  const out: ApiKeyGroup[] = []
+  for (let i = 0; i < arr.length; i++) {
+    const o = arr[i]
+    if (!o || typeof o !== 'object') continue
+    const rec = o as Record<string, unknown>
+    const id = normalizeApiGroupId(String(rec.id ?? `group_${i}`))
+    const name = String(rec.name ?? id).trim() || id
+    const keysRaw = rec.keys
+    const keys = Array.isArray(keysRaw)
+      ? keysRaw.map((k) => String(k).trim()).filter(Boolean)
+      : []
+    if (!id) continue
+    out.push({ id, name, keys })
+  }
+  return out
+}
+
+export function AdminSettings() {
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  const [settings, setSettings] = useState<ServiceSettings>({
+    gemini_api_key: '',
+    gologin_api_token: '',
+    agent_api_key: '',
+    agent_enabled: false,
+    agent_rate_limit: 30,
+    gemini_keys: [],
+    groq_keys: [],
+    glm_keys: [],
+    openai_keys: [],
+    openrouter_keys: [],
+    openrouter_qwen_keys: [],
+    brave_keys: [],
+    tavily_keys: [],
+    api_key_groups: [],
+  })
+
+  const [showGologin, setShowGologin] = useState(false)
+  const [showAgentKey, setShowAgentKey] = useState(false)
+
+  const fetchSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('service_settings')
+        .select('*')
+        .eq('id', 1)
+        .single()
+      if (error) throw error
+      if (data) {
+        setSettings({
+          gemini_api_key: data.gemini_api_key || '',
+          gologin_api_token: data.gologin_api_token || '',
+          agent_api_key: data.agent_api_key || '',
+          agent_enabled: data.agent_enabled ?? false,
+          agent_rate_limit: data.agent_rate_limit ?? 30,
+          gemini_keys: (data.gemini_keys || []).filter((k: string) => k && k.trim()),
+          groq_keys: (data.groq_keys || []).filter((k: string) => k && k.trim()),
+          glm_keys: (data.glm_keys || []).filter((k: string) => k && k.trim()),
+          openai_keys: (data.openai_keys || []).filter((k: string) => k && k.trim()),
+          openrouter_keys: (data.openrouter_keys || []).filter((k: string) => k && k.trim()),
+          openrouter_qwen_keys: (data.openrouter_qwen_keys || []).filter((k: string) => k && k.trim()),
+          brave_keys: (data.brave_keys || []).filter((k: string) => k && k.trim()),
+          tavily_keys: (data.tavily_keys || []).filter((k: string) => k && k.trim()),
+          api_key_groups: parseApiKeyGroups((data as Record<string, unknown>).api_key_groups),
+        })
+      }
+    } catch (e: any) {
+      console.error('Failed to fetch service settings', e)
+    }
+  }
+
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true)
+      try {
+        const { data: auth } = await supabase.auth.getUser()
+        const user = auth?.user
+        if (!user) { setLoading(false); return }
+        const { data: profile } = await supabase
+          .from('profiles').select('role').eq('id', user.id).single()
+        const admin = profile?.role === 'admin'
+        setIsAdmin(admin)
+        if (admin) await fetchSettings()
+      } catch (e: any) {
+        setError(e.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    init()
+  }, [])
+
+  const saveSettings = async (patch: Partial<ServiceSettings>) => {
+    setSaving(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const updated = { ...settings, ...patch, updated_at: new Date().toISOString() }
+      const { error } = await supabase
+        .from('service_settings')
+        .upsert({ id: 1, ...updated })
+      if (error) throw error
+      setSettings(updated as ServiceSettings)
+      setSuccess('Настройки сохранены')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (e: any) {
+      setError(e.message || 'Ошибка сохранения')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const generateAgentKey = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    const key = 'ak_' + Array.from({ length: 40 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+    setSettings(s => ({ ...s, agent_api_key: key }))
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setSuccess('Скопировано в буфер обмена')
+      setTimeout(() => setSuccess(null), 2000)
+    })
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-gray-700">
+        <Loader2 className="w-4 h-4 animate-spin" />
+        <span>Loading…</span>
+      </div>
+    )
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="p-4 text-red-600 flex items-center gap-2">
+        <AlertCircle className="w-4 h-4" />
+        <span>Access restricted to administrators only.</span>
+      </div>
+    )
+  }
+
+  const maskedKey = (key: string) => key ? key.slice(0, 8) + '•'.repeat(Math.min(key.length - 8, 20)) : ''
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <Settings className="w-6 h-6 text-gray-600" />
+          Service settings
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Global API keys are used by all services. If a specific service defines its own key, it has higher priority.
+        </p>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded bg-red-50 text-red-700 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-600">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {success && (
+        <div className="p-3 rounded bg-green-50 text-green-700 text-sm flex items-center gap-2">
+          <Shield className="w-4 h-4 shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
+
+      {/* Global API Keys */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-5">
+        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <Key className="w-5 h-5 text-amber-500" />
+          Global API keys
+        </h2>
+        <p className="text-xs text-gray-500">
+          These keys are used by default. If a specific service (Web Scraping, GoLogin) has its own key, it overrides the global one.
+        </p>
+        <p className="text-[11px] text-blue-800 bg-blue-50 border border-blue-100 rounded-md px-3 py-2">
+          DeerFlow на сервере подхватывает ключи из этой таблицы по расписанию (systemd timer): синхронизация{' '}
+          <code className="bg-white px-1 rounded">sync_swoop_models.py</code> (в т.ч. Tavily → SWOOP_TAVILY_KEYS) и обновление контейнеров gateway/langgraph.
+          См. каталог <code className="bg-white px-1 rounded">deploy/deer-flow-swoop-sync</code> в репозитории.
+          Именованные группы ключей дополнительно пишутся как <code className="bg-white px-1 rounded">SWOOP_API_GROUP_&lt;id&gt;_KEYS</code> (JSON-массив строк).
+        </p>
+
+        <div className="border-t border-gray-100 pt-5 space-y-2">
+          <h3 className="text-sm font-semibold text-gray-800">Группы API-ключей</h3>
+          <p className="text-[11px] text-gray-500">
+            Произвольные наборы ключей с собственным id для кастомных интеграций и DeerFlow. Порядок ключей задаёт ротацию при ошибках и лимитах.
+          </p>
+          <ApiKeyGroupsField
+            groups={settings.api_key_groups}
+            onChange={(api_key_groups) => setSettings((s) => ({ ...s, api_key_groups }))}
+            onCopy={copyToClipboard}
+          />
+        </div>
+
+        <MultiKeyField
+          label="Gemini API Keys"
+          description="Порядок важен: при ошибке одного ключа берётся следующий (ротация в воркерах и DeerFlow)."
+          keys={settings.gemini_keys}
+          onChange={(gemini_keys) => setSettings((s) => ({ ...s, gemini_keys }))}
+          newKeyPlaceholder="Новый ключ Gemini"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="Groq API Keys"
+          description="Используются воркерами и DeerFlow; ротация по списку."
+          keys={settings.groq_keys}
+          onChange={(groq_keys) => setSettings((s) => ({ ...s, groq_keys }))}
+          newKeyPlaceholder="Новый ключ Groq"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="Bigmodel (GLM) API Keys"
+          description="Один ключ на строку при массовой вставке; дубликаты пропускаются."
+          keys={settings.glm_keys}
+          onChange={(glm_keys) => setSettings((s) => ({ ...s, glm_keys }))}
+          newKeyPlaceholder="Новый ключ GLM"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="ChatGPT (OpenAI) API Keys"
+          description="Ключи OpenAI API для совместимых сервисов и DeerFlow."
+          keys={settings.openai_keys}
+          onChange={(openai_keys) => setSettings((s) => ({ ...s, openai_keys }))}
+          newKeyPlaceholder="Новый ключ OpenAI"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="OpenRouter API Keys"
+          description="Доступ к моделям через OpenRouter; несколько ключей — для ротации и лимитов."
+          keys={settings.openrouter_keys}
+          onChange={(openrouter_keys) => setSettings((s) => ({ ...s, openrouter_keys }))}
+          newKeyPlaceholder="Новый ключ OpenRouter"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="OpenRouter Qwen 3.6 Plus (free) API Keys"
+          description="Отдельный пул ключей для модели qwen/qwen3.6-plus-preview:free в DeerFlow. Если пусто — используется общий OpenRouter пул."
+          keys={settings.openrouter_qwen_keys}
+          onChange={(openrouter_qwen_keys) => setSettings((s) => ({ ...s, openrouter_qwen_keys }))}
+          newKeyPlaceholder="Новый ключ OpenRouter для Qwen"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="Brave Search API Keys"
+          description="Поисковые API; несколько ключей для распределения квот."
+          keys={settings.brave_keys}
+          onChange={(brave_keys) => setSettings((s) => ({ ...s, brave_keys }))}
+          newKeyPlaceholder="Новый ключ Brave"
+          onCopy={copyToClipboard}
+        />
+
+        <MultiKeyField
+          label="Tavily API Keys"
+          description="Веб-поиск и извлечение страниц в DeerFlow. При ошибке ключа (лимит, 401 и т.д.) используется следующий ключ по списку; если все недоступны — запасной Brave."
+          keys={settings.tavily_keys}
+          onChange={(tavily_keys) => setSettings((s) => ({ ...s, tavily_keys }))}
+          newKeyPlaceholder="tvly-..."
+          onCopy={copyToClipboard}
+        />
+
+        {/* GoLogin API Token */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-gray-700">GoLogin API Token</label>
+          <p className="text-[11px] text-gray-400">Used for GoLogin Cloud Browser and automation scenarios.</p>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showGologin ? 'text' : 'password'}
+                value={settings.gologin_api_token}
+                onChange={(e) => setSettings(s => ({ ...s, gologin_api_token: e.target.value }))}
+                placeholder="eyJhbGciOi..."
+                className="w-full border rounded-md px-3 py-2 text-sm font-mono pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowGologin(!showGologin)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showGologin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            {settings.gologin_api_token && (
+              <button onClick={() => copyToClipboard(settings.gologin_api_token)} className="p-2 rounded hover:bg-gray-100" title="Копировать">
+                <Copy className="w-4 h-4 text-gray-500" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              const firstGemini = settings.gemini_keys[0] || settings.gemini_api_key || ''
+              const api_key_groups = settings.api_key_groups.map((g, i) => ({
+                id: normalizeApiGroupId(g.id || `group_${i}`),
+                name: (g.name || g.id || `group_${i}`).trim(),
+                keys: g.keys.map((k) => k.trim()).filter(Boolean),
+              }))
+              saveSettings({
+                gemini_keys: settings.gemini_keys,
+                groq_keys: settings.groq_keys,
+                glm_keys: settings.glm_keys,
+                openai_keys: settings.openai_keys,
+                openrouter_keys: settings.openrouter_keys,
+                openrouter_qwen_keys: settings.openrouter_qwen_keys,
+                brave_keys: settings.brave_keys,
+                tavily_keys: settings.tavily_keys,
+                api_key_groups,
+                gemini_api_key: firstGemini,
+                gologin_api_token: settings.gologin_api_token,
+              })
+            }}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save keys
+          </button>
+        </div>
+      </div>
+
+      {/* Agent API Configuration */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-5">
+        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <Bot className="w-5 h-5 text-violet-500" />
+          Scraping Agent — Public API
+        </h2>
+        <p className="text-xs text-gray-500">
+          Public scraping API without user account. You can share it with clients or publish it on marketplaces.
+          Authentication is done via API key in the <code className="bg-gray-100 px-1 rounded">X-API-Key</code> header.
+        </p>
+
+        {/* Enable/Disable */}
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.agent_enabled}
+            onChange={(e) => {
+              const v = e.target.checked
+              setSettings(s => ({ ...s, agent_enabled: v }))
+              saveSettings({ agent_enabled: v })
+            }}
+            className="rounded border-gray-300 w-5 h-5 text-violet-600"
+          />
+          <div>
+            <span className="text-sm font-medium text-gray-900">Enable Agent API</span>
+            <p className="text-[11px] text-gray-400">When disabled, all API requests return 503.</p>
+          </div>
+        </label>
+
+        {/* Agent API Key */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-gray-700">API key for clients</label>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showAgentKey ? 'text' : 'password'}
+                value={settings.agent_api_key}
+                onChange={(e) => setSettings(s => ({ ...s, agent_api_key: e.target.value }))}
+                placeholder="ak_..."
+                className="w-full border rounded-md px-3 py-2 text-sm font-mono pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAgentKey(!showAgentKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showAgentKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <button onClick={generateAgentKey} className="inline-flex items-center gap-1 px-3 py-2 rounded-md border text-sm hover:bg-gray-50" title="Сгенерировать ключ">
+              <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
+              <span className="hidden md:inline text-gray-600">Generate</span>
+            </button>
+            {settings.agent_api_key && (
+              <button onClick={() => copyToClipboard(settings.agent_api_key)} className="p-2 rounded hover:bg-gray-100" title="Копировать">
+                <Copy className="w-4 h-4 text-gray-500" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Rate Limit */}
+        <div className="space-y-1.5">
+          <label className="block text-sm font-medium text-gray-700">Rate limit (per minute)</label>
+          <input
+            type="number" min={1} max={1000}
+            value={settings.agent_rate_limit}
+            onChange={(e) => setSettings(s => ({ ...s, agent_rate_limit: Math.max(1, Math.min(1000, Number(e.target.value))) }))}
+            className="w-32 border rounded-md px-3 py-2 text-sm"
+          />
+          <p className="text-[11px] text-gray-400">Maximum number of requests from one IP per minute.</p>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => saveSettings({
+              agent_api_key: settings.agent_api_key,
+              agent_enabled: settings.agent_enabled,
+              agent_rate_limit: settings.agent_rate_limit,
+            })}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            Save agent settings
+          </button>
+        </div>
+      </div>
+
+      {/* API Documentation */}
+      <div className="bg-white rounded-lg border border-gray-200 p-5 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+          <ExternalLink className="w-5 h-5 text-gray-500" />
+          API Documentation
+        </h2>
+
+        <div className="bg-gray-50 rounded-lg p-4 space-y-4 text-sm font-mono">
+          <div>
+            <div className="text-xs font-sans font-semibold text-gray-700 mb-1.5">Create scraping job</div>
+            <div className="text-emerald-700 font-medium">POST /api/v1/scrape</div>
+            <pre className="mt-2 text-xs text-gray-600 bg-white border rounded p-3 overflow-x-auto">{`Headers:
+  X-API-Key: ${settings.agent_api_key ? maskedKey(settings.agent_api_key) : '<your-api-key>'}
+  Content-Type: application/json
+
+Body:
+{
+  "url": "https://example.com",
+  "mode": "fetcher",           // fetcher | stealth | dynamic | gologin
+  "output_format": "markdown", // markdown | html | text
+  "selector": ".content",      // CSS/XPath (optional)
+  "ai_prompt": "Extract...",   // AI extraction (optional)
+  "urls": ["url1", "url2"],    // batch mode (optional)
+  "crawl_depth": 2,            // crawl mode (optional)
+  "max_pages": 20              // crawl mode (optional)
+}
+
+Response:
+{ "job_id": "uuid", "status": "queued" }`}</pre>
+          </div>
+
+          <div>
+            <div className="text-xs font-sans font-semibold text-gray-700 mb-1.5">Check job status / get result</div>
+            <div className="text-blue-700 font-medium">GET /api/v1/scrape/{'{job_id}'}</div>
+            <pre className="mt-2 text-xs text-gray-600 bg-white border rounded p-3 overflow-x-auto">{`Headers:
+  X-API-Key: <your-api-key>
+
+Response (in progress):
+{ "job_id": "uuid", "status": "running", "progress": {...} }
+
+Response (completed):
+{
+  "job_id": "uuid",
+  "status": "done",
+  "result_preview": "...",
+  "result_url": "/api/v1/scrape/<id>/download"
+}`}</pre>
+          </div>
+
+          <div>
+            <div className="text-xs font-sans font-semibold text-gray-700 mb-1.5">Download result</div>
+            <div className="text-amber-700 font-medium">GET /api/v1/scrape/{'{job_id}'}/download</div>
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-500">
+          Base URL: <code className="bg-gray-100 px-1.5 py-0.5 rounded">https://swoop.autoro.tech</code>
+        </p>
+
+        {/* Cascade explanation */}
+        <div className="bg-blue-50 border border-blue-200 rounded-md px-4 py-3">
+          <h4 className="text-sm font-medium text-blue-800 mb-1">API keys cascade</h4>
+          <p className="text-xs text-blue-700 leading-relaxed">
+            <strong>1.</strong> Service-level key (e.g. Web Scraping → GoLogin tab)<br />
+            <strong>2.</strong> Global keys on this page<br />
+            <strong>3.</strong> Environment variables (Docker env)
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}

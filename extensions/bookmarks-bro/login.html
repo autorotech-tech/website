@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bookmarks Bro — Login</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        color: #0f172a;
+        background: linear-gradient(160deg, #eef2ff, #f8fafc 35%, #ffffff);
+      }
+      .wrap {
+        min-height: 100vh;
+        box-sizing: border-box;
+        padding: max(16px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+        display: grid;
+        align-items: center;
+      }
+      .card {
+        width: min(460px, 100%);
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        box-shadow: 0 16px 36px rgba(15, 23, 42, 0.12);
+        padding: 16px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .muted {
+        margin: 0 0 14px;
+        color: #64748b;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .field {
+        margin-bottom: 10px;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: #475569;
+      }
+      .field input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        font-size: 16px;
+        min-height: 46px;
+        padding: 10px 12px;
+      }
+      .field input:focus {
+        outline: none;
+        border-color: #4f46e5;
+        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      button {
+        min-height: 44px;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      #cancelBtn {
+        background: #e2e8f0;
+        color: #334155;
+      }
+      #loginSubmitBtn {
+        background: linear-gradient(135deg, #4f46e5, #7c3aed);
+        color: #fff;
+      }
+      #signupBtn {
+        background: #0f172a;
+        color: #fff;
+      }
+      #error {
+        min-height: 18px;
+        margin-top: 10px;
+        font-size: 13px;
+        color: #dc2626;
+      }
+      #success {
+        min-height: 18px;
+        margin-top: 4px;
+        font-size: 13px;
+        color: #15803d;
+      }
+      @media (max-width: 520px) {
+        .card {
+          border-radius: 12px;
+          padding: 14px;
+        }
+        h1 {
+          font-size: 19px;
+        }
+        .actions {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <h1>Login</h1>
+        <p class="muted">Sign in with email/password to sync bookmarks across your devices.</p>
+        <div class="field">
+          <label for="emailInput">Email</label>
+          <input id="emailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="passwordInput">Password</label>
+          <input id="passwordInput" type="password" autocomplete="current-password" placeholder="••••••••" />
+        </div>
+        <div class="actions">
+          <button id="cancelBtn" type="button">Cancel</button>
+          <button id="loginSubmitBtn" type="button">Login</button>
+        </div>
+        <div class="oauth-stack" style="display:grid;gap:8px;margin-top:10px;">
+          <button id="googleOAuthBtn" type="button" style="width:100%;min-height:42px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:10px;font-weight:600;cursor:pointer;">Continue with Google</button>
+          <button id="azureOAuthBtn" type="button" style="width:100%;min-height:42px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:10px;font-weight:600;cursor:pointer;">Continue with Microsoft</button>
+        </div>
+        <div class="actions" style="margin-top:8px;">
+          <button id="signupBtn" type="button">Sign up</button>
+        </div>
+        <div id="error"></div>
+        <div id="success"></div>
+      </section>
+    </main>
+    <script src="extension-config.js"></script>
+    <script src="oauth-helpers.js"></script>
+    <script src="login.js"></script>
+  </body>
+  </html>

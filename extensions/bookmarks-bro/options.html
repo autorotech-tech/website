@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bookmarks Bro Settings</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+      h1 { font-size: 22px; margin: 0 0 6px; }
+      .hint { color: #475569; font-size: 13px; margin-bottom: 16px; }
+      .build { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+      .field { margin-bottom: 12px; }
+      label { display: block; font-size: 13px; margin-bottom: 6px; color: #111827; }
+      input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
+      .check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      button { border: none; border-radius: 8px; padding: 10px 14px; color: #fff; cursor: pointer; }
+      .save { background: #4f46e5; }
+      .test { background: #0f766e; }
+      .ensure { background: #0369a1; }
+      .app { background: #0f172a; }
+      #status { margin-top: 16px; white-space: pre-wrap; font-size: 13px; color: #334155; }
+    </style>
+  </head>
+  <body>
+    <h1>Bookmarks Bro Settings</h1>
+    <p class="build" id="buildLabel"></p>
+    <p class="hint">agent-api integration settings. User login is handled in the extension popup.</p>
+
+    <div class="field">
+      <label for="apiBase">API Base</label>
+      <input id="apiBase" type="text" placeholder="https://swoop.autoro.tech" />
+    </div>
+    <div class="field">
+      <label for="workspaceId">Workspace ID</label>
+      <input id="workspaceId" type="text" placeholder="1" />
+    </div>
+    <div class="field">
+      <label for="profileId">Profile ID</label>
+      <input id="profileId" type="text" placeholder="chrome-xxxx" />
+    </div>
+    <div class="field">
+      <label for="supabaseAuthPath">Supabase Auth Path</label>
+      <input id="supabaseAuthPath" type="text" placeholder="/bb-supabase" />
+    </div>
+    <label class="check">
+      <input type="checkbox" id="autoSync" />
+      Enable auto-sync every 30 minutes
+    </label>
+
+    <div class="actions">
+      <button id="saveBtn" class="save" type="button">Save Settings</button>
+      <button id="ensureBtn" class="ensure" type="button">Resolve workspace</button>
+      <button id="testBtn" class="test" type="button">Test Connection</button>
+      <button id="appBtn" class="app" type="button">Open Knowledge App</button>
+      <button id="logoutBtn" type="button" style="background:#991b1b;">Sign out</button>
+    </div>
+    <p class="hint" style="margin-top:10px">
+      Test Connection: bootstrap → metrics → GET workspace-ui-state. Resolve workspace triggers POST workspaces/ensure.
+    </p>
+    <div id="status"></div>
+
+    <script src="extension-config.js"></script>
+    <script src="extension-api.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

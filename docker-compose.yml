@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+    container_name: autoro-frontend
+    restart: always
+    environment:
+      - VIRTUAL_HOST=swoop.autoro.tech
+      - LETSENCRYPT_HOST=swoop.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+    networks:
+      - proxy
+      - default
+      - supabase_net
+      - supabase_real
+
+  scrapling-worker:
+    build: ./scrapling-worker
+    container_name: autoro-scrapling-worker
+    restart: always
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - PGHOST=${PGHOST}
+      - PGPORT=${PGPORT}
+      - PGDATABASE=${PGDATABASE}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      - SCRAPLING_RESULT_BUCKET=user_uploads
+      - SCRAPLING_RESULT_PREFIX=scrapling-results
+      - POLL_INTERVAL_SEC=5
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    networks:
+      - supabase_net
+      - supabase_real
+      - default
+
+  agent-api:
+    build: ./agent-api
+    container_name: autoro-agent-api
+    restart: always
+    environment:
+      - PGHOST=${PGHOST}
+      - PGPORT=${PGPORT}
+      - PGDATABASE=${PGDATABASE}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      # Auth signup/login/OAuth через Supabase Auth (обязательно для email и провайдеров):
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+      # Hermes / OpenAI-compatible chat: лимит completion (reasoning-модели иначе ~200 символов при 1200)
+      - BOOKMARKS_CHAT_MAX_TOKENS=${BOOKMARKS_CHAT_MAX_TOKENS:-8192}
+      # Bookmarks MVP (опционально; ключи LLM — в service_settings):
+      # - BOOKMARKS_LMARENA_API_BASE=http://lmarenabridge:8000/api/v1
+      # - BOOKMARKS_AI_ENRICH=1
+      # - BOOKMARKS_AI_ENRICH_MAX_CALLS=50
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # БЗ → Obsidian: server relay; Mac через Syncthing (вариант A):
+      - KNOWLEDGE_PIPELINE_ENRICH=1
+      - KNOWLEDGE_FETCH_URLS=1
+      - KNOWLEDGE_OBSIDIAN_SYNC=1
+      - KNOWLEDGE_OBSIDIAN_SYNC_MODE=syncthing
+      - KNOWLEDGE_OBSIDIAN_SYNC_LOCAL=0
+      - OBSIDIAN_SYNC_WEBHOOK_URL=http://autoro-obsidian-relay:8787/sync
+      - OBSIDIAN_SYNC_TOKEN=${OBSIDIAN_SYNC_TOKEN:-autoro_obsidian_sync_v1}
+      - OBSIDIAN_SYNC_WEBHOOK_URL_SECONDARY=${OBSIDIAN_SYNC_WEBHOOK_URL_SECONDARY:-}
+      - OBSIDIAN_SYNC_TOKEN_SECONDARY=${OBSIDIAN_SYNC_TOKEN_SECONDARY:-}
+      - OBSIDIAN_LOCAL_RELAY_URL=${OBSIDIAN_LOCAL_RELAY_URL:-}
+    networks:
+      - proxy
+      - supabase_net
+      - supabase_real
+      - default
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: autoro-searxng
+    restart: always
+    volumes:
+      - ./searxng-settings:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080
+    networks:
+      - default
+
+  deep-search-worker:
+    build: ./deep-search-worker
+    container_name: autoro-deep-search
+    restart: always
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BRAVE_API_KEY=${BRAVE_API_KEY}
+      - SEARXNG_URL=http://searxng:8080
+      - DEFAULT_MODEL=google/gemini-2.0-flash-001
+    networks:
+      - default
+      - supabase_net
+      - supabase_real
+    depends_on:
+      - searxng
+
+
+  obsidian-relay:
+    build: ./obsidian-relay
+    container_name: autoro-obsidian-relay
+    restart: always
+    environment:
+      - PORT=8787
+      - OBSIDIAN_VAULT_DIR=/data/obsidian-vault
+      - OBSIDIAN_SYNC_TOKEN=${OBSIDIAN_SYNC_TOKEN:-autoro_obsidian_sync_v1}
+    volumes:
+      - ${OBSIDIAN_VAULT_MOUNT:-/home/vladx/obsidian-vault}:/data/obsidian-vault
+    networks:
+      - default
+      - supabase_net
+
+networks:
+  proxy:
+    external: true
+  supabase_net:
+    name: vladx_anythingllm-n8n-bridge
+    external: true
+  supabase_real:
+    name: supabase_default
+    external: true

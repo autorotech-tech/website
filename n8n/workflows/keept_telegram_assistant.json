@@ -1,0 +1,1108 @@
+{
+  "id": "keept_telegram_assistant",
+  "name": "Keept Telegram Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "keept-telegram/:webhook_secret",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook_telegram_assistant",
+      "name": "WebhookTelegramAssistant",
+      "type": "n8n-nodes-base.webhook",
+      "webhookId": "keept-telegram-v1",
+      "typeVersion": 2.1,
+      "position": [
+        180,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ext_raw_update",
+              "name": "raw_update",
+              "value": "={{ $json.body }}",
+              "type": "object"
+            },
+            {
+              "id": "ext_raw_headers",
+              "name": "raw_headers",
+              "value": "={{ $json.headers }}",
+              "type": "object"
+            },
+            {
+              "id": "ext_update_id",
+              "name": "update_id",
+              "value": "={{ $json.body.update_id }}",
+              "type": "number"
+            },
+            {
+              "id": "ext_text",
+              "name": "text",
+              "value": "={{ (($json.body.message?.text || $json.body.edited_message?.text || $json.body.callback_query?.data || \"\").trim()) }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_has_text",
+              "name": "has_text",
+              "value": "={{ Boolean((($json.body.message?.text || $json.body.edited_message?.text || $json.body.callback_query?.data || \"\").trim())) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "ext_chat_id",
+              "name": "chat_id",
+              "value": "={{ $json.body.message?.chat?.id != null ? String($json.body.message.chat.id) : ($json.body.edited_message?.chat?.id != null ? String($json.body.edited_message.chat.id) : ($json.body.callback_query?.message?.chat?.id != null ? String($json.body.callback_query.message.chat.id) : \"\")) }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_sender_id",
+              "name": "sender_id",
+              "value": "={{ $json.body.message?.from?.id != null ? String($json.body.message.from.id) : ($json.body.edited_message?.from?.id != null ? String($json.body.edited_message.from.id) : ($json.body.callback_query?.from?.id != null ? String($json.body.callback_query.from.id) : \"\")) }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_message_id",
+              "name": "message_id",
+              "value": "={{ $json.body.message?.message_id ?? $json.body.edited_message?.message_id ?? $json.body.callback_query?.message?.message_id ?? null }}",
+              "type": "number"
+            },
+            {
+              "id": "ext_username",
+              "name": "username",
+              "value": "={{ $json.body.message?.from?.username || $json.body.edited_message?.from?.username || $json.body.callback_query?.from?.username || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_secret_valid",
+              "name": "secret_valid",
+              "value": "={{ (() => { const h = $json.headers || {}; const t = String(h['x-telegram-bot-api-secret-token'] || h['X-Telegram-Bot-Api-Secret-Token'] || '').trim(); const pathSecret = String($json.params?.webhook_secret || '').trim(); const systemSecret = String($env.TELEGRAM_WEBHOOK_SECRET || '').trim(); if (pathSecret === 'platform-bot') { return !systemSecret ? true : (t !== '' && t === systemSecret); } return t !== '' && t === pathSecret; })() }}",
+              "type": "boolean"
+            },
+            {
+              "id": "ext_reply_to_message_id",
+              "name": "reply_to_message_id",
+              "value": "={{ $json.body.message?.reply_to_message?.message_id ?? $json.body.edited_message?.reply_to_message?.message_id ?? null }}",
+              "type": "number"
+            },
+            {
+              "id": "ext_reply_to_text",
+              "name": "reply_to_text",
+              "value": "={{ $json.body.message?.reply_to_message?.text || $json.body.edited_message?.reply_to_message?.text || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_callback_query_id",
+              "name": "callback_query_id",
+              "value": "={{ $json.body.callback_query?.id || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_callback_data",
+              "name": "callback_data",
+              "value": "={{ $json.body.callback_query?.data || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "ext_callback_message_text",
+              "name": "callback_message_text",
+              "value": "={{ $json.body.callback_query?.message?.text || \"\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_extract_telegram_input",
+      "name": "Extract Telegram Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_secret_valid",
+              "leftValue": "={{$json[\"secret_valid\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_secret_valid",
+      "name": "Valid Telegram Secret?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_has_text",
+              "leftValue": "={{$json[\"has_text\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_has_text",
+      "name": "Has Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        870,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: Vectorize With Key Rotation\n// Использует this.helpers.httpRequest вместо fetch (в task runner fetch может быть недоступен).\n\nconst text = ($json.text || '').trim();\nconst supabaseUrl = String($env.SUPABASE_URL || 'https://swoop.autoro.tech/supabase').replace(/\\/$/, '');\nconst serviceRoleKey = String($env.SUPABASE_SERVICE_ROLE_KEY || '').trim();\nif (!supabaseUrl || !serviceRoleKey) {\n  throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY не заданы в env');\n}\n\nasync function fetchShim(url, init = {}) {\n  const method = (init.method || 'GET').toUpperCase();\n  const headers = { ...(init.headers || {}) };\n  let body = init.body;\n  if (typeof body === 'string') {\n    try {\n      body = JSON.parse(body);\n    } catch {\n      /* строка как есть */\n    }\n  }\n  const opts = {\n    method,\n    url,\n    headers,\n    json: true,\n    returnFullResponse: true,\n  };\n  if (body !== undefined && method !== 'GET' && method !== 'HEAD') {\n    opts.body = body;\n  }\n  try {\n    const full = await this.helpers.httpRequest(opts);\n    const statusCode = full.statusCode ?? full.status ?? 200;\n    return buildFetchLikeResponse(statusCode, full.body);\n  } catch (err) {\n    const statusCode =\n      err.statusCode ??\n      err.response?.status ??\n      err.status ??\n      err.cause?.statusCode ??\n      0;\n    const raw =\n      err.response?.body ??\n      err.error ??\n      err.message ??\n      '';\n    if (raw && typeof raw === 'object') {\n      return buildFetchLikeResponse(statusCode || 500, raw);\n    }\n    return buildFetchLikeResponse(statusCode || 500, String(raw));\n  }\n}\n\nfunction buildFetchLikeResponse(statusCode, rawBody) {\n  const ok = statusCode >= 200 && statusCode < 300;\n  let parsed = rawBody;\n  if (typeof rawBody === 'string') {\n    try {\n      parsed = JSON.parse(rawBody);\n    } catch {\n      parsed = rawBody;\n    }\n  }\n  return {\n    ok,\n    status: statusCode,\n    async json() {\n      return parsed;\n    },\n    async text() {\n      return typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody ?? '');\n    },\n  };\n}\n\nconst fetch = fetchShim.bind(this);\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.keyRotation) staticData.keyRotation = {};\n\nconst settingsUrl = `${supabaseUrl}/rest/v1/service_settings?id=eq.1&select=openai_keys,openrouter_keys,openrouter_default_model,api_key_groups`;\nconst settingsResp = await fetch(settingsUrl, {\n  method: 'GET',\n  headers: {\n    apikey: serviceRoleKey,\n    Authorization: `Bearer ${serviceRoleKey}`,\n  },\n});\nif (!settingsResp.ok) {\n  const debugBody = await settingsResp.text();\n  throw new Error(\n    `Не удалось загрузить service_settings: HTTP ${settingsResp.status} | debug=${JSON.stringify({\n      hasKey: Boolean(serviceRoleKey),\n      keyLen: serviceRoleKey.length,\n      looksJwt: serviceRoleKey.split('.').length === 3,\n      keyPrefix: serviceRoleKey.slice(0, 12),\n      urlHost: supabaseUrl.replace(/^https?:\\/\\//, '').split('/')[0],\n      bodyPreview: String(debugBody).slice(0, 180),\n    })}`,\n  );\n}\nconst settingsRows = await settingsResp.json();\nconst settings = Array.isArray(settingsRows) && settingsRows.length ? settingsRows[0] : {};\n\nconst normalizeKeys = (value) => {\n  if (Array.isArray(value)) return value.map((x) => String(x || '').trim()).filter(Boolean);\n  if (typeof value === 'string' && value.trim()) {\n    try {\n      const parsed = JSON.parse(value);\n      if (Array.isArray(parsed)) return parsed.map((x) => String(x || '').trim()).filter(Boolean);\n    } catch {}\n    return [value.trim()];\n  }\n  return [];\n};\n\nconst openaiKeys = normalizeKeys(settings.openai_keys);\nconst openrouterKeys = normalizeKeys(settings.openrouter_keys);\n\nfunction flattenApiKeyGroups(groups) {\n  if (!Array.isArray(groups)) return [];\n  const out = [];\n  const seen = new Set();\n  for (const item of groups) {\n    if (!item || typeof item !== 'object') continue;\n    for (const k of item.keys || []) {\n      const s = String(k || '').trim();\n      if (s && !seen.has(s)) {\n        seen.add(s);\n        out.push(s);\n      }\n    }\n  }\n  return out;\n}\n\nconst groupKeys = flattenApiKeyGroups(\n  Array.isArray(settings.api_key_groups)\n    ? settings.api_key_groups\n    : typeof settings.api_key_groups === 'string'\n      ? (() => {\n          try {\n            const p = JSON.parse(settings.api_key_groups);\n            return Array.isArray(p) ? p : [];\n          } catch {\n            return [];\n          }\n        })()\n      : [],\n);\n\nfunction mergeKeyPools(...lists) {\n  const seen = new Set();\n  const out = [];\n  for (const list of lists) {\n    for (const k of list) {\n      if (!k || seen.has(k)) continue;\n      seen.add(k);\n      out.push(k);\n    }\n  }\n  return out;\n}\n\nconst openaiPool = mergeKeyPools(openaiKeys, groupKeys);\nconst openrouterPool = mergeKeyPools(openrouterKeys, groupKeys);\n\nconst rotateAndGet = (provider, keys) => {\n  if (!keys.length) return { key: null, idx: -1 };\n  const cur = Number(staticData.keyRotation[provider] || 0) % keys.length;\n  return { key: keys[cur], idx: cur };\n};\nconst advance = (provider, keys) => {\n  if (!keys.length) return;\n  const cur = Number(staticData.keyRotation[provider] || 0) % keys.length;\n  staticData.keyRotation[provider] = (cur + 1) % keys.length;\n};\n\nasync function embedWithOpenAI(keys) {\n  const maxAttempts = Math.min(keys.length, 6);\n  let lastErr = null;\n  for (let i = 0; i < maxAttempts; i++) {\n    const { key, idx } = rotateAndGet('openai', keys);\n    if (!key) break;\n    const resp = await fetch('https://api.openai.com/v1/embeddings', {\n      method: 'POST',\n      headers: {\n        Authorization: `Bearer ${key}`,\n        'Content-Type': 'application/json',\n      },\n      body: JSON.stringify({\n        model: 'text-embedding-3-small',\n        input: text.slice(0, 8000),\n      }),\n    });\n\n    if (resp.ok) {\n      const body = await resp.json();\n      const emb = body?.data?.[0]?.embedding;\n      if (!Array.isArray(emb) || emb.length === 0) throw new Error('OpenAI вернул пустой embedding');\n      return { provider: 'openai', key_slot: idx + 1, total_keys: keys.length, embedding: emb };\n    }\n\n    const errText = await resp.text();\n    lastErr = `openai slot ${idx + 1}: HTTP ${resp.status} ${errText.slice(0, 300)}`;\n    if (resp.status === 429 || resp.status === 402 || /rate|quota|limit/i.test(errText)) {\n      advance('openai', keys);\n      continue;\n    }\n    throw new Error(lastErr);\n  }\n  throw new Error(lastErr || 'Нет рабочих OpenAI ключей');\n}\n\nasync function embedWithOpenRouter(keys, model) {\n  const maxAttempts = Math.min(keys.length, 6);\n  let lastErr = null;\n  for (let i = 0; i < maxAttempts; i++) {\n    const { key, idx } = rotateAndGet('openrouter', keys);\n    if (!key) break;\n    const resp = await fetch('https://openrouter.ai/api/v1/embeddings', {\n      method: 'POST',\n      headers: {\n        Authorization: `Bearer ${key}`,\n        'Content-Type': 'application/json',\n      },\n      body: JSON.stringify({\n      model: model || 'openai/text-embedding-3-small',\n        input: text.slice(0, 8000),\n      }),\n    });\n\n    if (resp.ok) {\n      const body = await resp.json();\n      const emb = body?.data?.[0]?.embedding;\n      if (!Array.isArray(emb) || emb.length === 0) throw new Error('OpenRouter вернул пустой embedding');\n      return { provider: 'openrouter', key_slot: idx + 1, total_keys: keys.length, embedding: emb };\n    }\n\n    const errText = await resp.text();\n    lastErr = `openrouter slot ${idx + 1}: HTTP ${resp.status} | debug=${JSON.stringify({\n      model: model || 'openai/text-embedding-3-small',\n      inputLength: text.slice(0, 8000).length,\n      keySlot: idx + 1,\n      totalKeys: keys.length,\n      bodyPreview: String(errText).slice(0, 300),\n    })}`;\n    if (resp.status === 429 || resp.status === 402 || /rate|quota|limit/i.test(errText)) {\n      advance('openrouter', keys);\n      continue;\n    }\n    throw new Error(lastErr);\n  }\n  throw new Error(lastErr || 'Нет рабочих OpenRouter ключей');\n}\n\nlet embedResult;\nif (openaiPool.length) {\n  embedResult = await embedWithOpenAI(openaiPool);\n} else if (openrouterPool.length) {\n  // Для endpoint /embeddings нужен embedding model, а не chat default model.\n  embedResult = await embedWithOpenRouter(openrouterPool, 'openai/text-embedding-3-small');\n} else {\n  throw new Error('В service_settings нет openai_keys/openrouter_keys/api_key_groups для векторизации');\n}\n\nconst vectorLiteral = `[${embedResult.embedding.map((v) => Number(v).toFixed(7)).join(',')}]`;\n\nreturn [\n  {\n    ...$json,\n    vector_literal: vectorLiteral,\n    embedding_provider: embedResult.provider,\n    embedding_key_slot: embedResult.key_slot,\n    embedding_total_keys: embedResult.total_keys,\n  },\n];\n"
+      },
+      "id": "code_vectorize_with_rotation",
+      "name": "Vectorize With Key Rotation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.AGENT_API_URL || 'https://swoop.autoro.tech').replace(/\\/$/, '') + '/api/v1/knowledge/capture' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.TELEGRAM_WEBHOOK_SECRET || '') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({\n  workspaceId: $node[\"Resolve Workspace\"].json[\"workspace_id\"],\n  source: 'telegram',\n  originalSender: '@' + ($json.username || 'unknown'),\n  text: $json.normalized_text || $json.text,\n  title: $json.memory_topic || 'Telegram memory',\n  category: $json.memory_kind || 'general',\n  tags: [$json.memory_topic || 'general'],\n  enrich: true\n}) }}",
+        "options": {}
+      },
+      "id": "http_store_memory",
+      "name": "Store Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = Array.isArray($json) ? ($json[0] || {}) : ($json || {});\nconst now = new Date().toISOString();\n\nlet memory_kind = 'idea';\nlet memory_topic = 'general';\ntry {\n  const classifyNode = $items('Classify & Normalize Message', 0, 0) || [];\n  memory_kind = classifyNode[0]?.json?.memory_kind || 'idea';\n  memory_topic = classifyNode[0]?.json?.memory_topic || 'general';\n} catch(e) {}\n\nconst text = [\n  'Message saved to Keep It For Me',\n  '',\n  'Details:',\n  '• Type: ' + memory_kind,\n  '• Topic: ' + memory_topic,\n  '• Workspace: ' + (res.workspaceId || 'Default'),\n  '• Item ID: ' + (res.knowledgeItemId || 'n/a'),\n  '• Obsidian Sync: ' + (res.obsidianSync?.ok ? 'Synced' : 'Skipped/Error'),\n  '',\n  'Next steps:',\n  '1. The message is now indexed and searchable.',\n  '2. You can query or search it anytime in the Keept.me web app.',\n  '',\n  'Updated: ' + now\n].join('\\n');\n\nreturn [\n  {\n    json: {\n      ...res,\n      chat_id: $node[\"Extract Telegram Input\"].json.chat_id,\n      confirmation_text: text\n    }\n  }\n];"
+      },
+      "id": "code_build_confirmation",
+      "name": "Build Structured Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1610,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + ($node[\"Resolve Workspace\"].json[\"bot_token\"] || $env.TELEGRAM_BOT_TOKEN || '') + '/sendMessage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const isCommand = Boolean($json.command_detected);\n  const chatId = String($json.chat_id || ($json.metadata && $json.metadata.chat_id) || '').trim();\n  const text = isCommand\n    ? String($json.ai_answer_markdown || $json.ai_answer || 'Готово.').slice(0, 3900)\n    : String($json.confirmation_text || 'Память сохранена.').slice(0, 3900);\n\n  const body = {\n    chat_id: chatId,\n    text,\n    disable_web_page_preview: true\n  };\n\n  body.reply_markup = { remove_keyboard: true };\n\n  return body;\n})() }}",
+        "options": {}
+      },
+      "id": "http_send_confirmation",
+      "name": "Send Telegram Confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1850,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ ok: true, accepted: true, update_id: $json.update_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond_ok",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": false,\n  \"ignored\": true,\n  \"reason\": \"invalid_telegram_webhook_secret\"\n}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond_bad_secret",
+      "name": "Respond Bad Secret",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"ignored\": true,\n  \"reason\": \"no_text_message\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond_ignored",
+      "name": "Respond Ignored",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalText = String($json.text || '').trim();\n\nfunction compactWhitespace(s) {\n  return String(s || '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\s*([,.;:!?])\\s*/g, '$1 ')\n    .replace(/\\s+$/g, '')\n    .trim();\n}\n\nfunction normalizeVoiceNoise(text) {\n  return compactWhitespace(text)\n    .replace(/^(ну|короче|так|типа|значит)\\s+/i, '')\n    .replace(/\\bпожалуйста\\b/gi, '')\n    .trim();\n}\n\nfunction detectKind(text) {\n  const t = text.toLowerCase();\n\n  const taskSignals = ['сделать', 'сделай', 'нужно', 'надо', 'задача', 'дедлайн', 'срок', 'todo', 'to do', 'выполни'];\n  const planSignals = ['план', 'этап', 'дорожн', 'roadmap', 'шаг', 'стратег'];\n  const ideaSignals = ['идея', 'гипотез', 'можно', 'предлагаю', 'концепц'];\n  const instructionSignals = ['инструкция', 'как', 'гайд', 'manual', 'шаблон', 'правило'];\n  const researchSignals = ['исследуй', 'ресерч', 'research', 'проанализируй', 'сравни'];\n\n  if (researchSignals.some((k) => t.includes(k))) return 'research';\n  if (taskSignals.some((k) => t.includes(k))) return 'task';\n  if (planSignals.some((k) => t.includes(k))) return 'plan';\n  if (ideaSignals.some((k) => t.includes(k))) return 'idea';\n  if (instructionSignals.some((k) => t.includes(k))) return 'instruction';\n  return 'idea';\n}\n\nfunction extractTopic(text) {\n  const stop = new Set([\n    'и','в','во','на','по','для','как','что','это','этот','эта','или','а','но','к','ко','с','со','из','у','о','об','про','нужно','надо','сделать','сделай','план','идея','задача','давай','хочу','надо'\n  ]);\n\n  const words = text\n    .toLowerCase()\n    .replace(/[^\\p{L}\\p{N}\\s-]/gu, ' ')\n    .split(/\\s+/)\n    .map((w) => w.trim())\n    .filter((w) => w.length >= 3 && !stop.has(w));\n\n  const uniq = [];\n  for (const w of words) {\n    if (!uniq.includes(w)) uniq.push(w);\n    if (uniq.length >= 4) break;\n  }\n\n  return uniq.length ? uniq.join(' / ') : 'general';\n}\n\nfunction shortSentences(text, max = 3) {\n  return text\n    .split(/(?<=[.!?])\\s+/)\n    .map((s) => compactWhitespace(s))\n    .filter(Boolean)\n    .slice(0, max);\n}\n\nfunction normalize(kind, text, topic) {\n  const clean = normalizeVoiceNoise(text);\n  const chunks = shortSentences(clean, 3);\n  const body = chunks.join(' ');\n\n  switch (kind) {\n    case 'research':\n      return `Research: ${body || clean}.\\nFocus: ${topic}.`;\n    case 'task':\n      return `Task: ${body || clean}.\\nContext: ${topic}.`;\n    case 'plan':\n      return `Plan: ${body || clean}.\\nFocus: ${topic}.`;\n    case 'instruction':\n      return `Instruction: ${body || clean}.\\nContext: ${topic}.`;\n    case 'idea':\n    default:\n      return `Idea: ${body || clean}.\\nValue: ${topic}.`;\n  }\n}\n\nfunction resolveObsidianBranch(kind) {\n  switch (kind) {\n    case 'task':\n      return 'Inbox/Tasks';\n    case 'plan':\n      return 'Inbox/Plans';\n    case 'instruction':\n      return 'Inbox/Instructions';\n    case 'research':\n      return 'Inbox/Research';\n    case 'idea':\n    default:\n      return 'Inbox/Ideas';\n  }\n}\n\nconst memory_kind = detectKind(originalText);\nconst memory_topic = extractTopic(originalText);\nconst normalized_text = normalize(memory_kind, originalText, memory_topic);\nconst obsidian_branch = resolveObsidianBranch(memory_kind);\nconst obsidian_note_path = `${obsidian_branch}/${new Date().toISOString().slice(0,10)}-${memory_topic.replace(/\\s*\\/\\s*/g,'-').replace(/[^\\p{L}\\p{N}-]/gu,'').slice(0,60) || 'general'}.md`;\n\nreturn [\n  {\n    ...$json,\n    original_text: originalText,\n    memory_kind,\n    memory_topic,\n    normalized_text,\n    obsidian_branch,\n    obsidian_note_path,\n    text: normalized_text,\n  },\n];\n"
+      },
+      "id": "code_classify_normalize_message",
+      "name": "Classify & Normalize Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceText = String($json.original_text || $json.text || '').trim();\nconst replyToText = String($json.reply_to_text || '').trim();\nconst callbackMessageText = String($json.callback_message_text || '').trim();\n\nfunction compact(s) {\n  return String(s || '').replace(/\\s+/g, ' ').trim();\n}\n\nfunction escapeMdV2(text) {\n  return String(text || '').replace(/[_*\\[\\]()~`>#+\\-=|{}.!\\\\]/g, '\\\\$&');\n}\n\nfunction buildMarkdownMessage(title, lines = []) {\n  const safeTitle = `*${escapeMdV2(title)}*`;\n  const safeLines = lines.map((line) => escapeMdV2(line));\n  return [safeTitle, '', ...safeLines].join('\\n');\n}\n\nfunction parseControlCommands(text) {\n  const t = text.trim();\n  const l = t.toLowerCase();\n\n  if (/^\\/(help|start)\\b/i.test(t) || /^(помощь|хелп|что умеешь)/i.test(l)) {\n    return { type: 'help' };\n  }\n\n  if (/^\\/(clear_context|clear|reset_context)\\b/i.test(t) || /^(очисти|сбрось)\\s+контекст/i.test(l)) {\n    return { type: 'clear_context' };\n  }\n\n  // Хвост после числа: подпись, тире и т.п. (regex без жёсткой границы слова после числа).\n  const ctxSlash = t.match(/^\\/context\\s+(\\d{1,3})(?:\\s|[—–\\-:.,]|$)/i);\n  if (ctxSlash) return { type: 'set_context', depth: Math.max(0, Math.min(50, Number(ctxSlash[1]))) };\n\n  const ctxRu = l.match(/^контекст\\s+(\\d{1,3})\\b/i);\n  if (ctxRu) return { type: 'set_context', depth: Math.max(0, Math.min(50, Number(ctxRu[1]))) };\n\n  if (/^\\/(status|ctx|monitor)\\b/i.test(t) || /^(статус|мониторинг|покажи\\s+контекст)/i.test(l)) {\n    return { type: 'status' };\n  }\n\n  if (/^\\/(obsidian_test|obs_test)\\b/i.test(t) || /^(тест\\s+обсидиан|проверка\\s+обсидиан)/i.test(l)) {\n    return { type: 'obsidian_test' };\n  }\n\n  if (/^cmd:save$/i.test(t)) {\n    return { type: 'save_selection' };\n  }\n\n  return null;\n}\n\nfunction detectCommand(text) {\n  const t = text.trim();\n  const l = t.toLowerCase();\n\n  if (/^cmd:deepen$/i.test(t)) {\n    const promptBase = callbackMessageText || replyToText || 'previous answer';\n    return {\n      detected: true,\n      mode: 'ask',\n      prompt: `Углуби previous answer, выдели риски и дай следующий план действий:\\n${promptBase}`,\n      forceAssistant: false,\n    };\n  }\n\n  if (/^cmd:json$/i.test(t)) {\n    const selected = callbackMessageText || replyToText || '';\n    return {\n      detected: true,\n      mode: 'json',\n      prompt: compact(selected),\n      forceAssistant: true,\n    };\n  }\n\n  if (/^cmd:optimize$/i.test(t)) {\n    const selected = callbackMessageText || replyToText || '';\n    return {\n      detected: true,\n      mode: 'optimize',\n      prompt: compact(selected),\n      forceAssistant: true,\n    };\n  }\n\n  const hermesMatch = t.match(/^\\/hermes(?:\\s+|$)([\\s\\S]*)/i);\n  if (hermesMatch) {\n    const rest = compact(hermesMatch[1] || '');\n    const prompt =\n      rest || compact(replyToText || callbackMessageText || 'Reply based on conversation context.');\n    return {\n      detected: true,\n      mode: 'ask',\n      prompt,\n      forceAssistant: false,\n    };\n  }\n\n  const cursorMatch = t.match(/^\\/cursor(?:\\s+|$)([\\s\\S]*)/i);\n  if (cursorMatch) {\n    const rest = compact(cursorMatch[1] || '');\n    const prompt =\n      rest || compact(replyToText || callbackMessageText || 'Perform task in Cursor CLI based on context.');\n    return {\n      detected: true,\n      mode: 'cursor',\n      prompt,\n      forceAssistant: false,\n    };\n  }\n\n  const patterns = [\n    // Встроенный ассистент (OpenRouter/OpenAI), если Hermes настроен но нужен локальный пайплайн\n    { mode: 'ask', regex: /^\\/assistant(?:\\s+|$)([\\s\\S]*)/i, forceAssistant: true },\n    { mode: 'research', regex: /^\\/research(?:\\s+|$)([\\s\\S]*)/i },\n    { mode: 'ask', regex: /^\\/ask(?:\\s+|$)([\\s\\S]*)/i },\n    { mode: 'json', regex: /^\\/(json|tojson)(?:\\s+|$)([\\s\\S]*)/i, group: 2 },\n    { mode: 'optimize', regex: /^\\/(optimize|prompt_optimize)(?:\\s+|$)([\\s\\S]*)/i, group: 2 },\n    { mode: 'research', regex: /^ресерч[:\\s-]+([\\s\\S]*)/i },\n    { mode: 'research', regex: /^(исследуй|проанализируй|сравни)\\s+([\\s\\S]*)/i, group: 2 },\n    { mode: 'ask', regex: /^вопрос[:\\s-]+([\\s\\S]*)/i },\n    { mode: 'ask', regex: /^(ответь|подскажи|объясни)\\s+([\\s\\S]*)/i, group: 2 },\n    { mode: 'json', regex: /^(в\\s+json|в\\s+джейсон|json)\\s+([\\s\\S]*)/i, group: 2 },\n    { mode: 'optimize', regex: /^(оптимизируй\\s+промпт|улучши\\s+промпт|промпт\\s+оптимизируй)\\s*[:\\-]?\\s*([\\s\\S]*)/i, group: 2 },\n  ];\n\n  for (const p of patterns) {\n    const m = t.match(p.regex);\n    if (m) {\n      const idx = p.group || 1;\n      return {\n        detected: true,\n        mode: p.mode,\n        prompt: compact(m[idx] || ''),\n        forceAssistant: Boolean(p.forceAssistant),\n      };\n    }\n  }\n\n  if (l.includes('сделай ресерч') || l.includes('проведи ресерч')) {\n    const prompt = compact(t.replace(/сделай\\s+ресерч|проведи\\s+ресерч/ig, ''));\n    return { detected: true, mode: 'research', prompt, forceAssistant: false };\n  }\n\n  // Fallback: любой непустой текст считаем диалоговым запросом к ИИ.\n  if (t) {\n    return { detected: true, mode: 'ask', prompt: compact(t), forceAssistant: false };\n  }\n\n  return { detected: false, mode: null, prompt: '', forceAssistant: false };\n}\n\nfunction resolveObsidianBranch(kind) {\n  switch (kind) {\n    case 'task': return 'Inbox/Tasks';\n    case 'plan': return 'Inbox/Plans';\n    case 'instruction': return 'Inbox/Instructions';\n    case 'research': return 'Inbox/Research';\n    case 'json': return 'Inbox/JSON';\n    case 'idea':\n    default: return 'Inbox/Ideas';\n  }\n}\n\nfunction classifyLlmTierByMode(mode) {\n  const m = String(mode || '').toLowerCase();\n  if (m === 'research') return 'reasoning';\n  if (m === 'optimize') return 'fast';\n  return 'general';\n}\n\nfunction normalizeRoutingConfig(raw) {\n  if (!raw) return {};\n  if (typeof raw === 'string') {\n    try {\n      const parsed = JSON.parse(raw);\n      return parsed && typeof parsed === 'object' ? parsed : {};\n    } catch {\n      return {};\n    }\n  }\n  return typeof raw === 'object' ? raw : {};\n}\n\nfunction pickRouteFromRouting(tier, routing, fallbackModel) {\n  const t = String(tier || 'general').toLowerCase();\n  const r = normalizeRoutingConfig(routing);\n  const chain = Array.isArray(r?.tiers?.[t]) ? r.tiers[t] : [];\n  const first = chain.find((x) => x && typeof x === 'object') || null;\n  const provider = String(first?.provider || '').trim() || 'openrouter';\n  const model = String(first?.model || '').trim() || String(fallbackModel || '').trim() || 'google/gemini-2.5-pro';\n  return { provider, model };\n}\n\nconst ROUTING_PROVIDERS = new Set(['openrouter', 'groq', 'glm', 'openai', 'gemini', 'api_key_groups', 'env_openai']);\n\nfunction coerceRoutingSteps(val) {\n  if (!Array.isArray(val)) return [];\n  return val\n    .filter((x) => x && typeof x === 'object')\n    .map((x) => ({\n      provider: String(x.provider || '').trim().toLowerCase(),\n      model: String(x.model || '').trim(),\n    }))\n    .filter((x) => ROUTING_PROVIDERS.has(x.provider));\n}\n\nfunction buildRoutingChain(tier, routing) {\n  const r = normalizeRoutingConfig(routing);\n  const t = String(tier || 'general').toLowerCase();\n  const defaults = {\n    code: [\n      { provider: 'openrouter', model: '' },\n      { provider: 'groq', model: '' },\n      { provider: 'glm', model: '' },\n      { provider: 'openai', model: '' },\n    ],\n    reasoning: [\n      { provider: 'openrouter', model: '' },\n      { provider: 'openai', model: '' },\n      { provider: 'groq', model: '' },\n      { provider: 'glm', model: '' },\n    ],\n    fast: [\n      { provider: 'groq', model: '' },\n      { provider: 'glm', model: '' },\n      { provider: 'openrouter', model: '' },\n      { provider: 'openai', model: '' },\n    ],\n    general: [\n      { provider: 'openrouter', model: '' },\n      { provider: 'glm', model: '' },\n      { provider: 'groq', model: '' },\n      { provider: 'openai', model: '' },\n    ],\n  };\n  const tierSteps = coerceRoutingSteps(r?.tiers?.[t]);\n  const fbSteps = coerceRoutingSteps(r?.fallback);\n  const base = tierSteps.length ? tierSteps : (defaults[t] || defaults.general);\n  return [...base, ...fbSteps];\n}\n\nfunction resolveStepModel(provider, stepModel, settings) {\n  const m = String(stepModel || '').trim();\n  if (m) return m;\n  const p = String(provider || '').toLowerCase();\n  if (p === 'openrouter') return String(settings.openrouter_default_model || 'google/gemini-2.5-pro').trim();\n  if (p === 'openai') return 'gpt-4.1-mini';\n  if (p === 'groq') return 'llama-3.3-70b-versatile';\n  if (p === 'glm') return 'glm-4-flash';\n  return 'google/gemini-2.5-pro';\n}\n\nasync function tryRoutingStep(step, ctx) {\n  const prov = String(step.provider || '').toLowerCase();\n  const modelUse = resolveStepModel(prov, step.model, ctx.settings);\n  const {\n    answerMessages,\n    answerMaxTokens,\n    answerTemperature,\n    openrouterPool,\n    openrouterQwenKeys,\n    openaiPool,\n    groqPool,\n    glmPool,\n    settings,\n  } = ctx;\n\n  if (prov === 'openrouter') {\n    const r = await callOpenRouterChat(\n      openrouterPool,\n      'openrouter_pool',\n      modelUse,\n      answerMessages,\n      answerMaxTokens,\n      answerTemperature,\n    );\n    if (r.content) return { content: r.content, provider: r.provider, model: modelUse };\n    if (openrouterQwenKeys.length) {\n      const qwenModel = String(settings.openrouter_qwen_model || 'qwen/qwen3.6-plus-preview:free').trim();\n      const rq = await callOpenRouterChat(\n        openrouterQwenKeys,\n        'openrouter_qwen_keys',\n        qwenModel,\n        answerMessages,\n        answerMaxTokens,\n        answerTemperature,\n      );\n      if (rq.content) return { content: rq.content, provider: 'openrouter-qwen', model: qwenModel };\n      if (rq.lastErrors?.length) ctx.llmFailures.push(...rq.lastErrors);\n    }\n    if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    return null;\n  }\n\n  if (prov === 'openai') {\n    const r = await callOpenAiCompatibleChat(\n      openaiPool,\n      'openai_pool',\n      'https://api.openai.com/v1',\n      modelUse,\n      answerMessages,\n      answerMaxTokens,\n      answerTemperature,\n    );\n    if (r.content) return { content: r.content, provider: r.provider, model: modelUse };\n    if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    return null;\n  }\n\n  if (prov === 'groq') {\n    const r = await callOpenAiCompatibleChat(\n      groqPool,\n      'groq_pool',\n      'https://api.groq.com/openai/v1',\n      modelUse,\n      answerMessages,\n      answerMaxTokens,\n      answerTemperature,\n    );\n    if (r.content) return { content: r.content, provider: r.provider, model: modelUse };\n    if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    return null;\n  }\n\n  if (prov === 'glm') {\n    const r = await callOpenAiCompatibleChat(\n      glmPool,\n      'glm_pool',\n      'https://open.bigmodel.cn/api/paas/v4',\n      modelUse,\n      answerMessages,\n      answerMaxTokens,\n      answerTemperature,\n    );\n    if (r.content) return { content: r.content, provider: r.provider, model: modelUse };\n    if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    return null;\n  }\n\n  if (prov === 'api_key_groups') {\n    if (openrouterPool.length) {\n      const orModel = String(settings.openrouter_default_model || 'google/gemini-2.5-pro').trim();\n      const r = await callOpenRouterChat(\n        openrouterPool,\n        'api_key_groups_or',\n        orModel,\n        answerMessages,\n        answerMaxTokens,\n        answerTemperature,\n      );\n      if (r.content) return { content: r.content, provider: 'api_key_groups', model: orModel };\n      if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    }\n    if (openaiPool.length) {\n      const oaModel = 'gpt-4.1-mini';\n      const r = await callOpenAiCompatibleChat(\n        openaiPool,\n        'api_key_groups_oa',\n        'https://api.openai.com/v1',\n        oaModel,\n        answerMessages,\n        answerMaxTokens,\n        answerTemperature,\n      );\n      if (r.content) return { content: r.content, provider: 'api_key_groups', model: oaModel };\n      if (r.lastErrors?.length) ctx.llmFailures.push(...r.lastErrors);\n    }\n    return null;\n  }\n\n  return null;\n}\n\nfunction optimizePromptLocally(mode, prompt, context) {\n  const p = compact(prompt);\n  const c = compact(context || '');\n\n  if (mode === 'json') {\n    return [\n      'Верни строго валидный JSON без markdown и комментариев.',\n      'Требуемые поля: summary, intent, category, priority, entities, action_items, risks.',\n      'Если данных недостаточно — оставь пустые массивы/строки, но сохрани схему.',\n      'TEXT: ' + p,\n    ].join('\\n');\n  }\n\n  if (mode === 'research') {\n    return [\n      'Задача: подготовить практичный ресеч-ответ.',\n      'Формат: 1) краткий вывод 2) факты/сравнение 3) риски 4) следующие шаги.',\n      c ? ('Контекст: ' + c.slice(0, 1200)) : '',\n      'Request: ' + p,\n    ].filter(Boolean).join('\\n');\n  }\n\n  return [\n    'Задача: дать краткий, прикладной и структурированный ответ.',\n    'Формат: буллеты + конкретные шаги.',\n    c ? ('Контекст: ' + c.slice(0, 1200)) : '',\n    'Request: ' + p,\n  ].filter(Boolean).join('\\n');\n}\n\nasync function fetchShim(url, init = {}) {\n  const method = (init.method || 'GET').toUpperCase();\n  const headers = { ...(init.headers || {}) };\n  let body = init.body;\n  if (typeof body === 'string') {\n    try { body = JSON.parse(body); } catch {}\n  }\n\n  const opts = { method, url, headers, json: true, returnFullResponse: true };\n  if (body !== undefined && method !== 'GET' && method !== 'HEAD') opts.body = body;\n\n  try {\n    const full = await this.helpers.httpRequest(opts);\n    const statusCode = full.statusCode ?? full.status ?? 200;\n    return {\n      ok: statusCode >= 200 && statusCode < 300,\n      status: statusCode,\n      async json() { return full.body; },\n      async text() { return typeof full.body === 'string' ? full.body : JSON.stringify(full.body || ''); },\n    };\n  } catch (err) {\n    const statusCode = err.statusCode ?? err.response?.status ?? err.status ?? 500;\n    const raw = err.response?.body ?? err.error ?? err.message ?? '';\n    return {\n      ok: false,\n      status: statusCode,\n      async json() { return raw; },\n      async text() { return typeof raw === 'string' ? raw : JSON.stringify(raw || ''); },\n    };\n  }\n}\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.commandContext) staticData.commandContext = {};\nif (!staticData.commandStats) staticData.commandStats = { total: 0, ask: 0, research: 0, json: 0, optimize: 0, control: 0, optimized: 0, optimizationFallback: 0 };\n\nconst chatId = String($json.chat_id || '');\nif (!staticData.commandContext[chatId]) {\n  staticData.commandContext[chatId] = { depth: 10, resetAt: null, updatedAt: null };\n}\nconst chatContext = staticData.commandContext[chatId];\n\nconst control = parseControlCommands(sourceText);\nif (control) {\n  staticData.commandStats.total += 1;\n  staticData.commandStats.control += 1;\n\n  let answer = '';\n  if (control.type === 'help') {\n    answer = buildMarkdownMessage('Command Help', [\n      '/ask <вопрос> — via agent-api Hermes agent',\n      '/assistant <вопрос> — built-in assistant only, bypass Hermes',\n      '/hermes <запрос> — explicit Hermes call',\n      '/cursor <задача> — run Cursor CLI via Hermes',\n      '/research <тема> — research a topic (Hermes or inline LLM)',\n      '/json <текст> — extract structured JSON',\n      '/optimize <промпт> — optimize prompt',\n      '/status — assistant stats and mode',\n      '/context 10 — AI history depth (0..50)',\n      '/clear_context — reset current chat history',\n      '/obsidian_test — test Obsidian sync integration',\n      'You can also use inline buttons below the AI response.',\n    ]);\n  } else if (control.type === 'clear_context') {\n    chatContext.resetAt = new Date().toISOString();\n    answer = buildMarkdownMessage('Context cleared', [\n      'Subsequent commands will start with clean history.',\n    ]);\n  } else if (control.type === 'set_context') {\n    chatContext.depth = control.depth;\n    chatContext.updatedAt = new Date().toISOString();\n    answer = buildMarkdownMessage('Context updated', [\n      `Depth: ${control.depth} messages`,\n    ]);\n  } else if (control.type === 'obsidian_test') {\n    const relayToken = String($env.OBSIDIAN_SYNC_TOKEN || 'autoro_obsidian_sync_v1').trim();\n    const relayUrl = String($env.OBSIDIAN_SYNC_WEBHOOK_URL || 'http://autoro-obsidian-relay:8787/sync').trim();\n    const testPath = `Inbox/Research/obsidian-test-${new Date().toISOString().slice(0,10)}.md`;\n    const testPayload = {\n      file_path: testPath,\n      mode: 'append_or_create',\n      content: `# Obsidian test\\ncreated: ${new Date().toISOString()}\\nsource: telegram /obsidian_test`,\n    };\n\n    const testResp = await fetchShim.call(this, relayUrl, {\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'x-obsidian-token': relayToken,\n      },\n      body: JSON.stringify(testPayload),\n    });\n\n    if (testResp.ok) {\n      const b = await testResp.json();\n      answer = buildMarkdownMessage('Obsidian relay OK', [\n        `Файл: ${b.file_path || testPath}`,\n      ]);\n    } else {\n      const t = await testResp.text();\n      answer = buildMarkdownMessage('Obsidian relay ERROR', [\n        `HTTP: ${testResp.status}`,\n        String(t).slice(0, 280),\n      ]);\n    }\n  } else if (control.type === 'save_selection') {\n    const selected = callbackMessageText || replyToText || sourceText;\n    answer = buildMarkdownMessage('Save to Obsidian', [\n      'Selected fragment will be saved to Research branch.',\n      `Text: ${compact(selected).slice(0, 160)}`,\n    ]);\n  } else {\n    answer = buildMarkdownMessage('Assistant Status', [\n      `context depth: ${chatContext.depth}`,\n      `resetAt: ${chatContext.resetAt || 'not set'}`,\n      `total commands: ${staticData.commandStats.total}`,\n      `ask: ${staticData.commandStats.ask}`,\n      `research: ${staticData.commandStats.research}`,\n      `json: ${staticData.commandStats.json}`,\n      `optimize: ${staticData.commandStats.optimize || 0}`,\n      `control: ${staticData.commandStats.control}`,\n      `optimized: ${staticData.commandStats.optimized || 0}`,\n      `optimization fallback: ${staticData.commandStats.optimizationFallback || 0}`,\n    ]);\n  }\n\n  const memoryKind = control.type === 'save_selection' ? 'research' : 'instruction';\n  const memoryTopic = control.type === 'save_selection' ? 'saved selection' : 'context management';\n  const obsidianBranch = resolveObsidianBranch(memoryKind);\n\n  return [{\n    ...$json,\n    command_detected: true,\n    command_mode: control.type,\n    command_prompt: sourceText,\n    ai_answer: answer,\n    ai_answer_markdown: answer,\n    command_provider: 'local-control',\n    command_model: 'none',\n    command_history_count: 0,\n    memory_kind: memoryKind,\n    memory_topic: memoryTopic,\n    normalized_text: `Системная команда: ${control.type}.`,\n    text: `Системная команда: ${control.type}.`,\n    original_text: sourceText,\n    obsidian_branch: obsidianBranch,\n    obsidian_note_path: `${obsidianBranch}/${new Date().toISOString().slice(0,10)}-context-control.md`,\n  }];\n}\n\nconst cmd = detectCommand(sourceText);\n/** Подтягиваем тему для /research без аргумента (как у /optimize через reply). */\nlet resolvedPrompt = cmd.prompt;\nif (cmd.detected && cmd.mode === 'research' && !resolvedPrompt) {\n  resolvedPrompt = compact(replyToText || callbackMessageText || 'Brief research on the last chat context.');\n}\nconst cmdEffective = cmd.detected ? { ...cmd, prompt: resolvedPrompt } : cmd;\n\nif (!cmdEffective.detected || (!cmdEffective.prompt && cmdEffective.mode !== 'json' && cmdEffective.mode !== 'optimize')) {\n  return [{ ...$json, command_detected: false }];\n}\n\nconst cmd = cmdEffective;\n\nstaticData.commandStats.total += 1;\nif (cmd.mode === 'research') staticData.commandStats.research += 1;\nif (cmd.mode === 'ask') staticData.commandStats.ask += 1;\nif (cmd.mode === 'json') staticData.commandStats.json += 1;\nif (cmd.mode === 'optimize') staticData.commandStats.optimize += 1;\n\nconst supabaseUrl = String($env.SUPABASE_URL || 'https://swoop.autoro.tech/supabase').replace(/\\/$/, '');\nconst serviceRoleKey = String($env.SUPABASE_SERVICE_ROLE_KEY || '').trim();\nif (!supabaseUrl || !serviceRoleKey) {\n  const err = buildMarkdownMessage('Environment Error', ['SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured']);\n  return [{\n    ...$json,\n    command_detected: true,\n    command_mode: cmd.mode,\n    command_prompt: cmd.prompt,\n    ai_answer: err,\n    ai_answer_markdown: err,\n    command_provider: 'none',\n    command_model: 'none',\n    defer_hermes: false,\n    routing_force_assistant: Boolean(cmd.forceAssistant),\n  }];\n}\n\nconst settingsRespEarly = await fetchShim.call(this, `${supabaseUrl}/rest/v1/service_settings?id=eq.1&select=openai_keys,openrouter_keys,openrouter_default_model,openrouter_qwen_keys,openrouter_qwen_model,glm_keys,groq_keys,api_key_groups,agent_llm_routing`, {\n  method: 'GET',\n  headers: {\n    apikey: serviceRoleKey,\n    Authorization: `Bearer ${serviceRoleKey}`,\n  },\n});\n\nlet settings = {};\nif (settingsRespEarly.ok) {\n  const rows = await settingsRespEarly.json();\n  settings = Array.isArray(rows) && rows[0] ? rows[0] : {};\n}\n\n/** Hermes: только agent-api /api/v1/hermes/run (ротация ключей Swoop). Старый Hermes с 3 retry на одном ключе — inline LLM. */\nconst hermesUrl = String($env.HERMES_AGENT_API_URL || '').trim().replace(/\\/+$/, '');\nconst hermesUsesSwoopRouting =\n  /\\/api\\/v1\\/hermes\\/run$/i.test(hermesUrl) ||\n  String($env.TELEGRAM_HERMES_USE_AGENT_API || '').trim() === '1';\nconst forceAssistantFlag = Boolean(cmd.forceAssistant);\nconst resolvedTier = classifyLlmTierByMode(cmd.mode);\nconst route = pickRouteFromRouting(resolvedTier, settings.agent_llm_routing, settings.openrouter_default_model);\nconst swoopUserEmail = String($env.SWOOP_LLM_USER_EMAIL || 'autoro.tech@gmail.com').trim();\n\nconst deferHermes =\n  hermesUrl !== '' &&\n  hermesUsesSwoopRouting &&\n  (cmd.mode === 'ask' || cmd.mode === 'research' || cmd.mode === 'cursor') &&\n  !forceAssistantFlag;\n\nif (deferHermes) {\n  const effectivePromptEarly = cmd.prompt;\n  const topicEarly = effectivePromptEarly\n    .toLowerCase()\n    .replace(/[^\\p{L}\\p{N}\\s-]/gu, ' ')\n    .split(/\\s+/)\n    .filter(Boolean)\n    .slice(0, 4)\n    .join(' / ') || 'general';\n  const memoryKindEarly = cmd.mode === 'research' ? 'research' : 'instruction';\n  const obsidianBranchEarly = resolveObsidianBranch(memoryKindEarly);\n\n  const holdMarkdown = buildMarkdownMessage('Hermes is processing the request...', [\n    `Режим: ${cmd.mode}`,\n    `(response will update once Hermes responds)`,\n  ]);\n\n  const normalizedTextHermes = [\n    `Dialogue (${cmd.mode}) → Hermes`,\n    `Request: ${effectivePromptEarly}`,\n  ].join('\\n');\n\n  const depthPeek = Math.max(0, Number(chatContext.depth || 10));\n\n  return [{\n    ...$json,\n    command_detected: true,\n    command_mode: cmd.mode,\n    command_prompt: effectivePromptEarly,\n    llm_tier: resolvedTier,\n    llm_route_provider: route.provider,\n    llm_route_model: route.model,\n    swoop_user_email: swoopUserEmail,\n    defer_hermes: true,\n    routing_force_assistant: false,\n    ai_answer: '',\n    ai_answer_markdown: holdMarkdown,\n    command_provider: 'hermes-queue',\n    command_model: route.model || 'hermes',\n    command_history_count: 0,\n    command_context_depth: depthPeek,\n    memory_kind: memoryKindEarly,\n    memory_topic: topicEarly,\n    normalized_text: normalizedTextHermes,\n    text: normalizedTextHermes,\n    original_text: sourceText,\n    obsidian_branch: obsidianBranchEarly,\n    obsidian_note_path: `${obsidianBranchEarly}/${new Date().toISOString().slice(0, 10)}-${topicEarly.replace(/\\s*\\/\\s*/g, '-').replace(/[^\\p{L}\\p{N}-]/gu, '').slice(0, 60) || 'general'}.md`,\n  }];\n}\n\nconst fetch = fetchShim.bind(this);\n\nconst normalizeKeys = (value) => {\n  if (Array.isArray(value)) return value.map((x) => String(x || '').trim()).filter(Boolean);\n  if (typeof value === 'string' && value.trim()) {\n    try {\n      const arr = JSON.parse(value);\n      if (Array.isArray(arr)) return arr.map((x) => String(x || '').trim()).filter(Boolean);\n    } catch {}\n    return [value.trim()];\n  }\n  return [];\n};\n\nconst openrouterKeys = normalizeKeys(settings.openrouter_keys);\nconst openrouterQwenKeys = normalizeKeys(settings.openrouter_qwen_keys);\nconst openaiKeys = normalizeKeys(settings.openai_keys);\nconst glmKeys = normalizeKeys(settings.glm_keys);\nconst groqKeys = normalizeKeys(settings.groq_keys);\nconst apiKeyGroupsRaw = settings.api_key_groups;\nconst apiKeyGroups = Array.isArray(apiKeyGroupsRaw)\n  ? apiKeyGroupsRaw\n  : typeof apiKeyGroupsRaw === 'string' && apiKeyGroupsRaw.trim()\n    ? (() => {\n        try {\n          const p = JSON.parse(apiKeyGroupsRaw);\n          return Array.isArray(p) ? p : [];\n        } catch {\n          return [];\n        }\n      })()\n    : [];\n\nfunction mergeUniqueKeys(...lists) {\n  const seen = new Set();\n  const out = [];\n  for (const list of lists) {\n    for (const k of list || []) {\n      const s = String(k || '').trim();\n      if (!s || seen.has(s)) continue;\n      seen.add(s);\n      out.push(s);\n    }\n  }\n  return out;\n}\n\n/** Ключи из Swoop → Группы API-ключей (как в agent-api). */\nfunction selectApiKeyGroupKeys(groups, desiredProvider = '', desiredTier = '', desiredModel = '', userEmail = '') {\n  if (!Array.isArray(groups) || !groups.length) return [];\n  const provNorm = String(desiredProvider || '').trim().toLowerCase();\n  const tierNorm = String(desiredTier || '').trim().toLowerCase();\n  const modelNorm = String(desiredModel || '').trim();\n  const emailNorm = String(userEmail || '').trim().toLowerCase();\n  const matches = [];\n  const anyKeys = [];\n  for (let idx = 0; idx < groups.length; idx++) {\n    const item = groups[idx];\n    if (!item || typeof item !== 'object') continue;\n    const keys = (item.keys || [])\n      .map((k) => String(k || '').trim())\n      .filter(Boolean);\n    if (!keys.length) continue;\n    anyKeys.push(...keys);\n    const itemProvider = String(item.provider || '').trim().toLowerCase();\n    if (provNorm && itemProvider && itemProvider !== provNorm) continue;\n    const tiersNorm = (Array.isArray(item.tiers) ? item.tiers : [])\n      .map((x) => String(x || '').trim().toLowerCase())\n      .filter(Boolean);\n    if (tierNorm && tiersNorm.length && !tiersNorm.includes(tierNorm)) continue;\n    const modelsNorm = (Array.isArray(item.models) ? item.models : [])\n      .map((x) => String(x || '').trim())\n      .filter(Boolean);\n    if (modelNorm && modelsNorm.length && !modelsNorm.includes(modelNorm)) continue;\n    const itemEmail = String(item.user_email || item.email || '').trim().toLowerCase();\n    if (emailNorm && itemEmail && itemEmail !== emailNorm) continue;\n    const priority = Number(item.priority || 0) || 0;\n    matches.push({ priority, idx, keys });\n  }\n  if (!matches.length) {\n    const flat = [];\n    const seen = new Set();\n    for (const k of anyKeys) {\n      if (!seen.has(k)) {\n        seen.add(k);\n        flat.push(k);\n      }\n    }\n    return flat;\n  }\n  matches.sort((a, b) => b.priority - a.priority || a.idx - b.idx);\n  const out = [];\n  const seen = new Set();\n  for (const m of matches) {\n    for (const k of m.keys) {\n      if (!seen.has(k)) {\n        seen.add(k);\n        out.push(k);\n      }\n    }\n  }\n  return out;\n}\n\nconst groupOpenRouterKeys = selectApiKeyGroupKeys(\n  apiKeyGroups,\n  'openrouter',\n  resolvedTier,\n  route.model,\n  swoopUserEmail,\n);\nconst groupOpenAiKeys = selectApiKeyGroupKeys(apiKeyGroups, 'openai', resolvedTier, '', swoopUserEmail);\nconst groupGroqKeys = selectApiKeyGroupKeys(apiKeyGroups, 'groq', resolvedTier, '', swoopUserEmail);\nconst groupGlmKeys = selectApiKeyGroupKeys(apiKeyGroups, 'glm', resolvedTier, '', swoopUserEmail);\n\nconst openrouterPool = mergeUniqueKeys(openrouterKeys, groupOpenRouterKeys);\nconst openaiPool = mergeUniqueKeys(openaiKeys, groupOpenAiKeys);\nconst groqPool = mergeUniqueKeys(groqKeys, groupGroqKeys);\nconst glmPool = mergeUniqueKeys(glmKeys, groupGlmKeys);\n\nif (!staticData.keyHealth) staticData.keyHealth = {};\n\nfunction keyId(provider, key) {\n  return `${provider}:${String(key || '').slice(0, 10)}`;\n}\n\nfunction isInactive(provider, key) {\n  const s = staticData.keyHealth[keyId(provider, key)];\n  if (!s || !s.inactiveUntil) return false;\n  return Date.now() < Number(s.inactiveUntil);\n}\n\nfunction markSuccess(provider, key) {\n  staticData.keyHealth[keyId(provider, key)] = { status: 'active', inactiveUntil: 0, lastError: '', at: Date.now() };\n}\n\nfunction markFailure(provider, key, status, bodyText) {\n  const t = String(bodyText || '').toLowerCase();\n  const retryable = [401, 402, 403, 408, 429].includes(Number(status)) || Number(status) >= 500 || /rate|quota|limit|insufficient|unauthorized|forbidden/.test(t);\n  const cooldownMs = [401, 403].includes(Number(status)) ? 60 * 60 * 1000 : ([402, 429].includes(Number(status)) ? 20 * 60 * 1000 : 15 * 60 * 1000);\n  staticData.keyHealth[keyId(provider, key)] = {\n    status: retryable ? 'inactive' : 'unknown',\n    inactiveUntil: retryable ? Date.now() + cooldownMs : 0,\n    lastError: `${status}: ${String(bodyText || '').slice(0, 180)}`,\n    at: Date.now(),\n  };\n}\n\nfunction orderedKeys(provider, keys) {\n  const list = Array.isArray(keys) ? keys : [];\n  const active = [];\n  const inactive = [];\n  for (const k of list) {\n    if (isInactive(provider, k)) inactive.push(k);\n    else active.push(k);\n  }\n  return [...active, ...inactive];\n}\n\nfunction sanitizeLlmError(bodyText, status) {\n  const t = String(bodyText || '')\n    .replace(/sk-or-[a-zA-Z0-9_-]+/gi, 'sk-or-***')\n    .replace(/sk-[a-zA-Z0-9._-]{12,}/gi, 'sk-***')\n    .replace(/Bearer\\s+[a-zA-Z0-9._-]+/gi, 'Bearer ***')\n    .replace(/https?:\\/\\/[^\\s\"']+/gi, '[url]');\n  return `${status}: ${t.replace(/\\s+/g, ' ').trim().slice(0, 200)}`;\n}\n\nfunction parseAffordMaxTokens(bodyText) {\n  const m = String(bodyText || '').match(/can only afford\\s+(\\d+)/i);\n  if (!m) return null;\n  const n = Number(m[1]);\n  if (!Number.isFinite(n) || n <= 0) return null;\n  return Math.max(1, n - 64);\n}\n\nfunction shouldRotateKeyImmediately(status) {\n  return [401, 402, 429].includes(Number(status));\n}\n\nasync function callOpenRouterChat(keys, providerName, model, messages, maxTokens, temperature = 0.2) {\n  const ordered = orderedKeys(providerName, keys);\n  const lastErrors = [];\n  for (const key of ordered) {\n    let tokensTry = maxTokens;\n    let affordRetried = false;\n    for (let attempt = 0; attempt < 2; attempt++) {\n      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {\n        method: 'POST',\n        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },\n        body: JSON.stringify({\n          model,\n          temperature,\n          max_tokens: tokensTry,\n          messages,\n        }),\n      });\n      if (resp.ok) {\n        const body = await resp.json();\n        const content = body?.choices?.[0]?.message?.content;\n        if (typeof content === 'string' && content.trim()) {\n          markSuccess(providerName, key);\n          return { content: content.trim(), model, provider: 'openrouter', lastErrors };\n        }\n      }\n      const status = resp.status;\n      const bodyText = await resp.text();\n      const affordN = status === 402 ? parseAffordMaxTokens(bodyText) : null;\n      if (status === 402 && affordN != null && !affordRetried) {\n        tokensTry = affordN;\n        affordRetried = true;\n        continue;\n      }\n      markFailure(providerName, key, status, bodyText);\n      lastErrors.push(sanitizeLlmError(bodyText, status));\n      break;\n    }\n  }\n  return { content: null, model, provider: 'openrouter', lastErrors };\n}\n\nasync function callOpenAiCompatibleChat(keys, providerName, baseUrl, model, messages, maxTokens, temperature = 0.2) {\n  const ordered = orderedKeys(providerName, keys);\n  const lastErrors = [];\n  const url = `${String(baseUrl || '').replace(/\\/$/, '')}/chat/completions`;\n  const providerLabel = String(providerName || '').replace(/_keys$/, '') || 'openai';\n  for (const key of ordered) {\n    const resp = await fetch(url, {\n      method: 'POST',\n      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        model,\n        temperature,\n        max_tokens: maxTokens,\n        messages,\n      }),\n    });\n    if (resp.ok) {\n      const body = await resp.json();\n      const content = body?.choices?.[0]?.message?.content;\n      if (typeof content === 'string' && content.trim()) {\n        markSuccess(providerName, key);\n        return { content: content.trim(), model, provider: providerLabel, lastErrors };\n      }\n    }\n    const status = resp.status;\n    const bodyText = await resp.text();\n    markFailure(providerName, key, status, bodyText);\n    lastErrors.push(sanitizeLlmError(bodyText, status));\n    if (shouldRotateKeyImmediately(status)) continue;\n  }\n  return { content: null, model, provider: providerLabel, lastErrors };\n}\n\nconst depth = Math.max(0, Number(chatContext.depth || 10));\nconst resetIso = chatContext.resetAt;\nlet historyUrl = `${supabaseUrl}/rest/v1/personal_assistant_memory?source=eq.telegram&chat_id=eq.${encodeURIComponent(chatId)}&select=text,metadata,created_at&order=created_at.desc&limit=${Math.min(50, Math.max(depth || 1, 1) * 2)}`;\nif (resetIso) {\n  historyUrl += `&created_at=gte.${encodeURIComponent(resetIso)}`;\n}\n\nconst historyResp = await fetch(historyUrl, {\n  method: 'GET',\n  headers: {\n    apikey: serviceRoleKey,\n    Authorization: `Bearer ${serviceRoleKey}`,\n  },\n});\n\nlet historyRows = [];\nif (historyResp.ok) {\n  const rows = await historyResp.json();\n  if (Array.isArray(rows)) historyRows = rows;\n}\n\nfunction historyLinesFromRow(r) {\n  const md = r?.metadata && typeof r.metadata === 'object' ? r.metadata : {};\n  const out = [];\n  const userText = String(md.command_prompt || md.original_text || '').replace(/\\s+/g, ' ').trim();\n  const assistText = String(md.assistant_answer || '').replace(/\\s+/g, ' ').trim();\n  if (md.is_command && userText && assistText) {\n    out.push(`user: ${userText.slice(0, 700)}`);\n    out.push(`assistant: ${assistText.slice(0, 700)}`);\n    return out;\n  }\n  const raw = String(r?.text || '').replace(/\\s+/g, ' ').trim();\n  const qm = raw.match(/Request:\\s*([\\s\\S]*?)\\s*Ответ:\\s*([\\s\\S]*)/i);\n  if (qm) {\n    const u = compact(qm[1]);\n    const a = compact(qm[2]);\n    if (u) out.push(`user: ${u.slice(0, 700)}`);\n    if (a) out.push(`assistant: ${a.slice(0, 700)}`);\n    if (out.length) return out;\n  }\n  if (assistText && userText && assistText !== userText) {\n    out.push(`user: ${userText.slice(0, 700)}`);\n    out.push(`assistant: ${assistText.slice(0, 700)}`);\n    return out;\n  }\n  const role = md.role || (assistText ? 'assistant' : 'user');\n  const lineText = (role === 'assistant' && assistText) ? assistText : (userText || raw);\n  if (!lineText) return [];\n  return [`${role}: ${lineText.slice(0, 700)}`];\n}\n\nconst historyLinesAll = historyRows\n  .reverse()\n  .flatMap((r) => historyLinesFromRow(r))\n  .filter(Boolean);\nconst historyLines = depth === 0 ? [] : historyLinesAll.slice(-Math.min(historyLinesAll.length, depth * 2));\n\nconst contextBlock = historyLines.length\n  ? historyLines.join('\\n')\n  : 'История отсутствует.';\n\nlet effectivePrompt = cmd.prompt;\nif (cmd.mode === 'json') {\n  if (!effectivePrompt) {\n    effectivePrompt = replyToText || callbackMessageText || '';\n  }\n  if (!effectivePrompt) {\n    const err = buildMarkdownMessage('JSON команда', [\n      'Ответь на сообщение и отправь /json,',\n      'или укажи текст после команды.',\n    ]);\n    return [{\n      ...$json,\n      command_detected: true,\n      command_mode: 'json',\n      command_prompt: '',\n      ai_answer: err,\n      ai_answer_markdown: err,\n      command_provider: 'local-control',\n      command_model: 'none',\n      memory_kind: 'instruction',\n      memory_topic: 'json преобразование',\n      normalized_text: 'JSON команда без целевого текста.',\n      text: 'JSON команда без целевого текста.',\n    }];\n  }\n}\n\nif (cmd.mode === 'optimize') {\n  if (!effectivePrompt) {\n    effectivePrompt = replyToText || callbackMessageText || '';\n  }\n  if (!effectivePrompt) {\n    const err = buildMarkdownMessage('Оптимизация промпта', [\n      'Ответь на сообщение и отправь /optimize,',\n      'или укажи текст после команды.',\n    ]);\n    return [{\n      ...$json,\n      command_detected: true,\n      command_mode: 'optimize',\n      command_prompt: '',\n      ai_answer: err,\n      ai_answer_markdown: err,\n      command_provider: 'local-control',\n      command_model: 'none',\n      memory_kind: 'instruction',\n      memory_topic: 'оптимизация промпта',\n      normalized_text: 'Команда optimize без целевого текста.',\n      text: 'Команда optimize без целевого текста.',\n    }];\n  }\n}\n\nconst systemPrompt = cmd.mode === 'research'\n  ? 'Ты ассистент для ресеча. Дай структурированный и практичный ответ: краткий вывод, 3-7 пунктов, риски/ограничения, следующий шаг.'\n  : cmd.mode === 'json'\n    ? 'Преобразуй пользовательский текст в строгий JSON без комментариев и markdown. Верни только JSON объект с полями: summary, intent, category, priority, entities, action_items, risks.'\n    : 'Ты практичный ассистент. Отвечай кратко и по делу, шагами, без воды.';\n\nconst basePrompt = cmd.mode === 'json'\n  ? `Преобразуй в JSON:\\n${effectivePrompt}`\n  : `Контекст чата:\\n${contextBlock}\\n\\nНовый запрос пользователя:\\n${effectivePrompt}`;\n\nlet userPrompt = optimizePromptLocally(cmd.mode, effectivePrompt, contextBlock);\nlet promptOptimizationSource = 'local';\n\nasync function tryOptimizePromptWithAI() {\n  const optimizerSystem = 'Ты оптимизатор промптов. Перепиши запрос так, чтобы ответ был максимально точным и структурированным. Верни только итоговый текст промпта.';\n  const optimizerUser = `MODE: ${cmd.mode}\\nBASE_PROMPT:\\n${basePrompt}`;\n  const optimizerMessages = [\n    { role: 'system', content: optimizerSystem },\n    { role: 'user', content: optimizerUser },\n  ];\n\n  if (openrouterPool.length) {\n    const model = String(settings.openrouter_default_model || 'google/gemini-2.5-pro').trim();\n    const r = await callOpenRouterChat(openrouterPool, 'openrouter_pool', model, optimizerMessages, 600, 0.1);\n    if (r.content) return r.content;\n  }\n\n  if (openrouterQwenKeys.length) {\n    const qwenModel = String(settings.openrouter_qwen_model || 'qwen/qwen3.6-plus-preview:free').trim();\n    const r = await callOpenRouterChat(openrouterQwenKeys, 'openrouter_qwen_keys', qwenModel, optimizerMessages, 600, 0.1);\n    if (r.content) return r.content;\n  }\n\n  if (openaiPool.length) {\n    const r = await callOpenAiCompatibleChat(\n      openaiPool,\n      'openai_pool',\n      'https://api.openai.com/v1',\n      'gpt-4.1-mini',\n      optimizerMessages,\n      600,\n      0.1,\n    );\n    if (r.content) return r.content;\n  }\n\n  return '';\n}\n\nconst optimizedByAI = await tryOptimizePromptWithAI();\nif (optimizedByAI) {\n  userPrompt = optimizedByAI;\n  promptOptimizationSource = 'ai';\n  staticData.commandStats.optimized = Number(staticData.commandStats.optimized || 0) + 1;\n} else {\n  staticData.commandStats.optimizationFallback = Number(staticData.commandStats.optimizationFallback || 0) + 1;\n}\n\nlet aiAnswer = '';\nlet provider = 'none';\nlet model = 'none';\nconst llmFailures = [];\n\nif (cmd.mode === 'optimize') {\n  aiAnswer = userPrompt;\n  provider = promptOptimizationSource === 'ai' ? 'prompt-optimizer-ai' : 'prompt-optimizer-local';\n  model = promptOptimizationSource === 'ai' ? 'optimizer' : 'local';\n}\n\nconst answerMessages = [\n  { role: 'system', content: systemPrompt },\n  { role: 'user', content: userPrompt },\n];\nconst answerMaxTokens = cmd.mode === 'research' ? 1800 : 1200;\nconst answerTemperature = cmd.mode === 'research' ? 0.3 : 0.2;\n\nconst routingChain = buildRoutingChain(resolvedTier, settings.agent_llm_routing);\nconst routingCtx = {\n  answerMessages,\n  answerMaxTokens,\n  answerTemperature,\n  openrouterPool,\n  openrouterQwenKeys,\n  openaiPool,\n  groqPool,\n  glmPool,\n  settings,\n  llmFailures,\n};\n\nfor (const step of routingChain) {\n  if (aiAnswer) break;\n  const hit = await tryRoutingStep(step, routingCtx);\n  if (hit?.content) {\n    aiAnswer = hit.content;\n    provider = hit.provider;\n    model = hit.model;\n  }\n}\n\nif (!aiAnswer) {\n  const lastHint = llmFailures.length ? ` (${llmFailures[llmFailures.length - 1]})` : '';\n  aiAnswer = `Не удалось получить ответ модели. Проверь ключи в Swoop → Service settings (OpenRouter, Qwen, OpenAI, GLM, Groq и группы API-ключей) и попробуй снова.${lastHint}`;\n}\n\nlet aiAnswerMarkdown = '';\nif (cmd.mode === 'optimize') {\n  aiAnswerMarkdown = buildMarkdownMessage('Оптимизация промпта', [\n    `source: ${effectivePrompt.slice(0, 900)}`,\n    `optimized (${promptOptimizationSource}): ${userPrompt.slice(0, 1800)}`,\n  ]);\n} else if (cmd.mode === 'json') {\n  aiAnswerMarkdown = [\n    '*JSON результат*',\n    '',\n    '```json',\n    aiAnswer,\n    '```',\n  ].join('\\n');\n} else if (cmd.mode === 'research') {\n  aiAnswerMarkdown = buildMarkdownMessage('Research ответ', [aiAnswer]);\n} else {\n  aiAnswerMarkdown = buildMarkdownMessage('Ответ', [aiAnswer]);\n}\n\nconst compactAnswer = aiAnswer.replace(/\\s+/g, ' ').trim();\nconst normalizedText = [\n  `Диалог (${cmd.mode})`,\n  `Request: ${effectivePrompt}`,\n  `Ответ: ${compactAnswer.slice(0, 2000)}`,\n].join('\\n');\n\nconst topic = effectivePrompt\n  .toLowerCase()\n  .replace(/[^\\p{L}\\p{N}\\s-]/gu, ' ')\n  .split(/\\s+/)\n  .filter(Boolean)\n  .slice(0, 4)\n  .join(' / ') || 'general';\n\nconst memoryKind = cmd.mode === 'research' ? 'research' : cmd.mode === 'json' ? 'json' : 'instruction';\nconst obsidianBranch = resolveObsidianBranch(memoryKind);\n\nreturn [{\n  ...$json,\n  command_detected: true,\n  command_mode: cmd.mode,\n  command_prompt: effectivePrompt,\n  ai_answer: aiAnswer,\n  ai_answer_markdown: aiAnswerMarkdown,\n  command_provider: provider,\n  command_model: model,\n  command_history_count: historyLines.length,\n  command_context_depth: depth,\n  prompt_optimization_source: promptOptimizationSource,\n  memory_kind: memoryKind,\n  memory_topic: topic,\n  normalized_text: normalizedText,\n  text: normalizedText,\n  original_text: sourceText,\n  obsidian_branch: obsidianBranch,\n  obsidian_note_path: `${obsidianBranch}/${new Date().toISOString().slice(0,10)}-${topic.replace(/\\s*\\/\\s*/g,'-').replace(/[^\\p{L}\\p{N}-]/gu,'').slice(0,60) || 'general'}.md`,\n  defer_hermes: false,\n  routing_force_assistant: forceAssistantFlag,\n}];\n"
+      },
+      "id": "code_detect_run_command",
+      "name": "Detect & Run Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_command_detected",
+              "leftValue": "={{$json[\"command_detected\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_command_detected",
+      "name": "Is Command Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1450,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_poststore_command_detected",
+              "leftValue": "={{$json[\"command_detected\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_poststore_command_detected",
+      "name": "Is Command After Store?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1590,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const iso = new Date().toISOString();\nconst date = iso.slice(0, 10);\nconst title = String($json.memory_topic || 'general').replace(/\\s*\\/\\s*/g, ' - ').trim();\n\nconst originalText = String($json.original_text || $json.text || '').trim();\nconst normalizedText = String($json.normalized_text || $json.text || '').trim();\nconst aiAnswer = String($json.ai_answer || '').trim();\nconst username = String($json.username || '').trim();\nconst sender = username ? `@${username}` : String($json.sender_id || '').trim();\nconst kind = String($json.memory_kind || 'idea').trim();\nconst branch = String($json.obsidian_branch || 'Inbox/Ideas').trim();\nconst notePath = String($json.obsidian_note_path || '').trim();\nconst commandMode = String($json.command_mode || 'none').trim();\nconst provider = String($json.command_provider || 'none').trim();\nconst model = String($json.command_model || 'none').trim();\nconst topic = String($json.memory_topic || 'общий контекст').trim();\n\nconst urlMatch = originalText.match(/https?:\\/\\/[^\\s]+/i);\nconst sourceUrl = urlMatch ? urlMatch[0] : '';\n\nconst topicTags = topic\n  .split(/\\s*\\/\\s*/)\n  .map((s) => s.trim())\n  .filter(Boolean)\n  .slice(0, 6);\n\nconst tags = ['telegram', 'assistant', 'autoro', kind, commandMode, provider]\n  .concat(topicTags)\n  .filter(Boolean)\n  .map((t) => String(t).toLowerCase().replace(/[^a-z0-9а-яё_-]/gi, '-'))\n  .filter(Boolean);\n\nconst aiContextBlock = aiAnswer\n  ? aiAnswer\n  : (normalizedText || 'Контекст не был сгенерирован.');\n\nconst content = [\n  '---',\n  'source: \\\"Telegram\\\"',\n  `original_sender: \\\"${sender || 'unknown'}\\\"`,\n  `url: \\\"${sourceUrl}\\\"`,\n  `tags: [${tags.join(', ')}]`,\n  `date: ${date}`,\n  'status: \\\"to_process\\\"',\n  `kind: \\\"${kind}\\\"`,\n  `chat_id: \\\"${String($json.chat_id || '')}\\\"`,\n  `message_id: \\\"${String($json.message_id || '')}\\\"`,\n  `update_id: \\\"${String($json.update_id || '')}\\\"`,\n  `branch: \\\"${branch}\\\"`,\n  `path: \\\"${notePath}\\\"`,\n  `category: \\\"${kind}\\\"`,\n  `command_mode: \\\"${commandMode}\\\"`,\n  `provider: \\\"${provider}\\\"`,\n  `model: \\\"${model}\\\"`,\n  `created: \\\"${iso}\\\"`,\n  '---',\n  '',\n  `# ${title || 'Telegram Note'}`,\n  '',\n  '### Краткий контекст (AI Generated):',\n  aiContextBlock,\n  '',\n  '### Оригинальное сообщение:',\n  `\"${originalText || normalizedText}\"`,\n].filter(Boolean).join('\\n');\n\nreturn [{\n  ...$json,\n  obsidian_sync_enabled: true,\n  obsidian_sync_webhook: String($env.OBSIDIAN_SYNC_WEBHOOK_URL || 'http://autoro-obsidian-relay:8787/sync').trim(),\n  obsidian_sync_secondary_enabled: Boolean(String($env.OBSIDIAN_SYNC_WEBHOOK_URL_SECONDARY || $env.OBSIDIAN_SYNC_WEBHOOK_URL || '').trim()),\n  obsidian_sync_webhook_secondary: String($env.OBSIDIAN_SYNC_WEBHOOK_URL_SECONDARY || $env.OBSIDIAN_SYNC_WEBHOOK_URL || 'http://autoro-obsidian-relay:8787/sync').trim(),\n  obsidian_sync_token_secondary: String($env.OBSIDIAN_SYNC_TOKEN_SECONDARY || $env.OBSIDIAN_SYNC_TOKEN || 'autoro_obsidian_sync_v1').trim(),\n  obsidian_sync_payload: {\n    file_path: String($json.obsidian_note_path || '').trim(),\n    branch: String($json.obsidian_branch || 'Inbox/Ideas').trim(),\n    mode: 'append_or_create',\n    content,\n    metadata: {\n      kind,\n      category: kind,\n      topic,\n      tags,\n      chat_id: $json.chat_id || '',\n      message_id: $json.message_id || null,\n      update_id: $json.update_id || null,\n      command_mode: commandMode || null,\n      provider,\n      model,\n    },\n  },\n  obsidian_sync_payload_secondary: {\n    file_path: String($json.obsidian_note_path || '').trim(),\n    branch: String($json.obsidian_branch || 'Inbox/Ideas').trim(),\n    mode: 'append_or_create',\n    content,\n    metadata: {\n      kind,\n      category: kind,\n      topic,\n      tags,\n      chat_id: $json.chat_id || '',\n      message_id: $json.message_id || null,\n      update_id: $json.update_id || null,\n      command_mode: commandMode || null,\n      provider,\n      model,\n      target: 'secondary',\n    },\n  },\n}];\n"
+      },
+      "id": "code_build_obsidian_payload",
+      "name": "Build Obsidian Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_obsidian_enabled",
+              "leftValue": "={{$json[\"obsidian_sync_enabled\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_obsidian_enabled",
+      "name": "Obsidian Sync Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1730,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.obsidian_sync_webhook}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.obsidian_sync_payload}}",
+        "options": {
+          "timeout": 4000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-obsidian-token",
+              "value": "={{$env.OBSIDIAN_SYNC_TOKEN || 'autoro_obsidian_sync_v1'}}"
+            }
+          ]
+        }
+      },
+      "id": "http_obsidian_sync",
+      "name": "Sync To Obsidian",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst merged = {};\nlet bestChatId = '';\nlet bestSource = null;\n\nfor (const it of items) {\n  const j = it?.json && typeof it.json === 'object' ? it.json : (typeof it === 'object' ? it : null);\n  if (!j || Array.isArray(j)) continue;\n\n  const candidateChatId = String(j.chat_id || '').trim();\n  if (candidateChatId && !bestChatId) {\n    bestChatId = candidateChatId;\n    bestSource = j;\n  }\n\n  for (const [k, v] of Object.entries(j)) {\n    if (k === 'chat_id') continue;\n    merged[k] = v;\n  }\n}\n\nif (!bestChatId) {\n  for (const it of items) {\n    const j = it?.json && typeof it.json === 'object' ? it.json : (typeof it === 'object' ? it : null);\n    const c = String(j?.metadata?.chat_id || '').trim();\n    if (c) { bestChatId = c; bestSource = j; break; }\n  }\n}\n\nif (bestSource) {\n  for (const [k, v] of Object.entries(bestSource)) {\n    if (k === 'chat_id') continue;\n    if (!(k in merged) || merged[k] == null || merged[k] === '') merged[k] = v;\n  }\n}\n\nif (bestChatId) merged.chat_id = bestChatId;\nreturn [{ json: merged }];"
+      },
+      "id": "code_obsidian_sync_join",
+      "name": "Obsidian Sync Join",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + ($node[\"Resolve Workspace\"].json[\"bot_token\"] || $env.TELEGRAM_BOT_TOKEN || '') + '/answerCallbackQuery' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ callback_query_id: $json.callback_query_id, text: 'Принято', show_alert: false }) }}",
+        "options": {}
+      },
+      "id": "http_answer_callback_query",
+      "name": "Answer Callback Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        520
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json;\n\nconst row = Array.isArray(input)\n  ? (input[0] || {})\n  : (input && Array.isArray(input.data)\n      ? (input.data[0] || {})\n      : (input && input.data && !Array.isArray(input.data)\n          ? input.data\n          : (input || {})));\n\nconst md = (row && row.metadata) ? row.metadata : {};\nconst text = String(md.assistant_answer_markdown || md.assistant_answer || '').trim();\n\nconst outputChatId = String((row && row.chat_id) || (md && md.chat_id) || (input && input.chat_id) || '').trim();\n\nreturn [{\n  ...row,\n  chat_id: outputChatId,\n  command_detected: Boolean(md.is_command),\n  command_mode: md.command_mode || null,\n  command_prompt: md.command_prompt || null,\n  ai_answer: md.assistant_answer || '',\n  ai_answer_markdown: text,\n  memory_kind: md.memory_kind || 'idea',\n  memory_topic: md.memory_topic || 'общий контекст',\n  normalized_text: (row && row.text) || '',\n  text: (row && row.text) || '',\n  original_text: md.original_text || (row && row.text) || '',\n  obsidian_branch: md.obsidian_branch || 'Inbox/Ideas',\n  obsidian_note_path: md.obsidian_note_path || '',\n}];"
+      },
+      "id": "code_restore_after_store",
+      "name": "Restore Fields After Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_obsidian_secondary_enabled",
+              "leftValue": "={{$json[\"obsidian_sync_secondary_enabled\"]}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_obsidian_secondary_enabled",
+      "name": "Secondary Obsidian Sync Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1730,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.obsidian_sync_webhook_secondary}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.obsidian_sync_payload_secondary}}",
+        "options": {
+          "timeout": 4000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-obsidian-token",
+              "value": "={{$json.obsidian_sync_token_secondary}}"
+            }
+          ]
+        }
+      },
+      "id": "http_obsidian_sync_secondary",
+      "name": "Sync To Obsidian Secondary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        -60
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_route_hermes",
+              "leftValue": "={{ Boolean($json.command_detected) && ['ask','research','optimize','cursor'].includes(String($json.command_mode || '').toLowerCase()) && String($env.HERMES_AGENT_API_URL || '').trim() !== '' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_route_hermes",
+      "name": "Route To Hermes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.HERMES_AGENT_API_URL}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-api-key",
+              "value": "={{$env.HERMES_AGENT_API_KEY || ''}}"
+            },
+            {
+              "name": "x-llm-tier",
+              "value": "={{$json.llm_tier || (($json.command_mode === 'research') ? 'reasoning' : (($json.command_mode === 'optimize') ? 'fast' : 'general'))}}"
+            },
+            {
+              "name": "x-swoop-user-email",
+              "value": "={{$json.swoop_user_email || 'autoro.tech@gmail.com'}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ chat_id: $json.chat_id, mode: $json.command_mode || 'ask', prompt: $json.command_prompt || $json.original_text || $json.text || '', llm_tier: $json.llm_tier || (($json.command_mode === 'research') ? 'reasoning' : (($json.command_mode === 'optimize') ? 'fast' : 'general')), llm_provider: $json.llm_route_provider || null, llm_model: $json.llm_route_model || null, swoop_user_email: $json.swoop_user_email || 'autoro.tech@gmail.com', context: { update_id: $json.update_id || null, message_id: $json.message_id || null, username: $json.username || null } }) }}",
+        "options": {
+          "timeout": 12000
+        }
+      },
+      "id": "http_run_hermes",
+      "name": "Run Hermes Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1860,
+        500
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: Apply Hermes Answer (+ failover на agent-api /api/v1/hermes/run)\n\nasync function fetchShim(url, init = {}) {\n  const method = (init.method || 'GET').toUpperCase();\n  const headers = { ...(init.headers || {}) };\n  let body = init.body;\n  if (typeof body === 'string') {\n    try {\n      body = JSON.parse(body);\n    } catch {\n      /* as-is */\n    }\n  }\n  const opts = {\n    method,\n    url,\n    headers,\n    json: true,\n    returnFullResponse: true,\n  };\n  if (body !== undefined && method !== 'GET' && method !== 'HEAD') {\n    opts.body = body;\n  }\n  const full = await this.helpers.httpRequest(opts);\n  const statusCode = full.statusCode ?? full.status ?? 200;\n  return {\n    ok: statusCode >= 200 && statusCode < 300,\n    status: statusCode,\n    json: async () => full.body,\n    text: async () => (typeof full.body === 'string' ? full.body : JSON.stringify(full.body || {})),\n  };\n}\n\nfunction sanitizeErr(text) {\n  return String(text || '')\n    .replace(/sk-or-[a-zA-Z0-9_-]+/gi, 'sk-or-***')\n    .replace(/sk-[a-zA-Z0-9._-]{12,}/gi, 'sk-***')\n    .replace(/https?:\\/\\/\\S+/gi, '[url]')\n    .replace(/\\s+/g, ' ')\n    .trim()\n    .slice(0, 400);\n}\n\nfunction pickAnswer(body) {\n  if (!body || typeof body !== 'object') return '';\n  const candidates = [\n    body.answer,\n    body.output,\n    body.text,\n    body.response,\n    body?.data?.answer,\n    body?.data?.text,\n  ]\n    .map((v) => String(v || '').trim())\n    .filter(Boolean);\n  return candidates[0] || '';\n}\n\nconst src = $json || {};\nconst statusCode = Number(src.statusCode ?? src.status ?? 0) || 0;\nconst rawBody = src.body && typeof src.body === 'object' ? src.body : src;\nconst errBlob = String(\n  src.error?.message || rawBody.error || rawBody.detail || rawBody.message || '',\n).trim();\n\nlet answer = pickAnswer(rawBody);\nlet provider = String(rawBody.provider || 'hermes').trim();\nlet model = String(rawBody.model || rawBody.agent || 'hermes').trim();\nlet failoverUsed = false;\n\nconst detectItems = $items('Detect & Run Command', 0, 0) || [];\nconst detectJson = detectItems[0]?.json || {};\nconst base = { ...detectJson, ...src };\n\nif (!answer && (statusCode >= 400 || /rate|402|429|exhausted|retry/i.test(errBlob))) {\n  const agentBase = String($env.AUTORO_AGENT_API_BASE || $env.HERMES_AGENT_API_URL || '')\n    .trim()\n    .replace(/\\/api\\/v1\\/hermes\\/run\\/?$/i, '')\n    .replace(/\\/+$/, '');\n  const apiKey = String($env.HERMES_AGENT_API_KEY || $env.AGENT_API_KEY || '').trim();\n  const failoverUrl = agentBase ? `${agentBase}/api/v1/hermes/run` : '';\n\n  if (failoverUrl && apiKey) {\n    const mode = String(base.command_mode || 'ask').toLowerCase();\n    const tier =\n      base.llm_tier ||\n      (mode === 'research' ? 'reasoning' : mode === 'optimize' ? 'fast' : 'general');\n    const prompt = String(\n      base.command_prompt || base.original_text || base.text || '',\n    ).trim();\n\n    try {\n      const resp = await fetchShim.call(this, failoverUrl, {\n        method: 'POST',\n        headers: {\n          'Content-Type': 'application/json',\n          'x-api-key': apiKey,\n          'x-llm-tier': tier,\n          'x-swoop-user-email': String(\n            base.swoop_user_email || $env.SWOOP_LLM_USER_EMAIL || 'autoro.tech@gmail.com',\n          ).trim(),\n        },\n        body: {\n          chat_id: base.chat_id,\n          mode,\n          prompt,\n          llm_tier: tier,\n          llm_provider: base.llm_route_provider || null,\n          llm_model: base.llm_route_model || null,\n          swoop_user_email: String(\n            base.swoop_user_email || $env.SWOOP_LLM_USER_EMAIL || 'autoro.tech@gmail.com',\n          ).trim(),\n          context: {\n            update_id: base.update_id || null,\n            message_id: base.message_id || null,\n            username: base.username || null,\n            hermes_failover: true,\n          },\n        },\n      });\n      if (resp.ok) {\n        const body = await resp.json();\n        const fb = pickAnswer(body);\n        if (fb) {\n          answer = fb.slice(0, 3900);\n          provider = String(body.provider || 'swoop-routing').trim();\n          model = String(body.model || '').trim() || 'routed';\n          failoverUsed = true;\n        }\n      }\n    } catch {\n      /* failover failed — fall through */\n    }\n  }\n}\n\nif (!answer) {\n  const hint = sanitizeErr(errBlob) || `HTTP ${statusCode || 'error'}`;\n  return [\n    {\n      ...base,\n      ai_answer: '',\n      ai_answer_markdown: `*Ошибка LLM*\\n\\n${hint}\\n\\nПроверьте ключи в Swoop → Service settings и \\`agent_llm_routing\\`. Для Hermes укажите \\`HERMES_AGENT_API_URL=…/api/v1/hermes/run\\`.`,\n      command_provider: 'hermes-error',\n      command_model: 'none',\n      hermes_failover_used: failoverUsed,\n    },\n  ];\n}\n\nreturn [\n  {\n    ...base,\n    ai_answer: answer.slice(0, 3900),\n    ai_answer_markdown: answer.slice(0, 3900),\n    command_provider: failoverUsed ? `${provider}-failover` : provider,\n    command_model: model,\n    hermes_failover_used: failoverUsed,\n  },\n];\n"
+      },
+      "id": "code_apply_hermes_answer",
+      "name": "Apply Hermes Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.AGENT_API_URL || 'https://swoop.autoro.tech').replace(/\\/$/, '') + '/api/v1/keept/telegram/resolve' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.TELEGRAM_WEBHOOK_SECRET || '') }}"
+            }
+          ]
+        },
+        "sendQueryParameters": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.params?.webhook_secret === 'platform-bot' ? $json.chat_id : undefined }}"
+            },
+            {
+              "name": "telegram_user_id",
+              "value": "={{ $json.params?.webhook_secret === 'platform-bot' ? $json.sender_id : undefined }}"
+            },
+            {
+              "name": "webhook_secret",
+              "value": "={{ $json.params?.webhook_secret !== 'platform-bot' ? $json.params?.webhook_secret : undefined }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "resolve_workspace_node",
+      "name": "Resolve Workspace",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "workspace_found",
+              "leftValue": "={{ $json.workspace_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_workspace_found",
+      "name": "If Workspace Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        980,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + ($node[\"Resolve Workspace\"].json[\"bot_token\"] || $env.TELEGRAM_BOT_TOKEN || '') + '/sendMessage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  chat_id: $node[\"Extract Telegram Input\"].json.chat_id,\n  text: 'This chat is not linked to Keep It For Me. Please go to Settings on Keept.me, generate a code, and send: /start <CODE>',\n  disable_web_page_preview: true\n} }}"
+      },
+      "id": "send_unlinked_message",
+      "name": "Send Unlinked Chat Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        10
+      ]
+    }
+  ],
+  "connections": {
+    "WebhookTelegramAssistant": {
+      "main": [
+        [
+          {
+            "node": "Extract Telegram Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Telegram Input": {
+      "main": [
+        [
+          {
+            "node": "Valid Telegram Secret?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Telegram Secret?": {
+      "main": [
+        [
+          {
+            "node": "Resolve Workspace",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has Text Message?": {
+      "main": [
+        [
+          {
+            "node": "Classify & Normalize Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Answer Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Vectorize With Key Rotation": {
+      "main": [
+        [
+          {
+            "node": "Store Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Memory": {
+      "main": [
+        [
+          {
+            "node": "Restore Fields After Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Structured Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Confirmation": {
+      "main": [
+        []
+      ]
+    },
+    "Classify & Normalize Message": {
+      "main": [
+        [
+          {
+            "node": "Detect & Run Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect & Run Command": {
+      "main": [
+        [
+          {
+            "node": "Is Command Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Command Request?": {
+      "main": [
+        [
+          {
+            "node": "Route To Hermes?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vectorize With Key Rotation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Command After Store?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Structured Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Obsidian Payload": {
+      "main": [
+        [
+          {
+            "node": "Obsidian Sync Enabled?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Secondary Obsidian Sync Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obsidian Sync Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Sync To Obsidian",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Obsidian Sync Join",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Obsidian Sync Join",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync To Obsidian": {
+      "main": [
+        [
+          {
+            "node": "Obsidian Sync Join",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obsidian Sync Join": {
+      "main": [
+        []
+      ]
+    },
+    "Answer Callback Query": {
+      "main": [
+        []
+      ]
+    },
+    "Restore Fields After Store": {
+      "main": [
+        [
+          {
+            "node": "Build Obsidian Payload",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Obsidian Sync Join",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Command After Store?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secondary Obsidian Sync Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Sync To Obsidian Secondary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync To Obsidian Secondary": {
+      "main": [
+        []
+      ]
+    },
+    "Route To Hermes?": {
+      "main": [
+        [
+          {
+            "node": "Run Hermes Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vectorize With Key Rotation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Hermes Agent": {
+      "main": [
+        [
+          {
+            "node": "Apply Hermes Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Hermes Answer": {
+      "main": [
+        [
+          {
+            "node": "Vectorize With Key Rotation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Workspace": {
+      "main": [
+        [
+          {
+            "node": "If Workspace Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Workspace Found": {
+      "main": [
+        [
+          {
+            "node": "Has Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unlinked Chat Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "keept_telegram_assistant_v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

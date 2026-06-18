@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Bookmarks Bro",
+  "description": "Sync bookmarks to Bookmarks Bro agent-api; testing build 0.1.1-testing (workspace ensure, UI state, Knowledge App).",
+  "version": "0.3.1",
+  "permissions": ["bookmarks", "storage", "alarms", "windows", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Bookmarks Bro Sync",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bookmarks-bro@autoro.tech"
+    }
+  }
+}
