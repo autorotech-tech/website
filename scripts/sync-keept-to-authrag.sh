@@ -69,6 +69,7 @@ git fetch origin "$AUTHRAG_BRANCH" 2>/dev/null || true
 git checkout "$AUTHRAG_BRANCH" 2>/dev/null || git checkout -b "$AUTHRAG_BRANCH"
 
 # Only Keept / Bookmarks Bro slice (+ shared docs & build toolchain for Antigravity)
+# rsync: parent dirs must be included before children (see --exclude='*' last).
 rsync "${RSYNC_FLAGS[@]}" \
   --include='AGENTS.md' \
   --include='GEMINI.md' \
@@ -92,14 +93,20 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='src/**' \
   --include='agent-api/' \
   --include='agent-api/**' \
+  --include='extensions/' \
   --include='extensions/bookmarks-bro/' \
   --include='extensions/bookmarks-bro/**' \
+  --include='docs/' \
   --include='docs/bookmarks-bro/' \
   --include='docs/bookmarks-bro/**' \
+  --include='n8n/' \
+  --include='n8n/workflows/' \
   --include='n8n/workflows/keept_telegram_assistant.json' \
   --include='migrate_bookmarks_bro_mvp.sql' \
+  --include='ops/' \
   --include='ops/bookmarks-bro-supabase/' \
   --include='ops/bookmarks-bro-supabase/**' \
+  --include='scripts/' \
   --include='scripts/bookmarks-bro-smoke.mjs' \
   --include='scripts/bookmarks-bro-api-test.mjs' \
   --include='scripts/sync-keept-to-authrag.sh' \
