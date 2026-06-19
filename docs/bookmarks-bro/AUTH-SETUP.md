@@ -216,3 +216,12 @@ grep BOOKMARKS_ ~/website/.env
 ```
 
 Copy into local `.env` (gitignored) using placeholders from §3.
+
+**Automated (operator machine with SSH to VPS):**
+
+```bash
+npm run keept:env:local              # .env + agent-api/.env from VPS
+npm run keept:env:github-secrets     # + GitHub Actions secrets (AuthRAG + website)
+```
+
+Uses `remote_cmd.sh` and `/home/vladx/supabase-bookmarks-prod/docker/.env.bookmarks`.

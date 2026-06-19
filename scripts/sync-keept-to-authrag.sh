@@ -112,6 +112,11 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='scripts/sync-keept-to-authrag.sh' \
   --include='scripts/setup-understand-anything.sh' \
   --include='scripts/link-antigravity-skills.sh' \
+  --include='scripts/setup-keept-local-env.sh' \
+  --include='scripts/setup-keept-github-secrets.sh' \
+  --include='.github/' \
+  --include='.github/workflows/' \
+  --include='.github/workflows/keept-staging-smoke.yml' \
   --exclude='*' \
   "$WEBSITE_ROOT/" "$AUTHRAG_ROOT/"
 

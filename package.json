@@ -23,6 +23,8 @@
     "keept:sync-authrag": "bash scripts/sync-keept-to-authrag.sh",
     "keept:sync-authrag:apply": "bash scripts/sync-keept-to-authrag.sh --apply --push",
     "understand-anything:install": "bash scripts/setup-understand-anything.sh",
+    "keept:env:local": "bash scripts/setup-keept-local-env.sh",
+    "keept:env:github-secrets": "bash scripts/setup-keept-local-env.sh --github-secrets",
     "safedep:mcp:configure": "node scripts/setup-safedep-mcp.mjs"
   },
   "dependencies": {

@@ -1,0 +1,41 @@
+name: Keept staging smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, bookmarks-bro]
+    paths:
+      - 'agent-api/**'
+      - 'src/bookmarksBro/**'
+      - 'extensions/bookmarks-bro/**'
+      - 'scripts/bookmarks-bro-api-test.mjs'
+      - '.github/workflows/keept-staging-smoke.yml'
+
+jobs:
+  api-smoke:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.KEEPT_BOOKMARKS_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bookmarks Bro API smoke (staging)
+        env:
+          AGENT_API_BASE: ${{ secrets.KEEPT_STAGING_API_BASE || 'https://swoop.autoro.tech' }}
+          VITE_BOOKMARKS_API_KEY: ${{ secrets.KEEPT_BOOKMARKS_API_KEY }}
+        run: node scripts/bookmarks-bro-api-test.mjs
+
+  checklist-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Static smoke checklist
+        run: node scripts/bookmarks-bro-smoke.mjs
