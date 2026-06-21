@@ -13,11 +13,11 @@
 | **B** | Backend port + unit tests | ✅ Done | `website/agent-api/security.py`, AuthRAG mirror |
 | **C** | Capture → moderation queue + API | ✅ Done | `agent-api/main.py`, SQL `003_capture_moderation_queue.sql` |
 | **D** | Keept Admin UI (`/keept/admin`) | ✅ Done | `src/keeptAdmin/*` (Antigravity) |
-| **E** | ADK `capture_workflow` в playground/API | ✅ Done (AuthRAG/ADK) | `keep-it-for-me/app/agent_workflow.py`, `fast_api_app.py` |
+| **E** | ADK `capture_workflow` + HITL fix | ✅ Done | `fast_api_app.py` — Event-based HITL detection |
 | **F** | Kaggle + ADK docs | ✅ Done | `KAGGLE-CAPSTONE-KEEPT.md`, `ADK-WORKFLOW-HITL.md` |
-| **G** | Cloudflare keept.me + nginx | 📋 Spec only | [CLOUDFLARE-KEEPT-DNS.md](./CLOUDFLARE-KEEPT-DNS.md) |
-| **H** | E2E staging: capture → admin approve → Obsidian | 🔜 Next | Manual QA on VPS |
-| **I** | Kaggle video + submission | 🔜 Next | Capstone deadline 6 Jul 2026 |
+| **G** | Cloudflare keept.me + nginx | 📋 Operator | [CLOUDFLARE-KEEPT-DNS.md](./CLOUDFLARE-KEEPT-DNS.md), [ops/nginx/keept.me.conf](../../ops/nginx/keept.me.conf) |
+| **H** | Staging deploy + E2E QA | 🟡 Deploy ✅ · QA manual | [swoop `/keept/admin`](https://swoop.autoro.tech/keept/admin) |
+| **I** | Kaggle video + submission | 🔜 | [KAGGLE-CAPSTONE-KEEPT.md](./KAGGLE-CAPSTONE-KEEPT.md) |
 
 ---
 
@@ -52,6 +52,7 @@ npm run bookmarks-bro:smoke
 npm run keept:security:test      # ADK unit + integration + agent-api security
 npm run keept:adk:playground     # ADK dev UI (keep-it-for-me)
 npm run keept:sync-authrag:apply # website → AuthRAG bookmarks-bro
+npm run keept:deploy:staging     # swoop.autoro.tech SPA + agent-api
 ```
 
 ADK живёт **вне** monorepo — не используйте `cd "google intensive/..."` из `website/`.

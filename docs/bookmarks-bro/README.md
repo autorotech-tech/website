@@ -5,12 +5,13 @@ Product: **Keep It For Me** (Keept) · Domain: **keept.me** · Code: `bookmarks-
 ## Start here (Antigravity)
 
 1. **[ANTIGRAVITY-HANDOFF.md](./ANTIGRAVITY-HANDOFF.md)** — paste entire file into Antigravity session
-2. **[ANTIGRAVITY-KEEPT-ADMIN-CAPSTONE.md](./ANTIGRAVITY-KEEPT-ADMIN-CAPSTONE.md)** — Admin UI + Kaggle capstone + **copy-paste block для Antigravity**
-3. **[CLOUDFLARE-KEEPT-DNS.md](./CLOUDFLARE-KEEPT-DNS.md)** — DNS, SSL, nginx для keept.me и поддоменов
-4. **[AUTH-SETUP.md](./AUTH-SETUP.md)** — staging URLs, env vars, OAuth, where operators get secrets
-5. **[ANTIGRAVITY-KEEPT-BRIEF.md](./ANTIGRAVITY-KEEPT-BRIEF.md)** — Phase 1 checklist
-6. **[ANTIGRAVITY-SWOOP-KEEPT.md](./ANTIGRAVITY-SWOOP-KEEPT.md)** — Swoop control plane × Keept data plane
-7. **[ANTIGRAVITY-SWOOP-API.md](./ANTIGRAVITY-SWOOP-API.md)** — agent-api endpoints для Antigravity (auth, capture, LLM)
+2. **[ANTIGRAVITY-NEXT-STEPS.md](./ANTIGRAVITY-NEXT-STEPS.md)** — **после Phase A–D: copy-paste для Antigravity**
+3. **[ANTIGRAVITY-KEEPT-ADMIN-CAPSTONE.md](./ANTIGRAVITY-KEEPT-ADMIN-CAPSTONE.md)** — Admin UI + Kaggle capstone handoff
+4. **[CLOUDFLARE-KEEPT-DNS.md](./CLOUDFLARE-KEEPT-DNS.md)** — DNS, SSL, nginx для keept.me и поддоменов
+5. **[AUTH-SETUP.md](./AUTH-SETUP.md)** — staging URLs, env vars, OAuth, where operators get secrets
+6. **[ANTIGRAVITY-KEEPT-BRIEF.md](./ANTIGRAVITY-KEEPT-BRIEF.md)** — Phase 1 checklist
+7. **[ANTIGRAVITY-SWOOP-KEEPT.md](./ANTIGRAVITY-SWOOP-KEEPT.md)** — Swoop control plane × Keept data plane
+8. **[ANTIGRAVITY-SWOOP-API.md](./ANTIGRAVITY-SWOOP-API.md)** — agent-api endpoints для Antigravity (auth, capture, LLM)
 
 ## Architecture & ops
 

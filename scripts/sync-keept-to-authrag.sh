@@ -112,6 +112,7 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='scripts/bookmarks-bro-smoke.mjs' \
   --include='scripts/bookmarks-bro-api-test.mjs' \
   --include='scripts/keept-adk.sh' \
+  --include='scripts/deploy-keept-staging.sh' \
   --include='scripts/sync-keept-to-authrag.sh' \
   --include='scripts/setup-understand-anything.sh' \
   --include='scripts/link-antigravity-skills.sh' \
