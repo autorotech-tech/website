@@ -1,6 +1,6 @@
 const DEFAULT_API = BB_EXTENSION.apiBaseDefault;
 const LIMIT = 40;
-const IMPORT_FOLDER = 'Bookmarks Bro Import';
+const IMPORT_FOLDER = 'Keept Import';
 /** "Other Bookmarks" in Chromium */
 const OTHER_BOOKMARKS_PARENT = '2';
 

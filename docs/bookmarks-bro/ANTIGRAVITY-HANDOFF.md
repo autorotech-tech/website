@@ -74,8 +74,20 @@ website/                              # SOURCE OF TRUTH (Cursor)
     └── bookmarks-bro-api-test.mjs
 
 AuthRAG/                              # YOUR MIRROR (branch bookmarks-bro)
+├── agents/keep-it-for-me → ../../keep-it-for-me   # ADK agent plane (symlink)
 └── (subset of paths above — synced via script)
 ```
+
+### Agent plane (ADK, separate from web UI)
+
+| Path | Role |
+|------|------|
+| `keep-it-for-me/` (repo sibling) | Keept RAG ADK — `agents-cli deploy`, security screen before LLM |
+| `AuthRAG/agents/keep-it-for-me` | Symlink to ADK project — see `agents/README.md` |
+| `ambient-expense-agent/` | Course agent — eval `make grade` |
+| `secure-agent-lab/` | **Separate workspace** — Assignment 4 only |
+
+Web slice (`src/bookmarksBro`, `agent-api`) talks to staging API. ADK runtime deploys in parallel.
 
 ### GitHub reality check (2026-06-18)
 
@@ -113,10 +125,11 @@ AuthRAG/                              # YOUR MIRROR (branch bookmarks-bro)
 ### Phase 1 open items (your priority)
 
 - [x] `docs/bookmarks-bro/AUTH-SETUP.md` (EN) — staging URLs, env templates, OAuth, VPS access paths
-- [ ] `agent-api/schemas/categories.json` + `normalize_tags()` + tests — **missing**
-- [ ] Full **English** UI in `BookmarksBroApp.tsx`, extension HTML/JS
-- [ ] User-visible brand **Keep It For Me** / **Keept** (not "Bookmarks Bro")
-- [ ] Search filters: category, tag, RAG mode (see brief §2.4)
+- [x] `schemas/categories.json` + `normalize_category()` + `agent-api/tests/test_normalize_tags.py`
+- [x] User-visible brand **Keep It For Me** / **Keept** in web UI + extension HTML
+- [x] Search filters: category, tag (clickable pills), RAG semantic/keyword mode
+- [x] `AuthRAG/agents/keep-it-for-me` symlink + `agents/README.md`
+- [ ] Push full website monorepo to GitHub `main` (operator)
 
 ### Already implemented (do not redo)
 

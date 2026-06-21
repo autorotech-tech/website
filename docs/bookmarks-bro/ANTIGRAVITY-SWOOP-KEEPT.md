@@ -293,7 +293,8 @@ Read order:
 1. `docs/ANTIGRAVITY-KEEPT-BRIEF.md`
 2. `docs/ANTIGRAVITY-SWOOP-KEEPT.md` (this file)
 3. `docs/ANTIGRAVITY-INFRA-BRIEF.md`
-4. `ROADMAP.md`
+4. `docs/ANTIGRAVITY-SWOOP-API.md` (agent-api reference)
+5. `ROADMAP.md`
 
 ### 6.2 Staging access (operator)
 

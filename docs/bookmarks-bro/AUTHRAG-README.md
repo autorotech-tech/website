@@ -9,6 +9,7 @@
 2. Auth & staging: **`docs/bookmarks-bro/AUTH-SETUP.md`**
 3. Phase 1 задачи: **`docs/bookmarks-bro/ANTIGRAVITY-KEEPT-BRIEF.md`**
 4. Архитектура Swoop × Keept: **`docs/bookmarks-bro/ANTIGRAVITY-SWOOP-KEEPT.md`**
+5. API agent-api: **`docs/bookmarks-bro/ANTIGRAVITY-SWOOP-API.md`**
 5. Карта кода: `bash scripts/setup-understand-anything.sh` → `/understand src/bookmarksBro agent-api extensions/bookmarks-bro --language en`
 
 Полный индекс: **`docs/bookmarks-bro/README.md`**

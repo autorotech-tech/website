@@ -7,6 +7,7 @@ import { AdminPanel } from './components/AdminPanel'
 import { ChatAgents } from './components/ChatAgents'
 import { AdminChatAgents } from './components/AdminChatAgents'
 import { BlogAdmin } from './components/BlogAdmin'
+import { CatalogAdmin } from './components/CatalogAdmin'
 import { SocialCrossposting } from './components/SocialCrossposting'
 import { AdminScrapling } from './components/AdminScrapling'
 import { AdminPerplexica } from './components/AdminPerplexica'
@@ -18,11 +19,13 @@ import { AdminLandings } from './components/AdminLandings'
 import { AdminBookmarksBro } from './components/AdminBookmarksBro'
 import { AssistantMemory } from './components/AssistantMemory'
 import { BookmarksBroApp } from './bookmarksBro/BookmarksBroApp'
+import { KeeptAdminApp } from './keeptAdmin/KeeptAdminApp'
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/keept/admin/*" element={<KeeptAdminApp />} />
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<TaskList />} />
@@ -32,6 +35,7 @@ function App() {
           <Route path="admin/marketing-audit" element={<AdminPanel />} />
           <Route path="admin/chat-agent" element={<AdminChatAgents />} />
           <Route path="admin/blog" element={<BlogAdmin />} />
+          <Route path="admin/pquoc-catalog" element={<CatalogAdmin />} />
           <Route path="admin/social-crossposting" element={<SocialCrossposting />} />
           <Route path="admin/web-scraping" element={<AdminScrapling />} />
           <Route path="admin/deep-search" element={<AdminDeepSearch />} />

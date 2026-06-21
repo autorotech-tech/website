@@ -23,6 +23,7 @@ import {
   setBookmarksBroRemotePersistEnabled,
   trackTelemetry,
   unifiedSearch,
+  fetchLibraryFacets,
   upsertTaskTokenUsage,
   generateTelegramLinkCode,
   getTelegramLinkStatus,
@@ -66,7 +67,7 @@ function scheduleReminder(reminder: ReminderItem): void {
   if (fireAt <= 0) return
   window.setTimeout(() => {
     if (Notification.permission === 'granted') {
-      new Notification(`Bookmarks Bro: ${reminder.title}`, {
+      new Notification(`Keep It For Me: ${reminder.title}`, {
         body: `Reminder for idea ${reminder.ideaId}`,
       })
     }
@@ -97,6 +98,10 @@ export function BookmarksBroApp() {
   const [error, setError] = useState('')
   const [syncStatus, setSyncStatus] = useState<UiSyncStatus>(() => getUiSyncStatus())
   const [tagFilter, setTagFilter] = useState<string>('All')
+  const [categoryFilter, setCategoryFilter] = useState<string>('All')
+  const [ragMode, setRagMode] = useState<'semantic' | 'keyword'>('semantic')
+  const [facetCategories, setFacetCategories] = useState<string[]>([])
+  const [facetTags, setFacetTags] = useState<string[]>([])
   const [workspaceId, setWorkspaceId] = useState('')
   const [tgStatus, setTgStatus] = useState<TelegramLinkStatus | null>(null)
   const [tgStatusLoading, setTgStatusLoading] = useState(false)
@@ -120,6 +125,23 @@ export function BookmarksBroApp() {
   const [reindexProgress, setReindexProgress] = useState<number | null>(null)
   const [reindexTotal, setReindexTotal] = useState(0)
   const [reindexCurrent, setReindexCurrent] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const ws = await resolveWorkspaceId()
+      if (cancelled) return
+      setWorkspaceId(ws)
+      const facets = await fetchLibraryFacets(ws)
+      if (!cancelled) {
+        setFacetCategories(facets.categories)
+        setFacetTags(facets.tags)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => subscribeUiSyncStatus(setSyncStatus), [])
 
@@ -393,7 +415,7 @@ export function BookmarksBroApp() {
   )
 
   const allTags = useMemo(() => {
-    const set = new Set<string>()
+    const set = new Set<string>(facetTags)
     for (const item of searchItems) {
       if (item.tags) {
         for (const t of item.tags) {
@@ -402,12 +424,15 @@ export function BookmarksBroApp() {
       }
     }
     return Array.from(set).sort()
-  }, [searchItems])
+  }, [searchItems, facetTags])
 
   const filteredSearchItems = useMemo(() => {
-    if (tagFilter === 'All') return searchItems
-    return searchItems.filter((item) => item.tags && item.tags.includes(tagFilter))
-  }, [searchItems, tagFilter])
+    return searchItems.filter((item) => {
+      if (tagFilter !== 'All' && !(item.tags && item.tags.includes(tagFilter))) return false
+      if (categoryFilter !== 'All' && item.category !== categoryFilter) return false
+      return true
+    })
+  }, [searchItems, tagFilter, categoryFilter])
 
   async function handleSearch(): Promise<void> {
     setIsLoading(true)
@@ -442,13 +467,17 @@ export function BookmarksBroApp() {
 
       setSelectedIds([])
       setTagFilter('All')
+      setCategoryFilter('All')
     } catch (err: any) {
       console.warn('Agent search failed, falling back to basic search:', err)
       try {
-        const rows = await unifiedSearch(query, sourceFilter)
+        const rows = await unifiedSearch(query, sourceFilter, {
+          semantic: ragMode === 'semantic',
+        })
         setSearchItems(rows)
         setSelectedIds([])
         setTagFilter('All')
+        setCategoryFilter('All')
       } catch {
         setError('Failed to perform search. Check backend and data access.')
       }
@@ -684,7 +713,7 @@ export function BookmarksBroApp() {
       <header className="bb-card p-6 space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="bb-kicker">Bookmarks Bro · build {BOOKMARKS_BRO_BUILD}</p>
+            <p className="bb-kicker">Keept · build {BOOKMARKS_BRO_BUILD}</p>
             <h1 className="bb-title">Knowledge Workspace</h1>
             <p className="bb-subtitle">
               Search, ideas, reminders, and knowledge base export via agent-api (UI state persistence on the server).
@@ -898,7 +927,7 @@ export function BookmarksBroApp() {
               </div>
             </div>
 
-            <div className="grid md:grid-cols-5 gap-3">
+            <div className="grid md:grid-cols-6 gap-3">
               <input
                 className="bb-input md:col-span-2"
                 value={query}
@@ -917,6 +946,18 @@ export function BookmarksBroApp() {
               </select>
               <select
                 className="bb-input"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value="All">All categories</option>
+                {facetCategories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="bb-input"
                 value={tagFilter}
                 onChange={(e) => setTagFilter(e.target.value)}
               >
@@ -927,7 +968,15 @@ export function BookmarksBroApp() {
                   </option>
                 ))}
               </select>
-              <button type="button" className="bb-btn-secondary" onClick={() => void handleSearch()}>
+              <select
+                className="bb-input"
+                value={ragMode}
+                onChange={(e) => setRagMode(e.target.value as 'semantic' | 'keyword')}
+              >
+                <option value="semantic">Semantic</option>
+                <option value="keyword">Keyword</option>
+              </select>
+              <button type="button" className="bb-btn-secondary md:col-span-6" onClick={() => void handleSearch()}>
                 {isLoading ? 'Searching…' : 'Search'}
               </button>
             </div>
@@ -1035,14 +1084,20 @@ export function BookmarksBroApp() {
                       <span className="block font-medium text-[#26251e]">{item.title}</span>
                       <span className="block text-sm text-[#5a5852]">{item.snippet}</span>
                       <span className="block text-xs text-[#807d72]">
-                        {item.source} · relevance {(item.relevance * 100).toFixed(0)}%
+                        {item.source}
+                        {item.category ? ` · ${item.category}` : ''} · relevance {(item.relevance * 100).toFixed(0)}%
                       </span>
                       {item.tags && item.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
                           {item.tags.map((tag) => (
-                            <span key={tag} className="text-[10px] bg-[#f0ede4] text-[#5a5852] px-1.5 py-0.5 rounded">
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => setTagFilter(tag)}
+                              className="text-[10px] bg-[#f0ede4] text-[#5a5852] px-1.5 py-0.5 rounded hover:bg-[#e8e4d8] cursor-pointer"
+                            >
                               {tag}
-                            </span>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -1057,7 +1112,7 @@ export function BookmarksBroApp() {
               ))}
               {!filteredSearchItems.length && (
                 <li className="text-sm text-[#807d72]">
-                  {searchItems.length ? 'No results match the selected tag filter.' : 'Run a search to see results.'}
+                  {searchItems.length ? 'No results match the selected filters.' : 'Run a search to see results.'}
                 </li>
               )}
             </ul>

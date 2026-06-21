@@ -264,12 +264,42 @@ function normalizeSearchItem(item: unknown, idx: number): SearchItem {
     snippet: String(row.snippet ?? row.summary ?? row.content ?? ''),
     link: typeof row.url === 'string' ? row.url : undefined,
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
-    relevance: Number(row.relevance ?? row.score ?? 0),
+    category: typeof row.category === 'string' ? row.category : undefined,
+    relevance: Number(row.relevance ?? row.score ?? row.distance ?? 0),
     createdAt: typeof row.createdAt === 'string' ? row.createdAt : undefined,
   }
 }
 
-export async function unifiedSearch(query: string, sourceFilter: SourceKind | 'All'): Promise<SearchItem[]> {
+export type LibraryFacets = {
+  categories: string[]
+  tags: string[]
+}
+
+export async function fetchLibraryFacets(workspaceId?: string): Promise<LibraryFacets> {
+  const ws = workspaceId ?? (await resolveWorkspaceId())
+  try {
+    const response = await fetch(
+      bookmarksAgentApiUrl(
+        `/api/v1/bookmarks/library/facets?workspaceId=${encodeURIComponent(ws)}`,
+      ),
+      { headers: bookmarksHeaders() },
+    )
+    if (!response.ok) throw new Error(`facets_failed_${response.status}`)
+    const payload = (await response.json()) as { categories?: unknown[]; tags?: unknown[] }
+    return {
+      categories: Array.isArray(payload.categories) ? payload.categories.map(String) : [],
+      tags: Array.isArray(payload.tags) ? payload.tags.map(String) : [],
+    }
+  } catch {
+    return { categories: [], tags: [] }
+  }
+}
+
+export async function unifiedSearch(
+  query: string,
+  sourceFilter: SourceKind | 'All',
+  options?: { semantic?: boolean },
+): Promise<SearchItem[]> {
   const trimmed = query.trim()
 
   if (getStorageMode() === 'local') {
@@ -298,7 +328,12 @@ export async function unifiedSearch(query: string, sourceFilter: SourceKind | 'A
     const response = await fetch(bookmarksAgentApiUrl('/api/v1/bookmarks/search'), {
       method: 'POST',
       headers: bookmarksHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ workspaceId, query: trimmed, limit: 20 }),
+      body: JSON.stringify({
+        workspaceId,
+        query: trimmed,
+        limit: 20,
+        semantic: options?.semantic ?? true,
+      }),
     })
     if (!response.ok) throw new Error(`search_failed_${response.status}`)
     const payload = (await response.json()) as { items?: unknown[]; results?: unknown[] }

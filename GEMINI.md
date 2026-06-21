@@ -28,6 +28,8 @@ bash scripts/link-antigravity-skills.sh
 
 **Первое сообщение в новой сессии Antigravity:** вставьте целиком `docs/bookmarks-bro/ANTIGRAVITY-HANDOFF.md`.
 
+**API-справка для Keept:** `docs/bookmarks-bro/ANTIGRAVITY-SWOOP-API.md` — endpoints, auth, smoke, LLM routing.
+
 **Синхронизация website → AuthRAG** (из корня website):
 
 ```bash

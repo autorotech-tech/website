@@ -93,6 +93,8 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='src/**' \
   --include='agent-api/' \
   --include='agent-api/**' \
+  --include='schemas/' \
+  --include='schemas/**' \
   --include='extensions/' \
   --include='extensions/bookmarks-bro/' \
   --include='extensions/bookmarks-bro/**' \
@@ -109,6 +111,7 @@ rsync "${RSYNC_FLAGS[@]}" \
   --include='scripts/' \
   --include='scripts/bookmarks-bro-smoke.mjs' \
   --include='scripts/bookmarks-bro-api-test.mjs' \
+  --include='scripts/keept-adk.sh' \
   --include='scripts/sync-keept-to-authrag.sh' \
   --include='scripts/setup-understand-anything.sh' \
   --include='scripts/link-antigravity-skills.sh' \

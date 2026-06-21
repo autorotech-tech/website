@@ -46,6 +46,7 @@ from swoop_provider_catalog import (
     search_openrouter_models,
 )
 from swoop_expired_domains import configure_expired_domains, ensure_expired_domains_schema, router as expired_domains_router
+from security import screen_capture_content
 
 PGHOST = os.environ.get("PGHOST", "supabase-db")
 PGPORT = int(os.environ.get("PGPORT") or "5433")
@@ -251,6 +252,7 @@ async def _app_lifespan(app: FastAPI):
         ensure_bookmarks_worker_schema()
         ensure_bookmarks_enrichment_schema()
         ensure_knowledge_schema()
+        ensure_capture_moderation_queue_schema()
         ensure_bookmarks_token_usage_schema()
         ensure_bookmarks_bro_ui_workspace_schema()
         ensure_service_settings_schema()
@@ -986,6 +988,12 @@ class KnowledgeExportPayload(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
     limit: int = Field(default=120, ge=1, le=500)
     semantic: bool = Field(default=True)
+
+
+class KeeptModerationResolvePayload(BaseModel):
+    id: str = Field(..., min_length=36, max_length=36, description="Moderation queue UUID")
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    decision: str = Field(..., min_length=4, max_length=16, description="approve | reject")
 
 
 class KnowledgeExtractCapturePayload(BaseModel):
@@ -2117,6 +2125,43 @@ def ensure_knowledge_schema() -> None:
         conn.close()
 
 
+def ensure_capture_moderation_queue_schema() -> None:
+    """Очередь модерации для capture с PII / prompt injection (Google Intensive)."""
+    conn = pg_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                create table if not exists public.capture_moderation_queue (
+                  id uuid primary key default gen_random_uuid(),
+                  workspace_id bigint not null,
+                  knowledge_item_id bigint references public.knowledge_items(id) on delete set null,
+                  session_id varchar(128),
+                  source varchar(64) not null,
+                  url text,
+                  original_title text,
+                  raw_text text not null,
+                  redacted_text text not null,
+                  redacted_categories jsonb not null default '[]'::jsonb,
+                  prompt_injection boolean not null default false,
+                  status varchar(32) not null default 'pending_approval',
+                  created_at timestamptz not null default now(),
+                  resolved_at timestamptz
+                )
+                """
+            )
+            cur.execute(
+                "create index if not exists idx_moderation_workspace_status "
+                "on public.capture_moderation_queue(workspace_id, status)"
+            )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("Failed to ensure capture_moderation_queue schema: %s", exc)
+    finally:
+        conn.close()
+
+
 def ensure_bookmarks_bro_ui_workspace_schema() -> None:
     """Bookmarks Bro UI: идеи, напоминания, карточки KB на workspace (snapshot)."""
     conn = pg_connect_bookmarks()
@@ -2257,6 +2302,9 @@ def ensure_service_settings_schema() -> None:
             )
             cur.execute(
                 "alter table public.service_settings add column if not exists api_key_pool_meta jsonb not null default '{}'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists glm_default_model text not null default 'glm-4.7'"
             )
             cur.execute(
                 "alter table public.service_settings add column if not exists expireddomains_username text not null default ''"
@@ -2407,18 +2455,39 @@ def normalize_tags(tags: list) -> list:
             normalized.append(norm)
     return normalized
 
+
+def normalize_category(category: str) -> str:
+    if not category:
+        return "general"
+    schema = get_tags_schema()
+    aliases = schema.get("tag_aliases", {})
+    allowed = set(schema.get("categories", []))
+    norm = normalize_single_tag(str(category), aliases)
+    if norm in allowed:
+        return norm
+    return "general"
+
+
 def infer_category(url: str, title: str, content_text: str) -> str:
     source = f"{url} {title} {content_text}".lower()
+    schema = get_tags_schema()
     rules = {
-        "ai-ml": ["ai", "llm", "machine learning", "neural", "openai", "anthropic"],
+        "ai-ml": ["ai", "llm", "machine learning", "neural", "openai", "anthropic", "gemini"],
         "dev-tools": ["github", "gitlab", "docs", "api", "sdk", "typescript", "python", "docker"],
         "marketing": ["seo", "ads", "marketing", "growth", "lead", "funnel"],
         "business": ["pricing", "saas", "revenue", "sales", "finance", "startup"],
         "design": ["design", "ui", "ux", "figma", "typography"],
+        "prompt": ["prompt", "system prompt", "few-shot"],
+        "article": ["article", "blog", "post", "essay"],
+        "note": ["note", "memo", "journal"],
+        "link": ["bookmark", "link", "url"],
+        "task": ["task", "todo", "reminder"],
     }
     for category, words in rules.items():
+        if category not in schema.get("categories", []):
+            continue
         if any(w in source for w in words):
-            return category
+            return normalize_category(category)
     return "general"
 
 
@@ -3152,33 +3221,34 @@ _LLM_TIER_NAMES: Tuple[str, ...] = ("code", "reasoning", "fast", "general", "vis
 
 def _default_agent_llm_routing() -> Dict[str, Any]:
     """Цепочки по умолчанию, если в БД пусто или неполная конфигурация."""
+    glm_step = {"provider": "glm", "model": ""}
     or_step = {"provider": "openrouter", "model": ""}
     return {
         "tiers": {
             "code": [
+                glm_step,
                 or_step,
                 {"provider": "groq", "model": ""},
-                {"provider": "glm", "model": ""},
                 {"provider": "openai", "model": ""},
                 {"provider": "gemini", "model": ""},
             ],
             "reasoning": [
+                glm_step,
                 or_step,
                 {"provider": "openai", "model": ""},
                 {"provider": "groq", "model": ""},
-                {"provider": "glm", "model": ""},
                 {"provider": "gemini", "model": ""},
             ],
             "fast": [
-                {"provider": "groq", "model": ""},
-                {"provider": "glm", "model": ""},
+                glm_step,
                 or_step,
+                {"provider": "groq", "model": ""},
                 {"provider": "openai", "model": ""},
                 {"provider": "gemini", "model": ""},
             ],
             "general": [
+                glm_step,
                 or_step,
-                {"provider": "glm", "model": ""},
                 {"provider": "groq", "model": ""},
                 {"provider": "openai", "model": ""},
                 {"provider": "gemini", "model": ""},
@@ -3186,10 +3256,26 @@ def _default_agent_llm_routing() -> Dict[str, Any]:
             "vision": [
                 {"provider": "glm", "model": ""},
                 {"provider": "gemini", "model": ""},
-                {"provider": "openrouter", "model": ""},
+                or_step,
                 {"provider": "openai", "model": ""},
                 {"provider": "groq", "model": ""},
             ],
+        },
+        "tier_models": {
+            "glm": {
+                "fast": "glm-4-flash",
+                "general": "glm-4.7",
+                "code": "glm-4.7",
+                "reasoning": "glm-5",
+                "vision": "glm-4v-flash",
+            },
+            "openrouter": {
+                "fast": "openai/gpt-4o-mini",
+                "general": "anthropic/claude-3.7-sonnet",
+                "code": "anthropic/claude-3.7-sonnet",
+                "reasoning": "anthropic/claude-3.7-sonnet",
+                "vision": "google/gemini-2.5-pro",
+            },
         },
         "fallback": [
             {"provider": "api_key_groups", "model": ""},
@@ -3307,7 +3393,8 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "groq_keys": [],
         "gemini_keys": [],
         "gemini_api_key": "",
-        "openrouter_default_model": "google/gemini-2.0-flash-001",
+        "openrouter_default_model": "anthropic/claude-3.7-sonnet",
+        "glm_default_model": "glm-4.7",
         "openrouter_qwen_model": "google/gemma-2-9b-it:free",
         "lmarena_keys": [],
         "lmarena_base_url": "",
@@ -3353,6 +3440,9 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     mod = row.get("openrouter_default_model")
     if mod and str(mod).strip():
         cfg["openrouter_default_model"] = str(mod).strip()
+    glm_mod = row.get("glm_default_model")
+    if glm_mod and str(glm_mod).strip():
+        cfg["glm_default_model"] = str(glm_mod).strip()
     qwen_mod = row.get("openrouter_qwen_model")
     if qwen_mod and str(qwen_mod).strip():
         cfg["openrouter_qwen_model"] = str(qwen_mod).strip()
@@ -5049,6 +5139,31 @@ def ai_enrich_knowledge(
     }
 
 
+def _build_security_flagged_capture_fields(
+    *,
+    raw_url: str,
+    canonical_url: str,
+    title: str,
+    merged_text: str,
+    security: Any,
+    url_fetched: bool = False,
+) -> Dict[str, Any]:
+    return {
+        "url": canonical_url or raw_url,
+        "canonical_url": canonical_url,
+        "title": title or "Pending Moderation",
+        "text": security.text,
+        "raw_text": merged_text,
+        "ai_summary": "[PENDING MODERATION] Content flagged for security review.",
+        "category": "security-hold",
+        "tags": ["pending-moderation"],
+        "url_fetched": url_fetched,
+        "security_flagged": True,
+        "redacted_categories": security.redacted_categories,
+        "prompt_injection": security.prompt_injection,
+    }
+
+
 def finalize_knowledge_capture_fields(
     *,
     raw_url: str,
@@ -5058,6 +5173,7 @@ def finalize_knowledge_capture_fields(
     category: str,
     tags: List[str],
     source: str,
+    skip_security: bool = False,
 ) -> Dict[str, Any]:
     """
     Пайплайн БЗ: ссылки из текста → Jina fetch → LLM (или эвристики) → поля для PG + embedding.
@@ -5090,6 +5206,21 @@ def finalize_knowledge_capture_fields(
                 f"{merged_text}\n\n---\n\n## Источник\n{canonical_url}\n\n{page_blob[:80000]}"
                 if merged_text
                 else page_blob[:100000]
+            )
+
+    if not skip_security:
+        security = screen_capture_content(merged_text)
+        if security.route == "human_review":
+            enrich_title = title
+            if _is_weak_knowledge_title(enrich_title, canonical_url):
+                enrich_title = _title_from_canonical_url(canonical_url) or enrich_title
+            return _build_security_flagged_capture_fields(
+                raw_url=raw_url,
+                canonical_url=canonical_url,
+                title=enrich_title,
+                merged_text=merged_text,
+                security=security,
+                url_fetched=fetched,
             )
 
     enrich_title = title
@@ -9580,6 +9711,8 @@ async def knowledge_capture(
     else:
         do_enrich = is_knowledge_pipeline_enrich_enabled()
     enrich_meta: Dict[str, Any] = {"enriched": False}
+    security_flagged = False
+    finalized: Dict[str, Any] = {}
     if do_enrich:
         finalized = finalize_knowledge_capture_fields(
             raw_url=raw_url,
@@ -9590,6 +9723,7 @@ async def knowledge_capture(
             tags=tags,
             source=source,
         )
+        security_flagged = bool(finalized.get("security_flagged"))
         raw_url = str(finalized.get("url") or raw_url).strip()
         canonical_url = str(finalized.get("canonical_url") or "").strip()
         if not canonical_url and raw_url:
@@ -9599,11 +9733,36 @@ async def knowledge_capture(
         ai_summary = finalized.get("ai_summary") or ai_summary
         category = finalized.get("category") or category
         tags = finalized.get("tags") or tags
-        enrich_meta = {"enriched": True, "urlFetched": bool(finalized.get("url_fetched"))}
+        enrich_meta = {
+            "enriched": not security_flagged,
+            "urlFetched": bool(finalized.get("url_fetched")),
+            "securityFlagged": security_flagged,
+        }
     else:
         canonical_url = normalize_url(raw_url) if raw_url else ""
+        sec = screen_capture_content(text)
+        if sec.route == "human_review":
+            security_flagged = True
+            finalized = _build_security_flagged_capture_fields(
+                raw_url=raw_url,
+                canonical_url=canonical_url,
+                title=title,
+                merged_text=text,
+                security=sec,
+            )
+            title = finalized["title"]
+            text = finalized["text"]
+            ai_summary = finalized.get("ai_summary") or ai_summary
+            category = finalized.get("category") or category
+            tags = finalized.get("tags") or tags
+            enrich_meta = {"enriched": False, "securityFlagged": True}
+        elif sec.redacted_categories:
+            text = sec.text
 
-    status = _truncate_text(str(payload.status or "to_process").strip().lower(), 64) or "to_process"
+    if security_flagged:
+        status = "pending"
+    else:
+        status = _truncate_text(str(payload.status or "to_process").strip().lower(), 64) or "to_process"
     content_hash = build_knowledge_content_hash(source, canonical_url, text)
     note_path_explicit = _truncate_text(str(payload.notePath or "").strip(), 4000) if payload.notePath else None
     note_path_resolved = resolve_knowledge_obsidian_note_path(
@@ -9613,6 +9772,7 @@ async def knowledge_capture(
 
     conn = pg_connect()
     item_row: Optional[Dict[str, Any]] = None
+    moderation_id: Optional[str] = None
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
@@ -9661,44 +9821,70 @@ async def knowledge_capture(
             if not item_row:
                 raise HTTPException(status_code=500, detail="Failed to upsert knowledge item")
 
-            embed_source = "\n".join(
-                p
-                for p in (
-                    title,
-                    ai_summary,
-                    (text or "")[:4000],
-                )
-                if p
-            )[:8000]
-            vec = get_openai_embedding(embed_source)
-            if vec and len(vec) == BOOKMARKS_VECTOR_DIM:
-                vec_lit = build_vector_literal(vec)
+            moderation_id = None
+            if security_flagged:
+                raw_for_queue = str(finalized.get("raw_text") or text)
                 cur.execute(
                     """
-                    insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
-                    values (%s, %s::vector, %s, now(), now())
-                    on conflict (knowledge_item_id)
-                    do update set
-                      embedding = excluded.embedding,
-                      embedding_model = excluded.embedding_model,
-                      embedded_at = now(),
-                      updated_at = now()
+                    insert into public.capture_moderation_queue (
+                      workspace_id, knowledge_item_id, source, url, original_title,
+                      raw_text, redacted_text, redacted_categories, prompt_injection, status
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_approval')
+                    returning id
                     """,
                     (
+                        workspace_id,
                         int(item_row["id"]),
-                        vec_lit,
-                        str(load_swoop_llm_key_settings().get("openrouter_default_model") or "embedding-fallback"),
+                        source,
+                        raw_url or None,
+                        title,
+                        raw_for_queue,
+                        text,
+                        psycopg2.extras.Json(finalized.get("redacted_categories") or []),
+                        bool(finalized.get("prompt_injection")),
                     ),
                 )
-                cur.execute(
-                    """
-                    update public.knowledge_items
-                    set status = case when status in ('to_process','processed') then 'embedded' else status end,
-                        updated_at = now()
-                    where id = %s
-                    """,
-                    (int(item_row["id"]),),
-                )
+                mod_row = cur.fetchone()
+                moderation_id = str(mod_row["id"]) if mod_row else None
+            else:
+                embed_source = "\n".join(
+                    p
+                    for p in (
+                        title,
+                        ai_summary,
+                        (text or "")[:4000],
+                    )
+                    if p
+                )[:8000]
+                vec = get_openai_embedding(embed_source)
+                if vec and len(vec) == BOOKMARKS_VECTOR_DIM:
+                    vec_lit = build_vector_literal(vec)
+                    cur.execute(
+                        """
+                        insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+                        values (%s, %s::vector, %s, now(), now())
+                        on conflict (knowledge_item_id)
+                        do update set
+                          embedding = excluded.embedding,
+                          embedding_model = excluded.embedding_model,
+                          embedded_at = now(),
+                          updated_at = now()
+                        """,
+                        (
+                            int(item_row["id"]),
+                            vec_lit,
+                            str(load_swoop_llm_key_settings().get("openrouter_default_model") or "embedding-fallback"),
+                        ),
+                    )
+                    cur.execute(
+                        """
+                        update public.knowledge_items
+                        set status = case when status in ('to_process','processed') then 'embedded' else status end,
+                            updated_at = now()
+                        where id = %s
+                        """,
+                        (int(item_row["id"]),),
+                    )
             conn.commit()
     except HTTPException:
         conn.rollback()
@@ -9710,6 +9896,27 @@ async def knowledge_capture(
         conn.close()
 
     kid = int(item_row["id"]) if item_row else None
+
+    if security_flagged:
+        return {
+            "ok": True,
+            "status": "pending_moderation",
+            "workspaceId": payload.workspaceId,
+            "knowledgeItemId": kid,
+            "moderationId": moderation_id,
+            "contentHash": content_hash,
+            "seenCount": int(item_row["seen_count"]) if item_row else 1,
+            "pipeline": enrich_meta,
+            "securityRoute": "human_review",
+            "redactedCategories": finalized.get("redacted_categories") or [],
+            "promptInjection": bool(finalized.get("prompt_injection")),
+            "obsidian": {
+                "written": False,
+                "skipped": True,
+                "reason": "pending_moderation",
+            },
+        }
+
     if payload.referenceLinks:
         ref_links = collect_knowledge_reference_links(
             text,
@@ -9761,6 +9968,254 @@ async def knowledge_capture(
             "localWritten": bool(obsidian_sync.get("localWritten")),
             "sync": obsidian_sync,
             "markdown": note_markdown,
+        },
+    }
+
+
+@app.get("/api/v1/keept/moderation/items")
+async def keept_moderation_items(
+    request: Request,
+    workspaceId: str = Query(...),
+    status: str = Query("pending_approval"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+    try:
+        workspace_id = int(workspaceId)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="workspaceId must be numeric")
+    verify_workspace_membership(auth_ctx, workspace_id)
+
+    status_filter = _truncate_text(status.strip().lower(), 32) or "pending_approval"
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                select
+                  id, workspace_id, knowledge_item_id, source, url, original_title,
+                  redacted_text, redacted_categories, prompt_injection, status, created_at, resolved_at
+                from public.capture_moderation_queue
+                where workspace_id = %s and status = %s
+                order by created_at desc
+                limit 100
+                """,
+                (workspace_id, status_filter),
+            )
+            rows = cur.fetchall() or []
+    finally:
+        conn.close()
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": str(row["id"]),
+                "workspaceId": row["workspace_id"],
+                "knowledgeItemId": row.get("knowledge_item_id"),
+                "source": row.get("source"),
+                "url": row.get("url"),
+                "title": row.get("original_title"),
+                "redactedText": row.get("redacted_text"),
+                "redactedCategories": row.get("redacted_categories") or [],
+                "promptInjection": bool(row.get("prompt_injection")),
+                "status": row.get("status"),
+                "createdAt": row["created_at"].isoformat() if row.get("created_at") else None,
+                "resolvedAt": row["resolved_at"].isoformat() if row.get("resolved_at") else None,
+            }
+        )
+    return {"ok": True, "items": items}
+
+
+@app.post("/api/v1/keept/moderation/resolve")
+async def keept_moderation_resolve(
+    payload: KeeptModerationResolvePayload,
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+    try:
+        workspace_id = int(payload.workspaceId)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="workspaceId must be numeric")
+    verify_workspace_membership(auth_ctx, workspace_id)
+
+    decision = payload.decision.strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be approve or reject")
+
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                select
+                  id, workspace_id, knowledge_item_id, source, url, original_title,
+                  raw_text, redacted_text, redacted_categories, prompt_injection, status
+                from public.capture_moderation_queue
+                where id = %s and workspace_id = %s
+                limit 1
+                """,
+                (payload.id, workspace_id),
+            )
+            mod = cur.fetchone()
+            if not mod:
+                raise HTTPException(status_code=404, detail="Moderation item not found")
+            if mod["status"] != "pending_approval":
+                raise HTTPException(status_code=409, detail="Moderation item already resolved")
+
+            kid = mod.get("knowledge_item_id")
+            if decision in ("reject", "rejected"):
+                cur.execute(
+                    """
+                    update public.capture_moderation_queue
+                    set status = 'rejected', resolved_at = now()
+                    where id = %s
+                    """,
+                    (payload.id,),
+                )
+                if kid:
+                    cur.execute(
+                        """
+                        update public.knowledge_items
+                        set status = 'rejected', updated_at = now()
+                        where id = %s and workspace_id = %s
+                        """,
+                        (int(kid), workspace_id),
+                    )
+                conn.commit()
+                return {"ok": True, "status": "rejected", "moderationId": payload.id, "knowledgeItemId": kid}
+
+            finalized = finalize_knowledge_capture_fields(
+                raw_url=str(mod.get("url") or ""),
+                title=str(mod.get("original_title") or "Untitled"),
+                text=str(mod.get("raw_text") or ""),
+                ai_summary="",
+                category="general",
+                tags=["general"],
+                source=str(mod.get("source") or "web"),
+                skip_security=True,
+            )
+            raw_url = str(finalized.get("url") or mod.get("url") or "").strip()
+            canonical_url = str(finalized.get("canonical_url") or "").strip()
+            title = finalized["title"]
+            text = finalized["text"]
+            ai_summary = finalized.get("ai_summary") or ""
+            category = finalized.get("category") or "general"
+            tags = finalized.get("tags") or ["general"]
+
+            if not kid:
+                raise HTTPException(status_code=500, detail="Moderation item missing knowledge_item_id")
+
+            cur.execute(
+                """
+                update public.knowledge_items
+                set
+                  title = %s,
+                  url = %s,
+                  canonical_url = %s,
+                  content_text = %s,
+                  ai_summary = %s,
+                  category = %s,
+                  tags = %s,
+                  status = 'searchable',
+                  updated_at = now(),
+                  last_seen_at = now()
+                where id = %s and workspace_id = %s
+                returning note_path, content_hash
+                """,
+                (
+                    title,
+                    raw_url or None,
+                    canonical_url or None,
+                    text,
+                    ai_summary or None,
+                    category,
+                    psycopg2.extras.Json(tags),
+                    int(kid),
+                    workspace_id,
+                ),
+            )
+            item_row = cur.fetchone()
+            if not item_row:
+                raise HTTPException(status_code=404, detail="Knowledge item not found for approval")
+
+            note_path = item_row.get("note_path") or resolve_knowledge_obsidian_note_path(
+                workspace_id, str(item_row.get("content_hash") or "")
+            )
+            embed_source = "\n".join(p for p in (title, ai_summary, (text or "")[:4000]) if p)[:8000]
+            vec = get_openai_embedding(embed_source)
+            if vec and len(vec) == BOOKMARKS_VECTOR_DIM:
+                vec_lit = build_vector_literal(vec)
+                cur.execute(
+                    """
+                    insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+                    values (%s, %s::vector, %s, now(), now())
+                    on conflict (knowledge_item_id)
+                    do update set
+                      embedding = excluded.embedding,
+                      embedding_model = excluded.embedding_model,
+                      embedded_at = now(),
+                      updated_at = now()
+                    """,
+                    (
+                        int(kid),
+                        vec_lit,
+                        str(load_swoop_llm_key_settings().get("openrouter_default_model") or "embedding-fallback"),
+                    ),
+                )
+                cur.execute(
+                    """
+                    update public.knowledge_items
+                    set status = 'embedded', updated_at = now()
+                    where id = %s
+                    """,
+                    (int(kid),),
+                )
+
+            cur.execute(
+                """
+                update public.capture_moderation_queue
+                set status = 'approved', resolved_at = now()
+                where id = %s
+                """,
+                (payload.id,),
+            )
+            conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Moderation resolve failed: {exc}")
+    finally:
+        conn.close()
+
+    note_markdown = build_obsidian_knowledge_note(
+        {
+            "workspaceId": str(workspace_id),
+            "source": str(mod.get("source") or "web"),
+            "originalSender": None,
+            "url": raw_url,
+            "tags": tags,
+            "status": "embedded",
+            "contentHash": str(item_row.get("content_hash") or ""),
+            "title": title,
+            "aiSummary": ai_summary,
+            "text": text,
+        }
+    )
+    obsidian_sync = sync_knowledge_note_to_obsidian(note_path, note_markdown, mode="update")
+    return {
+        "ok": True,
+        "status": "approved",
+        "moderationId": payload.id,
+        "knowledgeItemId": kid,
+        "obsidian": {
+            "written": bool(obsidian_sync.get("ok")),
+            "sync": obsidian_sync,
         },
     }
 

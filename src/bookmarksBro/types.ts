@@ -7,6 +7,7 @@ export interface SearchItem {
   snippet: string
   link?: string
   tags: string[]
+  category?: string
   relevance: number
   createdAt?: string
 }

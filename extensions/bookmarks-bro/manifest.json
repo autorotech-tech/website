@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Bookmarks Bro",
-  "description": "Sync bookmarks to Bookmarks Bro agent-api; testing build 0.1.1-testing (workspace ensure, UI state, Knowledge App).",
+  "name": "Keep It For Me",
+  "description": "Sync bookmarks to Keept (keept.me); testing build 0.1.1-testing (workspace ensure, UI state, Knowledge App).",
   "version": "0.3.1",
   "permissions": ["bookmarks", "storage", "alarms", "windows", "tabs"],
   "host_permissions": ["<all_urls>"],
@@ -9,7 +9,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Bookmarks Bro Sync",
+    "default_title": "Keept Sync",
     "default_popup": "popup.html"
   },
   "options_ui": {

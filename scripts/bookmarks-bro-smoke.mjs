@@ -1,5 +1,21 @@
+const fs = await import('node:fs')
+const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url))
+const websiteRoot = path.resolve(scriptDir, '..')
+const appTsx = fs.readFileSync(path.join(websiteRoot, 'src/App.tsx'), 'utf8')
+const keeptAdminRouteOk = appTsx.includes('/keept/admin')
+const keeptAdminComponentOk = fs.existsSync(path.join(websiteRoot, 'src/keeptAdmin/KeeptAdminApp.tsx'))
+const moderationPanelOk = fs.existsSync(path.join(websiteRoot, 'src/keeptAdmin/ModerationPanel.tsx'))
+
 const checks = [
   { name: 'route', ok: true, details: 'Route /bookmarks-bro подключен в App router' },
+  {
+    name: 'keept-admin',
+    ok: keeptAdminRouteOk && keeptAdminComponentOk && moderationPanelOk,
+    details: 'Route /keept/admin, KeeptAdminApp + ModerationPanel (Antigravity)',
+  },
   { name: 'search', ok: true, details: 'Unified Search service (keyword + semantic fallback) доступен' },
   { name: 'notes', ok: true, details: 'Notes tab и Obsidian bridge sync доступны' },
   { name: 'ideas', ok: true, details: 'Генерация идей из search results реализована' },

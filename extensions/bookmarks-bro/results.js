@@ -1,7 +1,7 @@
 function mdFromRows(payload, rows) {
   const { overview = '', retrievalMode = '', candidateCount = 0 } = payload || {};
   const out = [];
-  out.push('# Bookmarks Bro AI Search Results');
+  out.push('# Keep It For Me AI Search Results');
   out.push('');
   out.push(`- Mode: ${retrievalMode || '—'}`);
   out.push(`- Candidates: ${candidateCount || rows.length || 0}`);
