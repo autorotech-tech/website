@@ -306,48 +306,32 @@ def vision_analyze_from_settings(
     }
 
 
-def transcribe_media_url(
-    media_url: str,
+def _whisper_transcribe_bytes(
+    data: bytes,
+    *,
+    filename: str,
+    content_type: str,
     language: Optional[str] = None,
+    source_label: str = "bytes",
 ) -> Dict[str, Any]:
     from main import load_swoop_llm_key_settings, _iter_keys_with_health
-
-    raw = (media_url or "").strip()
-    if not raw.startswith(("http://", "https://")):
-        return {"ok": False, "error": "media_url must start with http:// or https://"}
-
-    try:
-        data, ctype, _ = _http_get(raw, timeout=120)
-    except ValueError as exc:
-        return {"ok": False, "url": raw, "error": str(exc)}
 
     settings = load_swoop_llm_key_settings()
     openai_base = "https://api.openai.com/v1"
     openai_pool = list(settings.get("openai_keys") or [])
-    ext = ".webm"
-    if "mp4" in ctype or raw.endswith(".mp4"):
-        ext = ".mp4"
-    elif "mpeg" in ctype or raw.endswith(".mp3"):
-        ext = ".mp3"
-    elif "wav" in ctype:
-        ext = ".wav"
-    elif "m4a" in ctype:
-        ext = ".m4a"
 
     import io
+    import urllib.request as ur
 
     for key in _iter_keys_with_health("openai_pool", openai_pool):
         try:
-            import urllib.request as ur
-
             boundary = "----autoroFormBoundary7MA4YWxk"
             body_io = io.BytesIO()
-            lang_part = f'; language="{language}"' if language else ""
             body_io.write(f"--{boundary}\r\n".encode())
             body_io.write(
-                f'Content-Disposition: form-data; name="file"; filename="media{ext}"\r\n'.encode()
+                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
             )
-            body_io.write(f"Content-Type: {ctype or 'application/octet-stream'}\r\n\r\n".encode())
+            body_io.write(f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode())
             body_io.write(data)
             body_io.write(f"\r\n--{boundary}\r\n".encode())
             body_io.write(f'Content-Disposition: form-data; name="model"\r\n\r\n'.encode())
@@ -374,7 +358,7 @@ def transcribe_media_url(
             if text:
                 return {
                     "ok": True,
-                    "url": raw,
+                    "source": source_label,
                     "transcript": text,
                     "provider": "openai",
                     "model": "whisper-1",
@@ -385,9 +369,65 @@ def transcribe_media_url(
 
     return {
         "ok": False,
-        "url": raw,
+        "source": source_label,
         "error": (
             "Транскрипция недоступна: нужен OpenAI-ключ в Swoop (whisper-1) "
-            "или отправьте голосовое в Telegram (встроенный STT Hermes)."
+            "или отправьте текстовый файл."
         ),
     }
+
+
+def transcribe_audio_bytes(
+    data: bytes,
+    filename: str = "audio.ogg",
+    mime_type: str = "application/octet-stream",
+    language: Optional[str] = None,
+) -> Dict[str, Any]:
+    if not data:
+        return {"ok": False, "error": "empty_audio"}
+    if len(data) > _MAX_DOWNLOAD_BYTES:
+        return {"ok": False, "error": f"audio_too_large_max_{_MAX_DOWNLOAD_BYTES}"}
+    return _whisper_transcribe_bytes(
+        data,
+        filename=filename or "audio.ogg",
+        content_type=mime_type or "application/octet-stream",
+        language=language,
+        source_label="bytes",
+    )
+
+
+def transcribe_media_url(
+    media_url: str,
+    language: Optional[str] = None,
+) -> Dict[str, Any]:
+    raw = (media_url or "").strip()
+    if not raw.startswith(("http://", "https://")):
+        return {"ok": False, "error": "media_url must start with http:// or https://"}
+
+    try:
+        data, ctype, _ = _http_get(raw, timeout=120)
+    except ValueError as exc:
+        return {"ok": False, "url": raw, "error": str(exc)}
+
+    ext = ".webm"
+    if "mp4" in ctype or raw.endswith(".mp4"):
+        ext = ".mp4"
+    elif "mpeg" in ctype or raw.endswith(".mp3"):
+        ext = ".mp3"
+    elif "wav" in ctype:
+        ext = ".wav"
+    elif "m4a" in ctype:
+        ext = ".m4a"
+
+    result = _whisper_transcribe_bytes(
+        data,
+        filename=f"media{ext}",
+        content_type=ctype or "application/octet-stream",
+        language=language,
+        source_label=raw,
+    )
+    if result.get("ok"):
+        result["url"] = raw
+        return result
+    result["url"] = raw
+    return result

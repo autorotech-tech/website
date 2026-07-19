@@ -8,6 +8,7 @@ export interface SearchItem {
   link?: string
   tags: string[]
   category?: string
+  kind?: string
   relevance: number
   createdAt?: string
 }

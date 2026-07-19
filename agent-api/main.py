@@ -28,7 +28,7 @@ from urllib.error import URLError, HTTPError
 
 import psycopg2
 import psycopg2.extras
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
@@ -47,6 +47,12 @@ from swoop_provider_catalog import (
 )
 from swoop_expired_domains import configure_expired_domains, ensure_expired_domains_schema, router as expired_domains_router
 from security import screen_capture_content
+from kb_file_ingest import (
+    MAX_FILE_BYTES,
+    extract_text_from_bytes,
+    parse_file_ingest_hints,
+    sha256_hex,
+)
 
 PGHOST = os.environ.get("PGHOST", "supabase-db")
 PGPORT = int(os.environ.get("PGPORT") or "5433")
@@ -794,6 +800,10 @@ class WebSearchPayload(BaseModel):
 
     query: str = Field(..., min_length=2, max_length=500)
     limit: int = Field(default=10, ge=1, le=20)
+    mode: str = Field(
+        default="hybrid",
+        description="raw = только merge провайдеров; hybrid = merge + LLM-ранжирование",
+    )
 
 
 class VisionAnalyzePayload(BaseModel):
@@ -1674,7 +1684,7 @@ def _merge_web_search_rows(buckets: List[List[Dict[str, Any]]], limit: int) -> L
     """Дедуп по URL, сохраняем порядок провайдеров."""
     out: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    cap = max(1, min(int(limit or 8), 20))
+    cap = max(1, min(int(limit or 8), 30))
     for bucket in buckets:
         if not isinstance(bucket, list):
             continue
@@ -1797,14 +1807,21 @@ def gemini_grounded_web_search(api_key: str, query: str, limit: int = 8) -> List
     return out
 
 
-def external_web_search_from_settings(task: str, web_limit: int) -> List[Dict[str, Any]]:
+def external_web_search_from_settings(
+    task: str,
+    web_limit: int,
+    *,
+    per_provider_limit: Optional[int] = None,
+    merge_limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     """Внешний поиск: Tavily, GLM, Gemini grounding, Brave, затем DuckDuckGo."""
     cfg = load_swoop_llm_key_settings()
     buckets: List[List[Dict[str, Any]]] = []
-    cap = max(1, min(int(web_limit or 8), 20))
+    per_cap = max(1, min(int(per_provider_limit or web_limit or 8), 20))
+    merge_cap = max(1, min(int(merge_limit or web_limit or 8), 30))
 
     for key in _iter_keys_with_health("tavily_keys", cfg.get("tavily_keys") or []):
-        out = tavily_web_search(str(key), task, cap)
+        out = tavily_web_search(str(key), task, per_cap)
         if out:
             _key_health_mark_success("tavily_keys", str(key))
             buckets.append(out)
@@ -1812,7 +1829,7 @@ def external_web_search_from_settings(task: str, web_limit: int) -> List[Dict[st
         _key_health_mark_failure("tavily_keys", str(key), 429, "empty_or_failed_search")
 
     for key in _iter_keys_with_health("glm_keys", cfg.get("glm_keys") or []):
-        out = glm_web_search(str(key), task, cap)
+        out = glm_web_search(str(key), task, per_cap)
         if out:
             _key_health_mark_success("glm_keys", str(key))
             buckets.append(out)
@@ -1822,7 +1839,7 @@ def external_web_search_from_settings(task: str, web_limit: int) -> List[Dict[st
     gemini_search_pool = _gemini_chat_key_pool(cfg)
     gemini_sps = len(gemini_search_pool)
     for key in _iter_keys_for_llm("gemini_pool", gemini_search_pool):
-        out = gemini_grounded_web_search(str(key), task, cap)
+        out = gemini_grounded_web_search(str(key), task, per_cap)
         if out:
             _key_health_mark_success("gemini_pool", str(key))
             buckets.append(out)
@@ -1830,17 +1847,144 @@ def external_web_search_from_settings(task: str, web_limit: int) -> List[Dict[st
         _key_health_mark_failure("gemini_pool", str(key), 429, "empty_or_failed_search", pool_size=gemini_sps)
 
     for key in _iter_keys_with_health("brave_keys", cfg.get("brave_keys") or []):
-        out = brave_web_search(str(key), task, cap)
+        out = brave_web_search(str(key), task, per_cap)
         if out:
             _key_health_mark_success("brave_keys", str(key))
             buckets.append(out)
             break
         _key_health_mark_failure("brave_keys", str(key), 429, "empty_or_failed_search")
 
-    merged = _merge_web_search_rows(buckets, cap)
+    merged = _merge_web_search_rows(buckets, merge_cap)
     if merged:
         return merged
-    return duckduckgo_web_search(task, cap)
+    return duckduckgo_web_search(task, merge_cap)
+
+
+def rank_web_search_results_with_llm(
+    query: str,
+    candidates: List[Dict[str, Any]],
+    limit: int = 10,
+) -> Dict[str, Any]:
+    """
+    LLM-ранжирование веб-кандидатов.
+    Возвращает {overview, items}; при сбое LLM — исходный порядок без overview.
+    """
+    cap = max(1, min(int(limit or 10), 20))
+    if not candidates:
+        return {"overview": "", "items": [], "ranked": False}
+
+    slim: List[Dict[str, Any]] = []
+    orig_by_id: Dict[str, Dict[str, Any]] = {}
+    for idx, row in enumerate(candidates):
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        if not url:
+            continue
+        cid = f"w:{idx}"
+        slim.append(
+            {
+                "candidateId": cid,
+                "title": _truncate_text(str(row.get("title") or url), 200),
+                "url": url,
+                "summary": _truncate_text(str(row.get("summary") or ""), 400),
+                "sourceProvider": str(row.get("sourceProvider") or "web"),
+            }
+        )
+        orig_by_id[cid] = row
+    if not slim:
+        return {"overview": "", "items": [], "ranked": False}
+
+    by_id = {str(x["candidateId"]): x for x in slim}
+
+    system_prompt = (
+        "You rank web search results for the user's QUERY. "
+        "Return a single JSON object with keys: "
+        '"overview" (string, 2-4 sentences summarizing the best findings and how they answer the query), '
+        '"picks" (array of objects: { "candidateId": string from input, '
+        '"relevance": number 0..1, "reason": string max 220 chars }). '
+        f"Include up to {cap} picks, sorted by relevance descending. "
+        "Only use candidateIds from the input. Prefer primary sources and job boards / directories "
+        "that match the query intent over generic SEO listicles when possible."
+    )
+    user_prompt = "QUERY:\n" + (query or "").strip() + "\n\nCANDIDATES_JSON:\n" + json.dumps(
+        slim, ensure_ascii=False
+    )
+
+    llm_res = openai_chat_json_object(
+        system_prompt,
+        user_prompt,
+        tier_override="fast",
+    )
+    parsed = llm_res.data if isinstance(llm_res.data, dict) else None
+    if not parsed:
+        fallback = []
+        for row in candidates[:cap]:
+            if not isinstance(row, dict):
+                continue
+            item = dict(row)
+            item.setdefault("relevance", None)
+            item.setdefault("reason", "")
+            fallback.append(item)
+        return {"overview": "", "items": fallback, "ranked": False}
+
+    overview = str(parsed.get("overview") or "").strip()
+    raw_picks = parsed.get("picks")
+    if not isinstance(raw_picks, list):
+        raw_picks = []
+
+    ranked_items: List[Dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for pick in raw_picks:
+        if len(ranked_items) >= cap:
+            break
+        if not isinstance(pick, dict):
+            continue
+        cid = str(pick.get("candidateId") or "").strip()
+        meta = by_id.get(cid)
+        if not meta:
+            continue
+        url = str(meta.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        try:
+            relevance_f = float(pick.get("relevance")) if pick.get("relevance") is not None else None
+        except (TypeError, ValueError):
+            relevance_f = None
+        if relevance_f is not None:
+            relevance_f = max(0.0, min(1.0, relevance_f))
+        base = orig_by_id.get(cid) if isinstance(orig_by_id.get(cid), dict) else {}
+        ranked_items.append(
+            {
+                "title": _truncate_text(str(base.get("title") or meta.get("title") or url), 200),
+                "url": url,
+                "summary": _truncate_text(str(base.get("summary") or meta.get("summary") or ""), 400),
+                "category": str(base.get("category") or "external"),
+                "tags": base.get("tags") if isinstance(base.get("tags"), list) else ["external", "web-search"],
+                "sourceProvider": str(base.get("sourceProvider") or meta.get("sourceProvider") or "web"),
+                "relevance": relevance_f,
+                "reason": _truncate_text(str(pick.get("reason") or ""), 400),
+            }
+        )
+
+    # Добиваем до limit исходным порядком, если LLM вернул мало picks.
+    if len(ranked_items) < cap:
+        for row in candidates:
+            if len(ranked_items) >= cap:
+                break
+            if not isinstance(row, dict):
+                continue
+            url = str(row.get("url") or "").strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            item = dict(row)
+            item.setdefault("relevance", None)
+            item.setdefault("reason", "")
+            ranked_items.append(item)
+
+    return {"overview": overview, "items": ranked_items, "ranked": True}
 
 
 def _perplexica_model_key(raw: Any) -> str:
@@ -2033,6 +2177,7 @@ def ensure_bookmarks_enrichment_schema() -> None:
             cur.execute("alter table public.bookmark_page_content add column if not exists summary text")
             cur.execute("alter table public.bookmark_page_content add column if not exists category text")
             cur.execute("alter table public.bookmark_page_content add column if not exists tags jsonb not null default '[]'::jsonb")
+            cur.execute("alter table public.bookmark_page_content add column if not exists kind text not null default 'bookmark'")
             cur.execute("alter table public.bookmark_page_content add column if not exists enriched_at timestamptz")
             cur.execute("alter table public.bookmark_page_content add column if not exists embedding vector(1536)")
         conn.commit()
@@ -2104,6 +2249,10 @@ def ensure_knowledge_schema() -> None:
             cur.execute("create index if not exists idx_knowledge_items_workspace on public.knowledge_items(workspace_id)")
             cur.execute("create index if not exists idx_knowledge_items_status on public.knowledge_items(status)")
             cur.execute("create index if not exists idx_knowledge_items_last_seen on public.knowledge_items(last_seen_at desc)")
+            cur.execute(
+                "alter table public.knowledge_items add column if not exists kind text not null default 'note'"
+            )
+            cur.execute("create index if not exists idx_knowledge_items_kind on public.knowledge_items(kind)")
 
             cur.execute(
                 """
@@ -2343,6 +2492,36 @@ def get_tags_schema() -> dict:
     schema_path = os.path.abspath(schema_path)
     
     default_schema = {
+        "kinds": [
+            "bookmark",
+            "note",
+            "idea",
+            "plan",
+            "development",
+            "task",
+            "article",
+            "prompt",
+            "contact",
+            "link",
+        ],
+        "kind_aliases": {
+            "bookmarks": "bookmark",
+            "notes": "note",
+            "ideas": "idea",
+            "plans": "plan",
+            "dev": "development",
+            "developments": "development",
+            "rfc": "development",
+            "snippet": "development",
+            "tasks": "task",
+            "reminder": "task",
+            "reminders": "task",
+            "articles": "article",
+            "prompts": "prompt",
+            "contacts": "contact",
+            "links": "link",
+            "url": "link",
+        },
         "categories": ["general", "ai-ml", "dev-tools", "marketing", "business", "design", "prompt", "article", "note", "link", "task"],
         "tag_aliases": {
             "agents": "agent",
@@ -2357,6 +2536,8 @@ def get_tags_schema() -> dict:
             "bookmarks": "bookmark",
             "reminders": "reminder",
             "ideas": "idea",
+            "plans": "plan",
+            "developments": "development",
             "workflows": "workflow",
             "pipelines": "pipeline",
             "categories": "category",
@@ -2468,6 +2649,51 @@ def normalize_category(category: str) -> str:
     return "general"
 
 
+def normalize_kind(kind: str, default: str = "note") -> str:
+    """Unified KB item type (bookmark / idea / plan / development / …)."""
+    schema = get_tags_schema()
+    allowed = set(schema.get("kinds") or [])
+    aliases = schema.get("kind_aliases") or {}
+    if not allowed:
+        allowed = {
+            "bookmark",
+            "note",
+            "idea",
+            "plan",
+            "development",
+            "task",
+            "article",
+            "prompt",
+            "contact",
+            "link",
+        }
+    raw = str(kind or "").strip().lower()
+    if not raw:
+        return default if default in allowed else "note"
+    if raw in aliases:
+        raw = str(aliases[raw])
+    norm = normalize_single_tag(raw, aliases)
+    if norm in allowed:
+        return norm
+    if raw in allowed:
+        return raw
+    return default if default in allowed else "note"
+
+
+_KIND_FOLDER = {
+    "bookmark": "Bookmarks",
+    "note": "Notes",
+    "idea": "Ideas",
+    "plan": "Plans",
+    "development": "Development",
+    "task": "Tasks",
+    "article": "Articles",
+    "prompt": "Prompts",
+    "contact": "Contacts",
+    "link": "Links",
+}
+
+
 def infer_category(url: str, title: str, content_text: str) -> str:
     source = f"{url} {title} {content_text}".lower()
     schema = get_tags_schema()
@@ -2508,12 +2734,15 @@ def local_enrich_bookmark(url: str, title: str, content_text: str) -> Dict[str, 
     category = infer_category(url, title, content_text)
     tags = infer_tags(url, title, content_text, category)
     tags = normalize_tags(tags)
+    kind = normalize_kind("bookmark", default="bookmark")
+    if "bookmark" not in tags:
+        tags = ["bookmark", *tags][:6]
     raw = (content_text or "").replace("\n", " ").strip()
     if not raw:
         summary = _truncate_text(f"{title}. Bookmark imported from {url}.", 280)
     else:
         summary = _truncate_text(raw, 280)
-    return {"summary": summary, "category": category, "tags": tags}
+    return {"summary": summary, "category": category, "tags": tags, "kind": kind}
 
 
 def build_vector_literal(values: List[float]) -> str:
@@ -2547,14 +2776,18 @@ def resolve_knowledge_obsidian_note_path(
     workspace_id: int,
     content_hash: str,
     explicit_note_path: Optional[str],
+    kind: Optional[str] = None,
 ) -> str:
     """
     Полный относительный путь заметки: всегда внутри корня workspace (единая изолированная база на клиента).
     explicit_note_path: опционально путь без корня («Knowledge Inbox/…») или уже с тем же корнем ws.
+    kind: Unified KB type → подпапка Bookmarks/ Ideas/ Plans/ …
     """
     root = knowledge_obsidian_vault_relative_root(workspace_id)
     day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    default_leaf = f"Knowledge Inbox/{day}/{content_hash}.md"
+    kind_norm = normalize_kind(kind or "note")
+    folder = _KIND_FOLDER.get(kind_norm, "Notes")
+    default_leaf = f"{folder}/{day}/{content_hash}.md"
     if explicit_note_path and str(explicit_note_path).strip():
         raw = str(explicit_note_path).strip().lstrip("/")
         if raw.startswith(root + "/") or raw == root:
@@ -2567,6 +2800,7 @@ def build_obsidian_knowledge_note(payload: Dict[str, Any]) -> str:
     source = str(payload.get("source") or "")
     original_sender = str(payload.get("originalSender") or "")
     url = str(payload.get("url") or "")
+    kind = normalize_kind(str(payload.get("kind") or "note"))
     tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
     tags_s = ", ".join([str(t).strip() for t in tags if str(t).strip()])
     status = str(payload.get("status") or "to_process")
@@ -2574,6 +2808,7 @@ def build_obsidian_knowledge_note(payload: Dict[str, Any]) -> str:
     title = _truncate_text(str(payload.get("title") or "Untitled"), 180)
     ai_summary = str(payload.get("aiSummary") or "").strip()
     text = str(payload.get("text") or "").strip()
+    category = str(payload.get("category") or "general").strip() or "general"
     captured_at = str(payload.get("capturedAt") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"))
     ingested_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     workspace_id_fm = payload.get("workspaceId")
@@ -2623,6 +2858,8 @@ def build_obsidian_knowledge_note(payload: Dict[str, Any]) -> str:
     return (
         "---\n"
         f"{ws_line}"
+        f'kind: "{kind}"\n'
+        f'category: "{category}"\n'
         f'source: "{source}"\n'
         f'original_sender: "{original_sender}"\n'
         f'url: "{url}"\n'
@@ -4910,7 +5147,10 @@ def ai_enrich_bookmark(url: str, title: str, content_text: str) -> Optional[Dict
     if not tags:
         tags = infer_tags(url, title, content_text, cat)
     tags = normalize_tags(tags)
-    return {"summary": summary, "category": cat, "tags": tags[:6]}
+    kind = normalize_kind("bookmark", default="bookmark")
+    if "bookmark" not in tags:
+        tags = ["bookmark", *tags]
+    return {"summary": summary, "category": cat, "tags": tags[:6], "kind": kind}
 
 
 _KB_SAVE_CMD_RE = re.compile(
@@ -6717,7 +6957,59 @@ async def telegram_webhook_ingest(
     workspace_id = resolve_telegram_workspace_id(chat_id, telegram_user_id)
     if workspace_id is None:
         return {"ok": True, "ignored": True, "reason": "unlinked_chat"}
-    text = str(message.get("text") or message.get("caption") or "").strip()
+
+    caption = str(message.get("caption") or message.get("text") or "").strip()
+    file_desc = _telegram_message_file_descriptor(message)
+    if file_desc:
+        bot_token = resolve_telegram_bot_token_for_workspace(workspace_id)
+        if not bot_token:
+            return {
+                "ok": True,
+                "ignored": True,
+                "reason": "no_bot_token",
+                "workspaceId": str(workspace_id),
+            }
+        sender = message.get("from") or {}
+        sender_name = (
+            sender.get("username")
+            or " ".join([str(sender.get("first_name") or "").strip(), str(sender.get("last_name") or "").strip()]).strip()
+            or str(sender.get("id") or "")
+        )
+        if sender_name:
+            sender_name = f"@{sender_name}" if not str(sender_name).startswith("@") else str(sender_name)
+        try:
+            file_bytes, dl_mime, _tg_path = download_telegram_file(
+                bot_token, str(file_desc["file_id"])
+            )
+            file_result = ingest_knowledge_from_file(
+                workspace_id=workspace_id,
+                filename=str(file_desc.get("file_name") or "telegram.bin"),
+                file_bytes=file_bytes,
+                mime_type=str(file_desc.get("mime_type") or dl_mime),
+                source="telegram_file",
+                original_sender=sender_name,
+                caption=caption,
+            )
+        except Exception as exc:
+            logger.error("telegram file ingest failed: %s", exc)
+            return {
+                "ok": False,
+                "workspaceId": str(workspace_id),
+                "error": str(exc),
+                "file": file_desc,
+            }
+        return {
+            "ok": True,
+            "workspaceId": str(workspace_id),
+            "chatId": str(chat_id) if chat_id is not None else None,
+            "messageId": str(message.get("message_id") or ""),
+            "source": "telegram_file",
+            "file": file_desc,
+            "caption": caption or None,
+            "ingest": file_result,
+        }
+
+    text = caption
     if not text:
         return {"ok": True, "ignored": True, "reason": "empty_text", "workspaceId": str(workspace_id)}
 
@@ -8046,6 +8338,476 @@ async def bookmarks_library_list(
         conn.close()
 
 
+def promote_enriched_bookmark_to_knowledge(
+    *,
+    workspace_id: int,
+    bookmark_id: int,
+    title: str,
+    url: str,
+    content_text: str,
+    summary: str,
+    category: str,
+    tags: List[str],
+    embedding: Optional[List[float]],
+    kind: str = "bookmark",
+) -> Dict[str, Any]:
+    """
+    Browser bookmark → Unified KB (knowledge_items + optional vector) → Obsidian note.
+    Idempotent by content_hash (source=browser_bookmark|url|text).
+    """
+    kind_norm = normalize_kind(kind or "bookmark", default="bookmark")
+    category_norm = normalize_category(category or "general")
+    tags_norm = normalize_tags(list(tags or []))
+    if kind_norm not in tags_norm:
+        tags_norm = [kind_norm, *tags_norm][:12]
+    canonical = normalize_url(url) if url else ""
+    text_body = (content_text or summary or title or "").strip()
+    content_hash = build_knowledge_content_hash("browser_bookmark", canonical, text_body)
+    note_path = resolve_knowledge_obsidian_note_path(
+        workspace_id, content_hash, None, kind=kind_norm
+    )
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                insert into public.knowledge_items (
+                  workspace_id, source, original_sender, title, url, canonical_url,
+                  content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+                ) values (%s, 'browser_bookmark', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'searchable', %s, %s)
+                on conflict (workspace_id, content_hash)
+                do update set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = public.knowledge_items.seen_count + 1,
+                  title = excluded.title,
+                  url = excluded.url,
+                  canonical_url = excluded.canonical_url,
+                  ai_summary = case when coalesce(excluded.ai_summary, '') <> '' then excluded.ai_summary else public.knowledge_items.ai_summary end,
+                  category = coalesce(nullif(excluded.category, ''), public.knowledge_items.category),
+                  tags = case when jsonb_array_length(excluded.tags) > 0 then excluded.tags else public.knowledge_items.tags end,
+                  kind = coalesce(nullif(excluded.kind, ''), public.knowledge_items.kind),
+                  note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+                  status = 'searchable'
+                returning id
+                """,
+                (
+                    workspace_id,
+                    f"bookmark:{bookmark_id}",
+                    _truncate_text(title or canonical or "Bookmark", 1000),
+                    url or None,
+                    canonical or None,
+                    text_body,
+                    summary or None,
+                    category_norm,
+                    psycopg2.extras.Json(tags_norm),
+                    content_hash,
+                    _truncate_text(note_path, 4000),
+                    kind_norm,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else None
+            if kid is not None and embedding:
+                cur.execute(
+                    """
+                    insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+                    values (%s, %s::vector, %s, now(), now())
+                    on conflict (knowledge_item_id)
+                    do update set
+                      embedding = excluded.embedding,
+                      embedding_model = excluded.embedding_model,
+                      embedded_at = now(),
+                      updated_at = now()
+                    """,
+                    (
+                        kid,
+                        build_vector_literal(embedding),
+                        os.environ.get("BOOKMARKS_EMBEDDING_MODEL", "text-embedding-3-small"),
+                    ),
+                )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    note_md = build_obsidian_knowledge_note(
+        {
+            "workspaceId": str(workspace_id),
+            "source": "browser_bookmark",
+            "originalSender": f"bookmark:{bookmark_id}",
+            "url": url or "",
+            "kind": kind_norm,
+            "category": category_norm,
+            "tags": tags_norm,
+            "status": "searchable",
+            "contentHash": content_hash,
+            "title": title,
+            "aiSummary": summary,
+            "text": text_body[:8000],
+        }
+    )
+    obsidian_sync = sync_knowledge_note_to_obsidian(note_path, note_md, mode="update")
+    return {
+        "knowledgeItemId": kid,
+        "notePath": note_path,
+        "kind": kind_norm,
+        "obsidianSync": obsidian_sync,
+        "contentHash": content_hash,
+    }
+
+
+def resolve_telegram_bot_token_for_workspace(workspace_id: int) -> Optional[str]:
+    if TELEGRAM_BOT_TOKEN:
+        return TELEGRAM_BOT_TOKEN
+    conn = pg_connect_bookmarks()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT pgp_sym_decrypt(bot_token_encrypted::bytea, %s) AS bot_token
+                FROM public.user_telegram_bots
+                WHERE workspace_id = %s AND status = 'active'
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (EXTENSION_BOOTSTRAP_SECRET, workspace_id),
+            )
+            row = cur.fetchone()
+            if row and row.get("bot_token"):
+                return str(row["bot_token"]).strip()
+    except Exception as exc:
+        logger.warning("telegram bot token lookup failed: %s", exc)
+    finally:
+        conn.close()
+    return None
+
+
+def download_telegram_file(bot_token: str, file_id: str) -> Tuple[bytes, str, str]:
+    from urllib.parse import quote
+
+    token = (bot_token or "").strip()
+    fid = (file_id or "").strip()
+    if not token or not fid:
+        raise ValueError("bot_token and file_id are required")
+    get_url = f"https://api.telegram.org/bot{token}/getFile?file_id={quote(fid)}"
+    req = UrlRequest(get_url, headers={"User-Agent": "AutoroAgentAPI/1.0"})
+    with urlopen(req, timeout=60) as resp:
+        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if not payload.get("ok"):
+        raise ValueError(str(payload.get("description") or "telegram_getFile_failed"))
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    file_path = str(result.get("file_path") or "").strip()
+    if not file_path:
+        raise ValueError("telegram_file_path_missing")
+    dl_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    dl_req = UrlRequest(dl_url, headers={"User-Agent": "AutoroAgentAPI/1.0"})
+    with urlopen(dl_req, timeout=120) as dl_resp:
+        data = dl_resp.read()
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError(f"telegram_file_too_large_max_{MAX_FILE_BYTES}")
+    mime = str(dl_resp.headers.get("Content-Type") or "application/octet-stream")
+    return data, mime, file_path
+
+
+def _telegram_message_file_descriptor(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    doc = message.get("document")
+    if isinstance(doc, dict) and doc.get("file_id"):
+        return {
+            "file_id": str(doc["file_id"]),
+            "file_name": str(doc.get("file_name") or "document.bin"),
+            "mime_type": str(doc.get("mime_type") or "application/octet-stream"),
+        }
+    photos = message.get("photo")
+    if isinstance(photos, list) and photos:
+        best = photos[-1] if isinstance(photos[-1], dict) else {}
+        if best.get("file_id"):
+            return {
+                "file_id": str(best["file_id"]),
+                "file_name": "photo.jpg",
+                "mime_type": "image/jpeg",
+            }
+    for key, default_name, default_mime in (
+        ("audio", "audio.m4a", "audio/mpeg"),
+        ("voice", "voice.ogg", "audio/ogg"),
+        ("video", "video.mp4", "video/mp4"),
+        ("video_note", "video_note.mp4", "video/mp4"),
+    ):
+        part = message.get(key)
+        if isinstance(part, dict) and part.get("file_id"):
+            return {
+                "file_id": str(part["file_id"]),
+                "file_name": str(part.get("file_name") or default_name),
+                "mime_type": str(part.get("mime_type") or default_mime),
+            }
+    return None
+
+
+def ingest_knowledge_from_file(
+    *,
+    workspace_id: int,
+    filename: str,
+    file_bytes: bytes,
+    mime_type: Optional[str] = None,
+    source: str,
+    original_sender: Optional[str] = None,
+    kind: Optional[str] = None,
+    category: Optional[str] = None,
+    title: Optional[str] = None,
+    caption: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Файл → извлечение текста (или vision/STT) → knowledge_items + vector + Obsidian.
+    """
+    hints = parse_file_ingest_hints(caption)
+    kind_norm = normalize_kind(kind or hints.get("kind") or "note")
+    category_norm = normalize_category(category or hints.get("category") or "general")
+    safe_name = _truncate_text(str(filename or "upload.bin").strip() or "upload.bin", 255)
+    file_hash = sha256_hex(file_bytes)
+    extract_meta: Dict[str, Any] = {}
+
+    text, extract_meta = extract_text_from_bytes(safe_name, file_bytes, mime_type)
+    extraction_method = str(extract_meta.get("method") or "none")
+
+    if extract_meta.get("needsVision"):
+        import base64
+
+        from hermes_media import vision_analyze_from_settings
+
+        b64 = base64.b64encode(file_bytes).decode("ascii")
+        vision = vision_analyze_from_settings(
+            "Извлеки весь читаемый текст с изображения для базы знаний. Верни только текст, без комментариев.",
+            image_base64=b64,
+        )
+        text = str(vision.get("text") or vision.get("content") or "").strip()
+        extraction_method = "vision"
+        extract_meta["vision"] = {"ok": bool(vision.get("ok")), "error": vision.get("error")}
+
+    if (not text or len(text.strip()) < 8) and extract_meta.get("needsTranscription"):
+        from hermes_media import transcribe_audio_bytes
+
+        tr = transcribe_audio_bytes(file_bytes, filename=safe_name, mime_type=mime_type or "application/octet-stream")
+        if tr.get("ok"):
+            text = str(tr.get("transcript") or "").strip()
+            extraction_method = "whisper"
+            extract_meta["transcription"] = {"ok": True, "provider": tr.get("provider")}
+        else:
+            extract_meta["transcription"] = {"ok": False, "error": tr.get("error")}
+
+    if not text or len(text.strip()) < 8:
+        text = (
+            f"Файл: {safe_name}\n"
+            f"SHA256: {file_hash}\n"
+            f"MIME: {mime_type or 'unknown'}\n"
+            f"Размер: {len(file_bytes)} bytes\n\n"
+            f"Подпись: {(caption or '').strip() or '(нет)'}\n\n"
+            "Текст из файла не извлечён автоматически. Добавьте .txt/.md или подпись с описанием."
+        )
+
+    sec = screen_capture_content(text)
+    security_flagged = sec.route == "human_review"
+    if sec.redacted_categories and not security_flagged:
+        text = sec.text
+
+    title_use = _truncate_text(
+        str(title or hints.get("title") or safe_name.rsplit(".", 1)[0] or "File upload").strip(),
+        1000,
+    )
+    tags = normalize_tags([kind_norm, category_norm])
+    ai_summary = _truncate_text(text.replace("\n", " ").strip(), 4000)
+    canonical_url = f"file://{file_hash}"
+    content_hash = build_knowledge_content_hash(source, canonical_url, text)
+    note_path = resolve_knowledge_obsidian_note_path(workspace_id, content_hash, None, kind=kind_norm)
+    status = "pending" if security_flagged else "searchable"
+
+    conn = pg_connect()
+    kid: Optional[int] = None
+    moderation_id: Optional[str] = None
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                insert into public.knowledge_items (
+                  workspace_id, source, original_sender, title, url, canonical_url,
+                  content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                on conflict (workspace_id, content_hash)
+                do update set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = public.knowledge_items.seen_count + 1,
+                  title = excluded.title,
+                  content_text = case
+                    when length(coalesce(excluded.content_text, '')) > length(coalesce(public.knowledge_items.content_text, ''))
+                    then excluded.content_text
+                    else public.knowledge_items.content_text
+                  end,
+                  ai_summary = case when coalesce(excluded.ai_summary, '') <> '' then excluded.ai_summary else public.knowledge_items.ai_summary end,
+                  category = coalesce(nullif(excluded.category, ''), public.knowledge_items.category),
+                  tags = case when jsonb_array_length(excluded.tags) > 0 then excluded.tags else public.knowledge_items.tags end,
+                  kind = coalesce(nullif(excluded.kind, ''), public.knowledge_items.kind),
+                  note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+                  status = case when excluded.status = 'pending' then excluded.status else public.knowledge_items.status end
+                returning id, seen_count
+                """,
+                (
+                    workspace_id,
+                    _truncate_text(source, 64),
+                    original_sender,
+                    title_use,
+                    safe_name,
+                    canonical_url,
+                    text,
+                    ai_summary or None,
+                    category_norm,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    status,
+                    _truncate_text(note_path, 4000),
+                    kind_norm,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else None
+
+            if security_flagged and kid is not None:
+                cur.execute(
+                    """
+                    insert into public.capture_moderation_queue (
+                      workspace_id, knowledge_item_id, source, url, original_title,
+                      raw_text, redacted_text, redacted_categories, prompt_injection, status
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending_approval')
+                    returning id
+                    """,
+                    (
+                        workspace_id,
+                        kid,
+                        source,
+                        safe_name,
+                        title_use,
+                        text,
+                        text,
+                        psycopg2.extras.Json(sec.redacted_categories or []),
+                        bool(sec.prompt_injection),
+                    ),
+                )
+                mod_row = cur.fetchone()
+                moderation_id = str(mod_row["id"]) if mod_row else None
+            elif kid is not None:
+                embed_source = "\n".join(p for p in (title_use, ai_summary, text[:4000]) if p)[:8000]
+                vec = get_openai_embedding(embed_source)
+                if vec and len(vec) == BOOKMARKS_VECTOR_DIM:
+                    cur.execute(
+                        """
+                        insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+                        values (%s, %s::vector, %s, now(), now())
+                        on conflict (knowledge_item_id)
+                        do update set
+                          embedding = excluded.embedding,
+                          embedding_model = excluded.embedding_model,
+                          embedded_at = now(),
+                          updated_at = now()
+                        """,
+                        (
+                            kid,
+                            build_vector_literal(vec),
+                            str(load_swoop_llm_key_settings().get("openrouter_default_model") or "embedding-fallback"),
+                        ),
+                    )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    obsidian_sync: Dict[str, Any] = {"ok": False, "skipped": True, "reason": "pending_moderation"}
+    if not security_flagged and note_path:
+        note_md = build_obsidian_knowledge_note(
+            {
+                "workspaceId": str(workspace_id),
+                "source": source,
+                "originalSender": original_sender or "",
+                "url": safe_name,
+                "kind": kind_norm,
+                "category": category_norm,
+                "tags": tags,
+                "status": status,
+                "contentHash": content_hash,
+                "title": title_use,
+                "aiSummary": ai_summary,
+                "text": text[:12000],
+            }
+        )
+        obsidian_sync = sync_knowledge_note_to_obsidian(note_path, note_md, mode="update")
+
+    return {
+        "ok": True,
+        "workspaceId": str(workspace_id),
+        "knowledgeItemId": kid,
+        "contentHash": content_hash,
+        "kind": kind_norm,
+        "category": category_norm,
+        "title": title_use,
+        "filename": safe_name,
+        "fileHash": file_hash,
+        "extraction": {**extract_meta, "method": extraction_method, "textLength": len(text)},
+        "securityFlagged": security_flagged,
+        "moderationId": moderation_id,
+        "notePath": note_path,
+        "obsidian": obsidian_sync,
+    }
+
+
+@app.post("/api/v1/knowledge/files/enrich")
+async def knowledge_files_enrich(
+    request: Request,
+    workspaceId: str = Form(...),
+    file: UploadFile = File(...),
+    kind: Optional[str] = Form(default=None),
+    category: Optional[str] = Form(default=None),
+    title: Optional[str] = Form(default=None),
+    caption: Optional[str] = Form(default=None),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+    try:
+        workspace_id = int(workspaceId.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="workspaceId must be numeric")
+    verify_workspace_membership(auth_ctx, workspace_id)
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty_file")
+    if len(raw) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail=f"file_too_large_max_{MAX_FILE_BYTES}")
+
+    filename = str(file.filename or "upload.bin")
+    mime_type = str(file.content_type or "application/octet-stream")
+    try:
+        result = ingest_knowledge_from_file(
+            workspace_id=workspace_id,
+            filename=filename,
+            file_bytes=raw,
+            mime_type=mime_type,
+            source="file_upload",
+            original_sender=str(auth_ctx.get("user_id") or auth_ctx.get("auth_mode") or "web"),
+            kind=kind,
+            category=category,
+            title=title,
+            caption=caption,
+        )
+    except Exception as exc:
+        logger.error("knowledge file enrich failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"file_enrich_failed: {exc}")
+
+    return result
+
+
 @app.post("/api/v1/bookmarks/pipeline/run")
 async def run_bookmark_pipeline(
     payload: BookmarkPipelineRunPayload,
@@ -8104,6 +8866,7 @@ async def run_bookmark_pipeline(
         "enrich": enrich_result,
         "status": status_result,
         "metrics": metrics_result,
+        "obsidianPromoted": int(enrich_result.get("obsidianPromoted") or 0) if isinstance(enrich_result, dict) else 0,
     }
 
 
@@ -8346,6 +9109,8 @@ async def run_bookmark_enrichment(
     local_summaries = 0
     embeddings_computed = 0
     embeddings_missing = 0
+    obsidian_promoted = 0
+    obsidian_failed = 0
     ai_flag = is_bookmarks_ai_enrich_enabled()
     has_keys = has_any_bookmark_llm_keys()
 
@@ -8357,6 +9122,7 @@ async def run_bookmark_enrichment(
                     """
                     SELECT
                       b.id as bookmark_id,
+                      b.workspace_id as workspace_id,
                       b.title,
                       b.url,
                       coalesce(pc.content_text, '') as content_text
@@ -8376,6 +9142,7 @@ async def run_bookmark_enrichment(
                     """
                     SELECT
                       b.id as bookmark_id,
+                      b.workspace_id as workspace_id,
                       b.title,
                       b.url,
                       coalesce(pc.content_text, '') as content_text
@@ -8405,6 +9172,7 @@ async def run_bookmark_enrichment(
                     enriched = local_enrich_bookmark(row["url"], row["title"], row["content_text"])
                     local_summaries += 1
                     logger.info("Enrich: local heuristics for bookmark_id=%s", row["bookmark_id"])
+                kind_norm = normalize_kind(str(enriched.get("kind") or "bookmark"), default="bookmark")
                 embedding = get_openai_embedding(
                     f"{row['title']}\n{row['url']}\n{enriched['summary']}\n{' '.join(enriched['tags'])}"
                 )
@@ -8418,6 +9186,7 @@ async def run_bookmark_enrichment(
                               summary = %s,
                               category = %s,
                               tags = %s::jsonb,
+                              kind = %s,
                               embedding = %s::vector,
                               enriched_at = now(),
                               updated_at = now()
@@ -8427,6 +9196,7 @@ async def run_bookmark_enrichment(
                                 enriched["summary"],
                                 enriched["category"],
                                 json.dumps(enriched["tags"]),
+                                kind_norm,
                                 build_vector_literal(embedding),
                                 row["bookmark_id"],
                             ),
@@ -8440,6 +9210,7 @@ async def run_bookmark_enrichment(
                               summary = %s,
                               category = %s,
                               tags = %s::jsonb,
+                              kind = %s,
                               enriched_at = now(),
                               updated_at = now()
                             WHERE bookmark_id = %s
@@ -8448,10 +9219,33 @@ async def run_bookmark_enrichment(
                                 enriched["summary"],
                                 enriched["category"],
                                 json.dumps(enriched["tags"]),
+                                kind_norm,
                                 row["bookmark_id"],
                             ),
                         )
+                conn.commit()
                 processed += 1
+                try:
+                    promote_enriched_bookmark_to_knowledge(
+                        workspace_id=int(row["workspace_id"]),
+                        bookmark_id=int(row["bookmark_id"]),
+                        title=str(row["title"] or ""),
+                        url=str(row["url"] or ""),
+                        content_text=str(row["content_text"] or ""),
+                        summary=str(enriched["summary"] or ""),
+                        category=str(enriched["category"] or "general"),
+                        tags=list(enriched.get("tags") or []),
+                        embedding=embedding,
+                        kind=kind_norm,
+                    )
+                    obsidian_promoted += 1
+                except Exception as promote_exc:
+                    obsidian_failed += 1
+                    logger.warning(
+                        "Obsidian/KB promote failed bookmark_id=%s: %s",
+                        row.get("bookmark_id"),
+                        promote_exc,
+                    )
             except Exception as row_exc:
                 conn.rollback()
                 enrich_failed += 1
@@ -8460,7 +9254,6 @@ async def run_bookmark_enrichment(
                     row.get("bookmark_id"),
                     row_exc,
                 )
-        conn.commit()
 
         return {
             "processed": processed,
@@ -8475,6 +9268,8 @@ async def run_bookmark_enrichment(
             "localSummaries": local_summaries,
             "embeddingsComputed": embeddings_computed,
             "embeddingsMissing": embeddings_missing,
+            "obsidianPromoted": obsidian_promoted,
+            "obsidianFailed": obsidian_failed,
         }
     except Exception as exc:
         conn.rollback()
@@ -8595,15 +9390,46 @@ async def web_search(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    """Веб-поиск: провайдер выбирается на сервере (ключи Swoop / env)."""
+    """Веб-поиск: multi-provider merge; mode=hybrid — LLM-ранжирование + overview."""
     verify_hermes_agent_access(request, x_api_key, authorization)
     query = payload.query.strip()
     limit = max(1, min(int(payload.limit or 10), 20))
+    mode_raw = str(payload.mode or "hybrid").strip().lower()
+    mode = mode_raw if mode_raw in {"raw", "hybrid"} else "hybrid"
+
+    if mode == "hybrid":
+        candidates = external_web_search_from_settings(
+            query,
+            limit,
+            per_provider_limit=10,
+            merge_limit=30,
+        )
+        ranked = rank_web_search_results_with_llm(query, candidates, limit=limit)
+        items = ranked.get("items") if isinstance(ranked.get("items"), list) else []
+        overview = str(ranked.get("overview") or "").strip()
+        providers = sorted(
+            {str(i.get("sourceProvider") or "unknown") for i in items if isinstance(i, dict)}
+        )
+        return {
+            "ok": True,
+            "query": query,
+            "mode": "hybrid",
+            "overview": overview,
+            "ranked": bool(ranked.get("ranked")),
+            "count": len(items),
+            "items": items,
+            "providersUsed": providers,
+            "candidateCount": len(candidates),
+        }
+
     items = external_web_search_from_settings(query, limit)
     providers = sorted({str(i.get("sourceProvider") or "unknown") for i in items if isinstance(i, dict)})
     return {
         "ok": True,
         "query": query,
+        "mode": "raw",
+        "overview": "",
+        "ranked": False,
         "count": len(items),
         "items": items,
         "providersUsed": providers,

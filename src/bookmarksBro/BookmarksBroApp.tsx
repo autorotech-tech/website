@@ -35,6 +35,8 @@ import {
   setStorageMode,
   getLocalGeminiApiKey,
   setLocalGeminiApiKey,
+  enrichKbFile,
+  listWorkspaces,
 } from './services'
 import {
   listLocalBookmarks,
@@ -99,10 +101,21 @@ export function BookmarksBroApp() {
   const [syncStatus, setSyncStatus] = useState<UiSyncStatus>(() => getUiSyncStatus())
   const [tagFilter, setTagFilter] = useState<string>('All')
   const [categoryFilter, setCategoryFilter] = useState<string>('All')
+  const [kindFilter, setKindFilter] = useState<string>('All')
   const [ragMode, setRagMode] = useState<'semantic' | 'keyword'>('semantic')
   const [facetCategories, setFacetCategories] = useState<string[]>([])
   const [facetTags, setFacetTags] = useState<string[]>([])
+  const KINDS = ['bookmark', 'note', 'idea', 'plan', 'development', 'task', 'article', 'prompt', 'contact', 'link']
   const [workspaceId, setWorkspaceId] = useState('')
+  const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([])
+  const [fileEnrichWorkspaceId, setFileEnrichWorkspaceId] = useState('')
+  const [fileEnrichKind, setFileEnrichKind] = useState('note')
+  const [fileEnrichCategory, setFileEnrichCategory] = useState('general')
+  const [fileEnrichCaption, setFileEnrichCaption] = useState('')
+  const [fileEnrichTitle, setFileEnrichTitle] = useState('')
+  const [fileEnrichFiles, setFileEnrichFiles] = useState<File[]>([])
+  const [fileEnrichLoading, setFileEnrichLoading] = useState(false)
+  const [fileEnrichMessage, setFileEnrichMessage] = useState('')
   const [tgStatus, setTgStatus] = useState<TelegramLinkStatus | null>(null)
   const [tgStatusLoading, setTgStatusLoading] = useState(false)
   const [tgLinkCode, setTgLinkCode] = useState<{ code: string; botUsername: string; expiresAt: string } | null>(null)
@@ -216,9 +229,22 @@ export function BookmarksBroApp() {
     async function loadWs() {
       const wsId = await resolveWorkspaceId()
       setWorkspaceId(wsId)
+      setFileEnrichWorkspaceId(wsId)
     }
     void loadWs()
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'knowledge') return
+    void listWorkspaces()
+      .then((items) => {
+        setWorkspaces(items)
+        if (!fileEnrichWorkspaceId && items[0]?.id) {
+          setFileEnrichWorkspaceId(items[0].id)
+        }
+      })
+      .catch(() => setWorkspaces([]))
+  }, [tab, fileEnrichWorkspaceId])
 
   const fetchTgStatus = useCallback(async () => {
     setTgStatusLoading(true)
@@ -430,9 +456,13 @@ export function BookmarksBroApp() {
     return searchItems.filter((item) => {
       if (tagFilter !== 'All' && !(item.tags && item.tags.includes(tagFilter))) return false
       if (categoryFilter !== 'All' && item.category !== categoryFilter) return false
+      if (kindFilter !== 'All') {
+        const itemKind = item.kind || (item.source === 'Bookmarks' ? 'bookmark' : undefined)
+        if (itemKind !== kindFilter && !(item.tags || []).includes(kindFilter)) return false
+      }
       return true
     })
-  }, [searchItems, tagFilter, categoryFilter])
+  }, [searchItems, tagFilter, categoryFilter, kindFilter])
 
   async function handleSearch(): Promise<void> {
     setIsLoading(true)
@@ -708,6 +738,53 @@ export function BookmarksBroApp() {
     }
   }
 
+  async function handleFileEnrichSubmit(): Promise<void> {
+    if (!fileEnrichWorkspaceId) {
+      setFileEnrichMessage('Выберите workspace (БЗ).')
+      return
+    }
+    if (!fileEnrichFiles.length) {
+      setFileEnrichMessage('Добавьте хотя бы один файл.')
+      return
+    }
+    setFileEnrichLoading(true)
+    setFileEnrichMessage('')
+    setError('')
+    try {
+      const results = []
+      for (const file of fileEnrichFiles) {
+        const result = await enrichKbFile({
+          workspaceId: fileEnrichWorkspaceId,
+          file,
+          kind: fileEnrichKind,
+          category: fileEnrichCategory,
+          title: fileEnrichTitle || undefined,
+          caption: fileEnrichCaption || undefined,
+        })
+        results.push(result)
+      }
+      const last = results[results.length - 1]
+      const flagged = results.some((r) => r.securityFlagged)
+      setFileEnrichMessage(
+        flagged
+          ? `Загружено ${results.length} файл(ов). Один или более отправлены на модерацию.`
+          : `Загружено ${results.length} файл(ов). Векторизация и Obsidian: ok. ID: ${last?.knowledgeItemId ?? '—'}`,
+      )
+      setFileEnrichFiles([])
+      trackTelemetry('kb_file_enrich', {
+        count: results.length,
+        workspaceId: fileEnrichWorkspaceId,
+        kind: fileEnrichKind,
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'file_enrich_failed'
+      setFileEnrichMessage(message)
+      setError(message)
+    } finally {
+      setFileEnrichLoading(false)
+    }
+  }
+
   return (
     <div className="bb-shell max-w-7xl mx-auto p-6 space-y-6">
       <header className="bb-card p-6 space-y-4">
@@ -927,12 +1004,12 @@ export function BookmarksBroApp() {
               </div>
             </div>
 
-            <div className="grid md:grid-cols-6 gap-3">
+            <div className="grid md:grid-cols-7 gap-3">
               <input
                 className="bb-input md:col-span-2"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search notes, bookmarks, and links"
+                placeholder="Search notes, bookmarks, ideas, plans..."
               />
               <select
                 className="bb-input"
@@ -943,6 +1020,18 @@ export function BookmarksBroApp() {
                 <option value="Obsidian">Obsidian</option>
                 <option value="Bookmarks">Bookmarks</option>
                 <option value="Links">Links</option>
+              </select>
+              <select
+                className="bb-input"
+                value={kindFilter}
+                onChange={(e) => setKindFilter(e.target.value)}
+              >
+                <option value="All">All kinds</option>
+                {KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
               </select>
               <select
                 className="bb-input"
@@ -976,7 +1065,7 @@ export function BookmarksBroApp() {
                 <option value="semantic">Semantic</option>
                 <option value="keyword">Keyword</option>
               </select>
-              <button type="button" className="bb-btn-secondary md:col-span-6" onClick={() => void handleSearch()}>
+              <button type="button" className="bb-btn-secondary md:col-span-7" onClick={() => void handleSearch()}>
                 {isLoading ? 'Searching…' : 'Search'}
               </button>
             </div>
@@ -1247,6 +1336,89 @@ export function BookmarksBroApp() {
 
       {tab === 'knowledge' && (
         <section className="space-y-3">
+          <article className="bb-card p-4 space-y-3">
+            <h3 className="font-medium text-[#26251e]">Обогатить БЗ файлами</h3>
+            <p className="text-sm text-[#5a5852]">
+              Загрузите .txt, .md, .csv, .json, PDF (best-effort), изображения (OCR) или аудио (Whisper).
+              Укажите workspace и тип записи. В Telegram: привяжите чат к workspace и отправьте файл с подписью
+              <code className="mx-1">#kb #development #dev-tools</code>.
+            </p>
+            <div className="grid md:grid-cols-2 gap-3">
+              <label className="space-y-1 text-sm">
+                <span className="text-[#807d72]">Workspace (БЗ)</span>
+                <select
+                  className="bb-input w-full"
+                  value={fileEnrichWorkspaceId}
+                  onChange={(e) => setFileEnrichWorkspaceId(e.target.value)}
+                >
+                  {(workspaces.length ? workspaces : [{ id: workspaceId, name: `Workspace ${workspaceId}` }])
+                    .filter((w) => w.id)
+                    .map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name} ({w.id})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[#807d72]">Kind</span>
+                <select className="bb-input w-full" value={fileEnrichKind} onChange={(e) => setFileEnrichKind(e.target.value)}>
+                  {KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[#807d72]">Category</span>
+                <input
+                  className="bb-input w-full"
+                  value={fileEnrichCategory}
+                  onChange={(e) => setFileEnrichCategory(e.target.value)}
+                  placeholder="general, ai-ml, dev-tools…"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-[#807d72]">Title (optional)</span>
+                <input
+                  className="bb-input w-full"
+                  value={fileEnrichTitle}
+                  onChange={(e) => setFileEnrichTitle(e.target.value)}
+                  placeholder="Заголовок заметки"
+                />
+              </label>
+            </div>
+            <label className="space-y-1 text-sm block">
+              <span className="text-[#807d72]">Подпись / hints</span>
+              <input
+                className="bb-input w-full"
+                value={fileEnrichCaption}
+                onChange={(e) => setFileEnrichCaption(e.target.value)}
+                placeholder="#kb #note #dev-tools описание"
+              />
+            </label>
+            <input
+              type="file"
+              multiple
+              className="bb-input w-full"
+              onChange={(e) => setFileEnrichFiles(Array.from(e.target.files ?? []))}
+            />
+            {!!fileEnrichFiles.length && (
+              <p className="text-xs text-[#5a5852]">
+                Выбрано: {fileEnrichFiles.map((f) => f.name).join(', ')}
+              </p>
+            )}
+            <button
+              type="button"
+              className="bb-btn-primary"
+              disabled={fileEnrichLoading}
+              onClick={() => void handleFileEnrichSubmit()}
+            >
+              {fileEnrichLoading ? 'Загрузка…' : 'Векторизовать и обогатить БЗ'}
+            </button>
+            {fileEnrichMessage && <p className="text-sm text-[#5a5852]">{fileEnrichMessage}</p>}
+          </article>
           <article className="bb-card p-4 space-y-3">
             <h3 className="font-medium text-[#26251e]">Export Obsidian + vector knowledge</h3>
             <div className="grid md:grid-cols-3 gap-3">

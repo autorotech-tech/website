@@ -12,7 +12,7 @@ SSH_OPTS=(-i "$KEY" -o ConnectTimeout=60 -o ServerAliveInterval=15)
 echo "=== 1. Build SPA (includes /keept/admin) ==="
 cd "$ROOT"
 npm run build
-python3 -m py_compile agent-api/main.py agent-api/security.py
+python3 -m py_compile agent-api/main.py agent-api/security.py agent-api/kb_file_ingest.py
 
 echo "=== 2. Upload dist + agent-api ==="
 tar czf /tmp/keept-dist.tgz -C "$ROOT/dist" .
@@ -20,6 +20,7 @@ scp "${SSH_OPTS[@]}" /tmp/keept-dist.tgz "$REMOTE:/tmp/keept-dist.tgz"
 scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/main.py" \
   "$ROOT/agent-api/security.py" \
+  "$ROOT/agent-api/kb_file_ingest.py" \
   "$REMOTE:/tmp/"
 
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
@@ -36,6 +37,7 @@ fi
 docker cp /tmp/keept-dist/. autoro-frontend:/usr/share/nginx/html/
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
 docker cp /tmp/security.py autoro-agent-api:/app/security.py
+docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker restart autoro-agent-api
 sleep 8
 echo "agent-api restarted (moderation schema ensured on startup)."

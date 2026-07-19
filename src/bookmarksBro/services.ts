@@ -935,4 +935,59 @@ export function setLocalGeminiApiKey(key: string): void {
   localStorage.setItem('bookmarks_bro_local_gemini_api_key', key)
 }
 
+export type WorkspaceOption = { id: string; name: string }
+
+export async function listWorkspaces(): Promise<WorkspaceOption[]> {
+  const response = await fetch(bookmarksAgentApiUrl('/api/v1/bookmarks/workspaces'), {
+    headers: bookmarksHeaders(),
+  })
+  if (!response.ok) {
+    throw new Error(`workspaces_list_failed_${response.status}`)
+  }
+  const payload = (await response.json()) as { items?: Array<{ id?: string; name?: string }> }
+  return (payload.items ?? []).map((row) => ({
+    id: String(row.id ?? ''),
+    name: String(row.name ?? `Workspace ${row.id ?? ''}`),
+  })).filter((row) => row.id)
+}
+
+export type KbFileEnrichResult = {
+  ok?: boolean
+  knowledgeItemId?: number
+  kind?: string
+  category?: string
+  title?: string
+  notePath?: string
+  securityFlagged?: boolean
+  extraction?: { method?: string; textLength?: number }
+  obsidian?: { ok?: boolean }
+}
+
+export async function enrichKbFile(input: {
+  workspaceId: string
+  file: File
+  kind?: string
+  category?: string
+  title?: string
+  caption?: string
+}): Promise<KbFileEnrichResult> {
+  const form = new FormData()
+  form.append('workspaceId', input.workspaceId)
+  form.append('file', input.file)
+  if (input.kind) form.append('kind', input.kind)
+  if (input.category) form.append('category', input.category)
+  if (input.title) form.append('title', input.title)
+  if (input.caption) form.append('caption', input.caption)
+
+  const response = await fetch(bookmarksAgentApiUrl('/api/v1/knowledge/files/enrich'), {
+    method: 'POST',
+    headers: bookmarksHeaders(),
+    body: form,
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(String((err as { detail?: string }).detail || `file_enrich_failed_${response.status}`))
+  }
+  return (await response.json()) as KbFileEnrichResult
+}
 
