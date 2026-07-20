@@ -3,6 +3,7 @@
  * Интеграционный тест Bookmarks Bro API (agent-api).
  * Читает .env: VITE_BOOKMARKS_API_KEY, VITE_AGENT_API_BASE (опционально).
  * AGENT_API_BASE — полный URL API без /api/v1 (например http://127.0.0.1:8900).
+ * Staging smoke: 502 usually means nginx upstream DNS stale after agent-api recreate.
  */
 import fs from 'fs'
 import path from 'path'
