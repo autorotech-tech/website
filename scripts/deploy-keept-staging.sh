@@ -21,6 +21,7 @@ scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/main.py" \
   "$ROOT/agent-api/security.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
+  "$ROOT/scripts/patch-swoop-nginx-api-v1.sh" \
   "$REMOTE:/tmp/"
 
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
@@ -40,6 +41,7 @@ docker cp /tmp/security.py autoro-agent-api:/app/security.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker restart autoro-agent-api
 sleep 8
+bash /tmp/patch-swoop-nginx-api-v1.sh
 echo "agent-api restarted (moderation schema ensured on startup)."
 REMOTE
 
