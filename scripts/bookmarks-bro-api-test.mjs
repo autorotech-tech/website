@@ -108,7 +108,13 @@ if (ensure.networkError) {
   process.exit(1)
 }
 if (!ensure.ok) {
-  fail('workspaces/ensure', `HTTP ${ensure.status} ${JSON.stringify(ensure.data)}`)
+  const hint =
+    ensure.status === 502 || ensure.status === 504
+      ? ' — staging upstream down/stale nginx DNS (check autoro-agent-api + reload autoro-frontend nginx)'
+      : ensure.status === 401 || ensure.status === 403
+        ? ' — check KEEPT_BOOKMARKS_API_KEY matches agent_api_key'
+        : ''
+  fail('workspaces/ensure', `HTTP ${ensure.status}${hint} ${JSON.stringify(ensure.data)}`)
 } else {
   const ws = String(ensure.data?.workspaceId ?? '')
   pass('workspaces/ensure', `workspaceId=${ws}`)
