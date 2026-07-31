@@ -141,5 +141,8 @@ dist
 *.zip
 !extensions/bookmarks-bro/**/*.zip
 tmp/
+.tmp/
+extensions/bookmarks-bro/e2e/test-results/
+extensions/bookmarks-bro/e2e/playwright-report/
 livekit_test_session.json
 

@@ -39,4 +39,5 @@ npm run dev
 ## Связанные документы
 
 - [docs/bookmarks-bro/TESTING.md](../../docs/bookmarks-bro/TESTING.md) — веб-приложение и API smoke
+- [e2e/README.md](./e2e/README.md) — **Automated E2E (Playwright)** staging
 - [SUPABASE_OAUTH_SETUP.md](./SUPABASE_OAUTH_SETUP.md) — redirect URL для OAuth

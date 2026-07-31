@@ -20,6 +20,9 @@
     "tauri:build": "tauri build",
     "bookmarks-bro:smoke": "node scripts/bookmarks-bro-smoke.mjs",
     "bookmarks-bro:api-test": "node scripts/bookmarks-bro-api-test.mjs",
+    "bookmarks-bro:e2e:install": "npx playwright install chromium",
+    "bookmarks-bro:e2e": "node extensions/bookmarks-bro/e2e/run.mjs",
+    "bookmarks-bro:e2e:ui-login": "node extensions/bookmarks-bro/e2e/run.mjs specs/02-auth-ui-login.spec.ts",
     "keept:sync-authrag": "bash scripts/sync-keept-to-authrag.sh",
     "keept:sync-authrag:apply": "bash scripts/sync-keept-to-authrag.sh --apply --push",
     "keept:adk:test": "bash scripts/keept-adk.sh test",
@@ -31,7 +34,8 @@
     "understand-anything:install": "bash scripts/setup-understand-anything.sh",
     "keept:env:local": "bash scripts/setup-keept-local-env.sh",
     "keept:env:github-secrets": "bash scripts/setup-keept-local-env.sh --github-secrets",
-    "safedep:mcp:configure": "node scripts/setup-safedep-mcp.mjs"
+    "safedep:mcp:configure": "node scripts/setup-safedep-mcp.mjs",
+    "portfolio:build": "portfolio/.venv/bin/python portfolio/add_captions.py && node portfolio/build-pdf.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.3",
@@ -45,6 +49,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@tauri-apps/cli": "^2.8.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
