@@ -81,6 +81,16 @@ const JR_API = (() => {
     );
   }
 
+  async function listSources() {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(
+      `${apiBase}/api/v1/job-responder/resume/sources?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { headers }
+    );
+  }
+
   async function resumeCapture({ title, text, kind = 'job_resume', category = 'cv' }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -126,14 +136,14 @@ const JR_API = (() => {
     });
   }
 
-  async function generateResponse({ mode, host, vacancy }) {
+  async function generateResponse({ mode, host, vacancy, selectedSourceIds = [] }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
     return fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ workspaceId, mode, host, vacancy, locale: 'ru' }),
+      body: JSON.stringify({ workspaceId, mode, host, vacancy, locale: 'ru', selectedSourceIds }),
     });
   }
 
@@ -169,6 +179,7 @@ const JR_API = (() => {
     fetchVacancyFromTab,
     generateResponse,
     getApiBase,
+    listSources,
     logout,
     resumeCapture,
     resumeStatus,

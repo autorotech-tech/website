@@ -88,6 +88,44 @@ button:disabled {
   flex: 1;
 }
 
+.sourcesList {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  margin-bottom: 10px;
+}
+
+.sourceItem {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fafafa;
+}
+
+.sourceItemHeader {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.sourceItemMeta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.sourceItemTitle {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sourceItemPreview {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.35;
+}
+
 .footer {
   display: flex;
   gap: 12px;

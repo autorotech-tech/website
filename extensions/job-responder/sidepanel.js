@@ -1,4 +1,5 @@
 let currentVacancy = null;
+let currentSources = [];
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
@@ -8,6 +9,7 @@ const resultText = document.getElementById('resultText');
 const genMeta = document.getElementById('genMeta');
 const errorEl = document.getElementById('error');
 const successEl = document.getElementById('success');
+const sourcesListEl = document.getElementById('sourcesList');
 
 function setError(msg) {
   errorEl.textContent = msg || '';
@@ -35,6 +37,52 @@ async function refreshResumeStatus() {
       : `Resume RAG: загрузите основное резюме (сейчас ${st.count} док.)`;
   } catch (err) {
     resumeStatus.textContent = `Resume RAG: ${err.message}`;
+  }
+}
+
+function renderSources(items) {
+  currentSources = Array.isArray(items) ? items : [];
+  if (!sourcesListEl) return;
+  if (!currentSources.length) {
+    sourcesListEl.innerHTML = '<div class="hint">Пока нет sources. Добавьте CV, portfolio files или links.</div>';
+    return;
+  }
+  sourcesListEl.innerHTML = currentSources
+    .map((item) => {
+      const id = Number(item.knowledgeItemId || 0);
+      const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
+      const meta = [item.kind || '-', item.category || '-', item.updatedAt || '-'].join(' | ');
+      const preview = String(item.preview || '').replace(/[<>]/g, '');
+      const title = String(item.title || 'Untitled').replace(/[<>]/g, '');
+      return `
+        <label class="sourceItem">
+          <div class="sourceItemHeader">
+            <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
+            <div>
+              <div class="sourceItemTitle">${title}</div>
+              <div class="sourceItemMeta">${meta}</div>
+              ${preview ? `<div class="sourceItemPreview">${preview}</div>` : ''}
+            </div>
+          </div>
+        </label>
+      `;
+    })
+    .join('');
+}
+
+function getSelectedSourceIds() {
+  return Array.from(document.querySelectorAll('.sourceCheckbox:checked'))
+    .map((el) => Number(el.value))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+async function refreshSources() {
+  try {
+    const data = await JR_API.listSources();
+    renderSources(data.items || []);
+  } catch (err) {
+    renderSources([]);
+    setError(String(err.message || err));
   }
 }
 
@@ -84,6 +132,7 @@ async function runGenerate(mode) {
       mode,
       host: currentVacancy?.host || 'ru',
       vacancy,
+      selectedSourceIds: getSelectedSourceIds(),
     });
     resultText.value = data.text || '';
     genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length}`;
@@ -101,6 +150,7 @@ const genAnswersBtn = document.getElementById('genAnswersBtn');
 const copyBtn = document.getElementById('copyBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
+const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
 
 const resumeFileInput = document.getElementById('resumeFile');
 const portfolioFilesInput = document.getElementById('portfolioFiles');
@@ -129,6 +179,7 @@ uploadResumeFileBtn.addEventListener('click', async () => {
     });
     setSuccess('CV добавлен в Resume RAG');
     await refreshResumeStatus();
+    await refreshSources();
     resumeFileInput.value = '';
   } catch (err) {
     setError(String(err.message || err));
@@ -158,6 +209,7 @@ uploadPortfolioFilesBtn.addEventListener('click', async () => {
     }
     setSuccess('Portfolio добавлен в Resume RAG');
     await refreshResumeStatus();
+    await refreshSources();
     portfolioFilesInput.value = '';
   } catch (err) {
     setError(String(err.message || err));
@@ -185,6 +237,7 @@ addLinkBtn.addEventListener('click', async () => {
     });
     setSuccess('Ссылка добавлена в Resume RAG');
     await refreshResumeStatus();
+    await refreshSources();
     linkUrlInput.value = '';
     linkTitleInput.value = '';
   } catch (err) {
@@ -195,6 +248,7 @@ addLinkBtn.addEventListener('click', async () => {
 });
 
 refreshVacancyBtn.addEventListener('click', refreshVacancyFromTab);
+refreshSourcesBtn.addEventListener('click', refreshSources);
 genCoverBtn.addEventListener('click', () => runGenerate('cover_letter'));
 genAnswersBtn.addEventListener('click', () => runGenerate('question_answers'));
 copyBtn.addEventListener('click', async () => {
@@ -228,6 +282,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     try {
       await JR_API.ensureWorkspace();
       await refreshResumeStatus();
+      await refreshSources();
     } catch (err) {
       setError(String(err.message || err));
     }

@@ -61,6 +61,7 @@ class JobResponderGeneratePayload(BaseModel):
     host: Literal["ru", "kz", "uz"] = "ru"
     vacancy: JobResponderVacancyPayload
     locale: str = Field(default="ru", max_length=16)
+    selectedSourceIds: List[int] = Field(default_factory=list)
 
 
 class JobResponderResumeCapturePayload(BaseModel):
@@ -265,6 +266,39 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         )
         return "keyword", cur.fetchall()
 
+    def _resume_selected_rows(cur, workspace_id: int, selected_ids: List[int]) -> List[Dict[str, Any]]:
+        ids = [int(x) for x in selected_ids if int(x) > 0]
+        if not ids:
+            return []
+        cur.execute(
+            """
+            select
+              k.id,
+              k.source,
+              k.title,
+              k.url,
+              k.ai_summary,
+              k.category,
+              k.tags,
+              k.status,
+              k.note_path,
+              k.kind,
+              k.content_text,
+              null::float8 as distance
+            from public.knowledge_items k
+            where k.workspace_id = %s
+              and k.source = %s
+              and k.kind = any(%s)
+              and k.id = any(%s)
+            order by
+              case when k.kind = %s then 0 else 1 end,
+              k.updated_at desc
+            limit 20
+            """,
+            (workspace_id, RESUME_SOURCE, list(RESUME_KINDS), ids, PRIMARY_CV_KIND),
+        )
+        return cur.fetchall()
+
     def _upsert_resume_item_text(
         cur,
         workspace_id: int,
@@ -387,6 +421,61 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "primaryCvCount": int(row.get("primary_cv_count") or 0),
                 "hasPrimaryCv": int(row.get("primary_cv_count") or 0) > 0,
                 "lastUpdated": row.get("last_updated").isoformat() if row.get("last_updated") else None,
+            }
+        finally:
+            conn.close()
+
+    @app.get("/api/v1/job-responder/resume/sources")
+    async def job_responder_resume_sources(
+        workspaceId: str,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+        require_job_responder_user_auth(auth_ctx)
+        workspace_id = _parse_workspace_id(workspaceId)
+        verify_workspace_membership(auth_ctx, workspace_id)
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    select
+                      id,
+                      title,
+                      url,
+                      kind,
+                      category,
+                      updated_at,
+                      left(coalesce(ai_summary, content_text, ''), 220) as preview
+                    from public.knowledge_items
+                    where workspace_id = %s
+                      and source = %s
+                      and kind = any(%s)
+                    order by
+                      case when kind = %s then 0 else 1 end,
+                      updated_at desc
+                    limit 200
+                    """,
+                    (workspace_id, RESUME_SOURCE, list(RESUME_KINDS), PRIMARY_CV_KIND),
+                )
+                rows = cur.fetchall()
+            return {
+                "workspaceId": str(workspace_id),
+                "items": [
+                    {
+                        "knowledgeItemId": int(r["id"]),
+                        "title": r.get("title"),
+                        "url": r.get("url"),
+                        "kind": r.get("kind"),
+                        "category": r.get("category"),
+                        "preview": r.get("preview"),
+                        "updatedAt": r.get("updated_at").isoformat() if r.get("updated_at") else None,
+                    }
+                    for r in rows
+                ],
             }
         finally:
             conn.close()
@@ -618,8 +707,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         detail="Upload a primary resume first (job_responder/resume/capture with kind=job_resume).",
                     )
 
-                search_q = build_resume_search_query(payload.vacancy)
-                _, rag_rows = _resume_search_rows(cur, workspace_id, search_q, 12)
+                if payload.selectedSourceIds:
+                    rag_rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
+                    if not rag_rows:
+                        raise HTTPException(status_code=422, detail="Selected sources were not found in your Resume RAG.")
+                else:
+                    search_q = build_resume_search_query(payload.vacancy)
+                    _, rag_rows = _resume_search_rows(cur, workspace_id, search_q, 12)
         finally:
             conn.close()
 
