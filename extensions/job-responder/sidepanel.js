@@ -1,15 +1,19 @@
 let currentVacancy = null;
 let currentSources = [];
+let lastAddedSourceIds = new Set();
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
 const vacancyMeta = document.getElementById('vacancyMeta');
 const vacancyDescription = document.getElementById('vacancyDescription');
+const vacancyStructuredEl = document.getElementById('vacancyStructured');
+const relevanceBox = document.getElementById('relevanceBox');
 const resultText = document.getElementById('resultText');
 const genMeta = document.getElementById('genMeta');
 const errorEl = document.getElementById('error');
 const successEl = document.getElementById('success');
 const sourcesListEl = document.getElementById('sourcesList');
+const workspaceIdInput = document.getElementById('workspaceIdInput');
 
 function setError(msg) {
   errorEl.textContent = msg || '';
@@ -21,16 +25,36 @@ function setSuccess(msg) {
   if (msg) errorEl.textContent = '';
 }
 
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatUpdatedAt(iso) {
+  if (!iso) return '-';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString('ru-RU', { hour12: false });
+  } catch {
+    return String(iso);
+  }
+}
+
 async function refreshAuthHint() {
   const testMode = await JR_API.isTestMode();
+  const ws = await JR_API.getWorkspaceId();
+  if (workspaceIdInput) workspaceIdInput.value = ws;
   if (testMode) {
-    const ws = await JR_API.ensureWorkspace();
-    authHint.textContent = `Тестовый режим (без login) · workspace ${ws}`;
+    authHint.textContent = `Тестовый режим (без login) · workspace ${ws} (default ${JR_API.DEFAULT_TEST_WORKSPACE_ID})`;
     return true;
   }
   const saved = await chrome.storage.local.get(['userAccessToken', 'userEmail']);
   if (saved.userAccessToken) {
-    authHint.textContent = `Вход: ${saved.userEmail || 'OK'}`;
+    authHint.textContent = `Вход: ${saved.userEmail || 'OK'} · workspace ${ws}`;
     return true;
   }
   authHint.textContent = 'Не авторизован - нажмите "Вход"';
@@ -40,9 +64,10 @@ async function refreshAuthHint() {
 async function refreshResumeStatus() {
   try {
     const st = await JR_API.resumeStatus();
+    const ws = st.workspaceId || (await JR_API.getWorkspaceId());
     resumeStatus.textContent = st.hasPrimaryCv
-      ? `Resume RAG: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}`
-      : `Resume RAG: загрузите основное резюме (сейчас ${st.count} док.)`;
+      ? `Resume RAG ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}`
+      : `Resume RAG ws=${ws}: загрузите основное резюме (сейчас ${st.count} док.)`;
   } catch (err) {
     resumeStatus.textContent = `Resume RAG: ${err.message}`;
   }
@@ -52,23 +77,25 @@ function renderSources(items) {
   currentSources = Array.isArray(items) ? items : [];
   if (!sourcesListEl) return;
   if (!currentSources.length) {
-    sourcesListEl.innerHTML = '<div class="hint">Пока нет sources. Добавьте CV, portfolio files или links.</div>';
+    sourcesListEl.innerHTML =
+      '<div class="hint">Список пуст для текущего workspaceId. Проверьте поле выше (test default = 1), затем «Обновить sources». После загрузки CV элемент появится здесь.</div>';
     return;
   }
   sourcesListEl.innerHTML = currentSources
     .map((item) => {
       const id = Number(item.knowledgeItemId || 0);
       const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
-      const meta = [item.kind || '-', item.category || '-', item.updatedAt || '-'].join(' | ');
-      const preview = String(item.preview || '').replace(/[<>]/g, '');
-      const title = String(item.title || 'Untitled').replace(/[<>]/g, '');
+      const isNew = lastAddedSourceIds.has(id) ? ' isNew' : '';
+      const meta = [item.kind || '-', item.category || '-', formatUpdatedAt(item.updatedAt)].join(' | ');
+      const preview = escapeHtml(item.preview || '');
+      const title = escapeHtml(item.title || 'Untitled');
       return `
-        <label class="sourceItem">
+        <label class="sourceItem${isNew}">
           <div class="sourceItemHeader">
             <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
             <div>
               <div class="sourceItemTitle">${title}</div>
-              <div class="sourceItemMeta">${meta}</div>
+              <div class="sourceItemMeta">${escapeHtml(meta)}</div>
               ${preview ? `<div class="sourceItemPreview">${preview}</div>` : ''}
             </div>
           </div>
@@ -84,21 +111,86 @@ function getSelectedSourceIds() {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
-async function refreshSources() {
+async function refreshSources({ highlightIds = [] } = {}) {
   try {
+    if (highlightIds.length) {
+      highlightIds.forEach((id) => lastAddedSourceIds.add(Number(id)));
+    }
     const data = await JR_API.listSources();
-    renderSources(data.items || []);
+    const items = data.items || [];
+    renderSources(items);
+    if (!items.length) {
+      setError(
+        `Sources пусты для workspaceId=${data.workspaceId || (await JR_API.getWorkspaceId())}. ` +
+          `В test mode по умолчанию используется ${JR_API.DEFAULT_TEST_WORKSPACE_ID}. ` +
+          `Если загружали в другой workspace - смените ID выше и нажмите «Сохранить».`
+      );
+    } else if (highlightIds.length) {
+      sourcesListEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    return items;
   } catch (err) {
     renderSources([]);
-    setError(String(err.message || err));
+    setError(`Ошибка списка sources: ${String(err.message || err)}`);
+    throw err;
   }
+}
+
+function renderStructured(structured) {
+  if (!vacancyStructuredEl) return;
+  if (!structured || typeof structured !== 'object') {
+    vacancyStructuredEl.hidden = true;
+    vacancyStructuredEl.innerHTML = '';
+    return;
+  }
+  const rows = [
+    ['Зарплата / доход', structured.salary],
+    ['Опыт', structured.experience],
+    ['Занятость', structured.employmentType],
+    ['График', structured.schedule],
+    ['Часы', structured.workingHours],
+    ['Формат', structured.workFormat],
+    ['Локация', structured.location],
+    ['Seniority', structured.seniority],
+    ['Навыки', Array.isArray(structured.keySkills) ? structured.keySkills.join(', ') : ''],
+  ].filter(([, v]) => v && String(v).trim());
+
+  if (!rows.length) {
+    vacancyStructuredEl.hidden = true;
+    vacancyStructuredEl.innerHTML = '';
+    return;
+  }
+  vacancyStructuredEl.hidden = false;
+  vacancyStructuredEl.innerHTML =
+    '<strong>Структура</strong><ul>' +
+    rows.map(([k, v]) => `<li><b>${escapeHtml(k)}:</b> ${escapeHtml(v)}</li>`).join('') +
+    '</ul>';
+}
+
+function renderRelevance(data) {
+  if (!relevanceBox) return;
+  if (!data || data.score == null) {
+    relevanceBox.hidden = true;
+    relevanceBox.innerHTML = '';
+    return;
+  }
+  const bullets = (data.rationale || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
+  relevanceBox.hidden = false;
+  relevanceBox.innerHTML = `
+    <div class="relevanceScore">${Number(data.score)} / 100</div>
+    <div>Релевантность Resume ↔ вакансия</div>
+    <ul>${bullets}</ul>
+  `;
 }
 
 function applyVacancy(vacancy) {
   currentVacancy = vacancy;
   const host = vacancy.host || 'web';
-  vacancyMeta.textContent = `${vacancy.title || '—'} | ${vacancy.company || '—'} | ${host}`;
+  const site = vacancy.siteHost ? ` · ${vacancy.siteHost}` : '';
+  vacancyMeta.textContent = `${vacancy.title || '-'} | ${vacancy.company || '-'} | ${host}${site}`;
   if (vacancy.description) vacancyDescription.value = vacancy.description;
+  renderStructured(vacancy.structured);
+  renderRelevance(null);
 }
 
 async function refreshVacancyFromTab() {
@@ -107,6 +199,7 @@ async function refreshVacancyFromTab() {
     const vacancy = await JR_API.fetchVacancyFromTab();
     applyVacancy(vacancy);
     setSuccess('Страница прочитана');
+    await runRelevanceScore().catch(() => {});
   } catch (err) {
     setError(String(err.message || err));
   }
@@ -116,13 +209,29 @@ function buildVacancyPayload() {
   const base = currentVacancy || {};
   const description = String(vacancyDescription.value || base.description || '').trim();
   const title = String(base.title || 'Вакансия').trim();
+  const structured = base.structured && typeof base.structured === 'object' ? base.structured : undefined;
   return {
     url: base.url || '',
     title,
     company: base.company || '',
     description,
     questions: Array.isArray(base.questions) ? base.questions : [],
+    structured: structured || undefined,
   };
+}
+
+async function runRelevanceScore() {
+  const vacancy = buildVacancyPayload();
+  if (!vacancy.description || vacancy.description.length < 20) {
+    setError('Нужно описание вакансии для оценки релевантности');
+    return;
+  }
+  const data = await JR_API.scoreRelevance({
+    vacancy,
+    selectedSourceIds: getSelectedSourceIds(),
+  });
+  renderRelevance(data);
+  return data;
 }
 
 async function runGenerate(mode) {
@@ -136,6 +245,7 @@ async function runGenerate(mode) {
   const btn = mode === 'question_answers' ? genAnswersBtn : genCoverBtn;
   btn.disabled = true;
   try {
+    await runRelevanceScore().catch(() => {});
     const data = await JR_API.generateResponse({
       mode,
       host: currentVacancy?.host || 'web',
@@ -143,7 +253,10 @@ async function runGenerate(mode) {
       selectedSourceIds: getSelectedSourceIds(),
     });
     resultText.value = data.text || '';
-    genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length}`;
+    if (data.relevance) renderRelevance(data.relevance);
+    genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
+      data.relevance?.score ?? '-'
+    }`;
     setSuccess('Готово - проверьте текст и скопируйте');
   } catch (err) {
     setError(String(err.message || err));
@@ -159,15 +272,31 @@ const copyBtn = document.getElementById('copyBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
+const scoreBtn = document.getElementById('scoreBtn');
+const saveWorkspaceBtn = document.getElementById('saveWorkspaceBtn');
 
 const resumeFileInput = document.getElementById('resumeFile');
 const portfolioFilesInput = document.getElementById('portfolioFiles');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
+const driveFolderInput = document.getElementById('driveFolderInput');
+const driveTokenInput = document.getElementById('driveTokenInput');
 
 const uploadResumeFileBtn = document.getElementById('uploadResumeFileBtn');
 const uploadPortfolioFilesBtn = document.getElementById('uploadPortfolioFilesBtn');
 const addLinkBtn = document.getElementById('addLinkBtn');
+const driveImportBtn = document.getElementById('driveImportBtn');
+
+if (saveWorkspaceBtn) {
+  saveWorkspaceBtn.addEventListener('click', async () => {
+    setError('');
+    const id = await JR_API.setWorkspaceId(workspaceIdInput?.value || JR_API.DEFAULT_TEST_WORKSPACE_ID);
+    await refreshAuthHint();
+    await refreshResumeStatus();
+    await refreshSources();
+    setSuccess(`workspaceId = ${id}`);
+  });
+}
 
 if (uploadResumeFileBtn) {
   uploadResumeFileBtn.addEventListener('click', async () => {
@@ -182,19 +311,21 @@ if (uploadResumeFileBtn) {
     uploadResumeFileBtn.disabled = true;
     uploadResumeFileBtn.textContent = 'Загрузка…';
     try {
-      await JR_API.ensureWorkspace();
-      await JR_API.resumeFileCapture({
+      const ws = await JR_API.ensureWorkspace();
+      const res = await JR_API.resumeFileCapture({
         file,
         kind: 'job_resume',
         category: 'cv',
         title: file.name,
       });
-      setSuccess(`CV добавлен: ${file.name}`);
+      const kid = res.knowledgeItemId;
+      setSuccess(`CV добавлен: ${file.name} (id=${kid}, ws=${res.workspaceId || ws})`);
       await refreshResumeStatus();
-      await refreshSources();
+      await refreshSources({ highlightIds: kid ? [kid] : [] });
       resumeFileInput.value = '';
     } catch (err) {
       setError(String(err.message || err));
+      await refreshSources().catch(() => {});
     } finally {
       uploadResumeFileBtn.disabled = false;
       uploadResumeFileBtn.textContent = 'Добавить CV';
@@ -214,23 +345,35 @@ if (uploadPortfolioFilesBtn) {
     }
     uploadPortfolioFilesBtn.disabled = true;
     uploadPortfolioFilesBtn.textContent = `Загрузка 0/${files.length}…`;
+    const added = [];
+    const errors = [];
     try {
       await JR_API.ensureWorkspace();
       let i = 0;
       for (const file of files) {
         i += 1;
         uploadPortfolioFilesBtn.textContent = `Загрузка ${i}/${files.length}…`;
-        await JR_API.resumeFileCapture({
-          file,
-          kind: 'job_experience',
-          category: 'experience',
-          title: file.name,
-        });
+        try {
+          const res = await JR_API.resumeFileCapture({
+            file,
+            kind: 'job_experience',
+            category: 'experience',
+            title: file.name,
+          });
+          if (res.knowledgeItemId) added.push(res.knowledgeItemId);
+        } catch (err) {
+          errors.push(`${file.name}: ${err.message || err}`);
+        }
       }
-      setSuccess(`Portfolio: ${files.length} файл(ов) добавлено`);
       await refreshResumeStatus();
-      await refreshSources();
+      await refreshSources({ highlightIds: added });
       portfolioFilesInput.value = '';
+      if (errors.length) {
+        setError(`Часть файлов не загрузилась:\n${errors.join('\n')}`);
+      }
+      if (added.length) {
+        setSuccess(`Portfolio: ${added.length} файл(ов) добавлено`);
+      }
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -254,15 +397,15 @@ if (addLinkBtn) {
     addLinkBtn.textContent = 'Загрузка…';
     try {
       await JR_API.ensureWorkspace();
-      await JR_API.resumeLinkCapture({
+      const res = await JR_API.resumeLinkCapture({
         url,
         title: title || undefined,
         kind: 'job_experience',
         category: 'experience',
       });
-      setSuccess('Ссылка добавлена в Resume RAG');
+      setSuccess(`Ссылка добавлена (id=${res.knowledgeItemId})`);
       await refreshResumeStatus();
-      await refreshSources();
+      await refreshSources({ highlightIds: res.knowledgeItemId ? [res.knowledgeItemId] : [] });
       linkUrlInput.value = '';
       linkTitleInput.value = '';
     } catch (err) {
@@ -274,8 +417,61 @@ if (addLinkBtn) {
   });
 }
 
+if (driveImportBtn) {
+  driveImportBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const folderUrlOrId = String(driveFolderInput?.value || '').trim();
+    const accessToken = String(driveTokenInput?.value || '').trim();
+    if (!folderUrlOrId) {
+      setError('Укажите URL или ID папки Google Drive');
+      return;
+    }
+    if (!accessToken) {
+      setError('Нужен OAuth access token (drive.readonly). См. docs/job-responder/drive.md');
+      return;
+    }
+    driveImportBtn.disabled = true;
+    driveImportBtn.textContent = 'Импорт…';
+    try {
+      await chrome.storage.local.set({ jrDriveAccessToken: accessToken });
+      await JR_API.ensureWorkspace();
+      const res = await JR_API.driveImport({ folderUrlOrId, accessToken });
+      const ids = (res.imported || []).map((x) => x.knowledgeItemId).filter(Boolean);
+      await refreshResumeStatus();
+      await refreshSources({ highlightIds: ids });
+      const errN = (res.errors || []).length;
+      const summary = `Drive: импортировано ${res.importedCount || 0}` + (errN ? `, ошибок ${errN}` : '');
+      if (errN && !(res.importedCount > 0)) {
+        setError(`${summary}\n${(res.errors || []).map((e) => `${e.name}: ${e.error}`).join('\n')}`);
+      } else if (errN) {
+        setSuccess(summary);
+        errorEl.textContent = (res.errors || []).map((e) => `${e.name}: ${e.error}`).join('\n');
+      } else {
+        setSuccess(summary);
+      }
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      driveImportBtn.disabled = false;
+      driveImportBtn.textContent = 'Импорт из Drive';
+    }
+  });
+}
+
 refreshVacancyBtn.addEventListener('click', refreshVacancyFromTab);
-refreshSourcesBtn.addEventListener('click', refreshSources);
+refreshSourcesBtn.addEventListener('click', () => refreshSources().catch(() => {}));
+if (scoreBtn) {
+  scoreBtn.addEventListener('click', async () => {
+    setError('');
+    try {
+      const data = await runRelevanceScore();
+      setSuccess(`Релевантность: ${data?.score ?? '-'} / 100`);
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  });
+}
 genCoverBtn.addEventListener('click', () => runGenerate('cover_letter'));
 genAnswersBtn.addEventListener('click', () => runGenerate('question_answers'));
 copyBtn.addEventListener('click', async () => {
@@ -297,15 +493,19 @@ logoutBtn.addEventListener('click', async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.userAccessToken || changes.jrTestMode) {
+  if (changes.userAccessToken || changes.jrTestMode || changes.jrWorkspaceId) {
     refreshAuthHint();
     refreshResumeStatus();
-    refreshSources();
+    refreshSources().catch(() => {});
   }
 });
 
 (async function init() {
   try {
+    const saved = await chrome.storage.local.get(['jrDriveAccessToken']);
+    if (saved.jrDriveAccessToken && driveTokenInput) {
+      driveTokenInput.value = String(saved.jrDriveAccessToken);
+    }
     await refreshAuthHint();
     await JR_API.ensureWorkspace();
     await refreshResumeStatus();

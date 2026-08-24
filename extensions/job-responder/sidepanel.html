@@ -14,20 +14,27 @@
     <section class="card">
       <h2>Sources (Resume RAG)</h2>
       <p class="hint" id="resumeStatus">—</p>
+      <div class="field">
+        <span>workspaceId (test default = 1)</span>
+        <div class="row tight">
+          <input id="workspaceIdInput" type="text" placeholder="1" />
+          <button type="button" id="saveWorkspaceBtn" class="secondary">Сохранить</button>
+        </div>
+      </div>
       <div class="row">
         <button type="button" id="refreshSourcesBtn" class="secondary">Обновить sources</button>
       </div>
-      <div class="sourcesList" id="sourcesList"></div>
+      <div class="sourcesList" id="sourcesList" aria-live="polite"></div>
 
       <div class="field">
         <span>CV файл (primary)</span>
-        <input id="resumeFile" type="file" accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json" />
+        <input id="resumeFile" type="file" accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
         <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
       </div>
 
       <div class="field">
-        <span>Portfolio файлы (references)</span>
-        <input id="portfolioFiles" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json" />
+        <span>Portfolio файлы / скриншоты</span>
+        <input id="portfolioFiles" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
         <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
       </div>
 
@@ -37,14 +44,25 @@
         <input id="linkTitle" type="text" placeholder="Название (необязательно)" />
         <button type="button" id="addLinkBtn" class="secondary">Добавить ссылку</button>
       </div>
+
+      <div class="field">
+        <span>Google Drive folder (MVP)</span>
+        <input id="driveFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/..." />
+        <input id="driveTokenInput" type="password" placeholder="OAuth access token (drive.readonly)" autocomplete="off" />
+        <button type="button" id="driveImportBtn" class="secondary">Импорт из Drive</button>
+        <p class="hint">Токен хранится только локально. Полный OAuth в расширении - TODO. См. docs/job-responder/drive.md</p>
+      </div>
     </section>
 
     <section class="card">
       <h2>Вакансия</h2>
       <p class="hint" id="vacancyMeta">Откройте любую страницу вакансии и нажмите «Обновить с страницы»</p>
+      <div id="vacancyStructured" class="structuredBox" hidden></div>
       <div class="row">
         <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
+        <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
       </div>
+      <div id="relevanceBox" class="relevanceBox" hidden></div>
       <label class="field">
         <span>Описание (можно править вручную)</span>
         <textarea id="vacancyDescription" rows="5" placeholder="Если парсер не сработал - вставьте текст вручную"></textarea>

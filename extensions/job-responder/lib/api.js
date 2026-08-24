@@ -25,7 +25,12 @@ const JR_API = (() => {
       }
     }
     if (!response.ok) {
-      const detail = data?.detail != null ? String(data.detail) : `HTTP ${response.status}`;
+      const detail =
+        data?.detail != null
+          ? typeof data.detail === 'string'
+            ? data.detail
+            : JSON.stringify(data.detail)
+          : `HTTP ${response.status}`;
       throw new Error(detail);
     }
     return data || {};
@@ -93,6 +98,12 @@ const JR_API = (() => {
     return ensureWorkspace();
   }
 
+  async function setWorkspaceId(workspaceId) {
+    const id = String(workspaceId || DEFAULT_TEST_WORKSPACE_ID).trim() || DEFAULT_TEST_WORKSPACE_ID;
+    await chrome.storage.local.set({ jrWorkspaceId: id });
+    return id;
+  }
+
   async function resumeStatus() {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -156,6 +167,34 @@ const JR_API = (() => {
     });
   }
 
+  async function driveImport({ folderUrlOrId, accessToken, kind = 'job_experience', category = 'drive' }) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/drive-import`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        workspaceId,
+        folderUrlOrId,
+        accessToken: accessToken || undefined,
+        kind,
+        category,
+      }),
+    });
+  }
+
+  async function scoreRelevance({ vacancy, selectedSourceIds = [] }) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/relevance`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, vacancy, selectedSourceIds }),
+    });
+  }
+
   async function generateResponse({ mode, host, vacancy, selectedSourceIds = [] }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -201,10 +240,13 @@ const JR_API = (() => {
 
   return {
     DEFAULT_API_BASE,
+    DEFAULT_TEST_WORKSPACE_ID,
+    driveImport,
     ensureWorkspace,
     fetchVacancyFromTab,
     generateResponse,
     getApiBase,
+    getWorkspaceId,
     isTestMode,
     listSources,
     logout,
@@ -212,5 +254,7 @@ const JR_API = (() => {
     resumeStatus,
     resumeFileCapture,
     resumeLinkCapture,
+    scoreRelevance,
+    setWorkspaceId,
   };
 })();

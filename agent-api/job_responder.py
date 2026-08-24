@@ -1,11 +1,12 @@
-"""Job Responder: Resume RAG slice + HH cover letter / question generation."""
+"""Job Responder: Resume RAG slice + vacancy cover letter / question generation."""
 
 from __future__ import annotations
 
-import hashlib
+import base64
 import json
 import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
@@ -17,6 +18,7 @@ RESUME_KINDS = ("job_resume", "job_experience", "job_skills")
 RESUME_SOURCE = "job_responder"
 RESUME_TAGS = ["job-responder", "hh"]
 PRIMARY_CV_KIND = "job_resume"
+JR_PROFILE_MARKER = "---jr_profile---"
 
 HOST_LABELS = {"ru": "hh.ru", "kz": "hh.kz", "uz": "hh.uz", "web": "web"}
 
@@ -28,6 +30,81 @@ JOB_RESPONDER_TEST_MODE = str(os.environ.get("JOB_RESPONDER_TEST_MODE", "1")).st
     "on",
 }
 DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID", "1") or "1")
+
+_SKILL_SPLIT = re.compile(r"[,;/|•·\n]+")
+_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9+#.\-]{2,}")
+
+_KNOWN_TOOLS = {
+    "python",
+    "javascript",
+    "typescript",
+    "react",
+    "vue",
+    "node",
+    "nodejs",
+    "n8n",
+    "docker",
+    "kubernetes",
+    "aws",
+    "gcp",
+    "azure",
+    "sql",
+    "postgres",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "redis",
+    "llm",
+    "openai",
+    "langchain",
+    "fastapi",
+    "django",
+    "flask",
+    "nextjs",
+    "tailwind",
+    "figma",
+    "photoshop",
+    "premiere",
+    "after effects",
+    "midjourney",
+    "stable diffusion",
+    "runway",
+    "elevenlabs",
+    "selenium",
+    "playwright",
+    "git",
+    "linux",
+    "bash",
+    "graphql",
+    "rest",
+    "api",
+    "rag",
+    "vector",
+    "supabase",
+    "firebase",
+    "telegram",
+    "whatsapp",
+    "notion",
+    "obsidian",
+}
+
+_ROLE_HINTS = (
+    "engineer",
+    "developer",
+    "analyst",
+    "manager",
+    "designer",
+    "marketer",
+    "creator",
+    "videomaker",
+    "автоматизатор",
+    "разработчик",
+    "аналитик",
+    "менеджер",
+    "дизайнер",
+    "маркетолог",
+    "нейрокреатор",
+)
 
 
 def hh_format_text(text: str) -> str:
@@ -73,10 +150,23 @@ def resolve_job_responder_auth(
             "auth_mode": "dev_bypass",
             "user_id": "job-responder-test",
             "test_mode": True,
+            "default_workspace_id": DEFAULT_TEST_WORKSPACE_ID,
         }
     auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
     require_job_responder_user_auth(auth_ctx)
     return auth_ctx
+
+
+class JobResponderVacancyStructured(BaseModel):
+    salary: Optional[str] = Field(default=None, max_length=500)
+    experience: Optional[str] = Field(default=None, max_length=500)
+    employmentType: Optional[str] = Field(default=None, max_length=200)
+    schedule: Optional[str] = Field(default=None, max_length=200)
+    workingHours: Optional[str] = Field(default=None, max_length=300)
+    workFormat: Optional[str] = Field(default=None, max_length=200)
+    keySkills: List[str] = Field(default_factory=list)
+    seniority: Optional[str] = Field(default=None, max_length=100)
+    location: Optional[str] = Field(default=None, max_length=300)
 
 
 class JobResponderVacancyPayload(BaseModel):
@@ -85,6 +175,7 @@ class JobResponderVacancyPayload(BaseModel):
     company: Optional[str] = Field(default=None, max_length=500)
     description: str = Field(..., min_length=1, max_length=50000)
     questions: List[str] = Field(default_factory=list)
+    structured: Optional[JobResponderVacancyStructured] = None
 
 
 class JobResponderGeneratePayload(BaseModel):
@@ -118,10 +209,354 @@ class JobResponderResumeLinkCapturePayload(BaseModel):
     category: str = Field(default="experience", max_length=128)
 
 
+class JobResponderRelevancePayload(BaseModel):
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    vacancy: JobResponderVacancyPayload
+    selectedSourceIds: List[int] = Field(default_factory=list)
+
+
+class JobResponderDriveImportPayload(BaseModel):
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    folderUrlOrId: str = Field(..., min_length=5, max_length=2000)
+    accessToken: Optional[str] = Field(default=None, max_length=8000)
+    kind: str = Field(default="job_experience", max_length=64)
+    category: str = Field(default="drive", max_length=128)
+    maxFiles: int = Field(default=25, ge=1, le=50)
+
+
+def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for raw in items:
+        s = re.sub(r"\s+", " ", str(raw or "").strip())
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s[:80])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
+    """Heuristic structured params for RAG matching touchpoints."""
+    blob = f"{title}\n{text}"
+    lower = blob.lower()
+
+    skills: List[str] = []
+    for m in re.finditer(
+        r"(?:skills|навыки|стек|stack|технологии|tools)[:\s]+(.{10,400})",
+        blob,
+        flags=re.I,
+    ):
+        skills.extend(p.strip() for p in _SKILL_SPLIT.split(m.group(1)) if len(p.strip()) >= 2)
+
+    tools = [t for t in _KNOWN_TOOLS if t in lower]
+    skills.extend(tools)
+
+    roles: List[str] = []
+    for hint in _ROLE_HINTS:
+        if hint in lower:
+            roles.append(hint)
+
+    languages: List[str] = []
+    for lang in ("english", "russian", "украинский", "английский", "русский", "deutsch", "french"):
+        if lang in lower:
+            languages.append(lang)
+
+    employment_preferences: List[str] = []
+    for pref, labels in (
+        ("remote", ("remote", "удалён", "удален", "work from home")),
+        ("hybrid", ("hybrid", "гибрид")),
+        ("office", ("office", "офис")),
+        ("part_time", ("part-time", "частичн", "part time")),
+        ("full_time", ("full-time", "полная занятость", "full time")),
+    ):
+        if any(x in lower for x in labels):
+            employment_preferences.append(pref)
+
+    seniority = None
+    for level, labels in (
+        ("junior", ("junior", "джун")),
+        ("middle", ("middle", "мидл", "mid-level")),
+        ("senior", ("senior", "сеньор", "lead")),
+    ):
+        if any(x in lower for x in labels):
+            seniority = level
+            break
+
+    domains: List[str] = []
+    for dom in (
+        "ai",
+        "ml",
+        "marketing",
+        "seo",
+        "automation",
+        "fintech",
+        "web3",
+        "crypto",
+        "saas",
+        "ecommerce",
+        "video",
+        "content",
+        "devrel",
+    ):
+        if re.search(rf"\b{re.escape(dom)}\b", lower):
+            domains.append(dom)
+
+    geo_remote = None
+    if "remote" in lower or "удал" in lower:
+        geo_remote = "remote"
+    elif "hybrid" in lower or "гибрид" in lower:
+        geo_remote = "hybrid"
+
+    profile = {
+        "skills": _uniq_lower(skills, 50),
+        "roles": _uniq_lower(roles, 20),
+        "domains": _uniq_lower(domains, 20),
+        "tools": _uniq_lower(tools, 40),
+        "languages": _uniq_lower(languages, 10),
+        "employment_preferences": _uniq_lower(employment_preferences, 10),
+        "seniority": seniority,
+        "geo_remote": geo_remote,
+        "category_hint": (category or "")[:64] or None,
+    }
+    return profile
+
+
+def wrap_content_with_profile(text: str, profile: Dict[str, Any]) -> Tuple[str, str]:
+    """Returns (content_text, ai_summary) with embedded JSON profile for retrieval."""
+    body = (text or "").strip()
+    profile_json = json.dumps(profile, ensure_ascii=False, separators=(",", ":"))
+    content = f"{JR_PROFILE_MARKER}\n{profile_json}\n---\n{body}"
+    bits = []
+    if profile.get("skills"):
+        bits.append("skills: " + ", ".join(profile["skills"][:12]))
+    if profile.get("roles"):
+        bits.append("roles: " + ", ".join(profile["roles"][:6]))
+    if profile.get("tools"):
+        bits.append("tools: " + ", ".join(profile["tools"][:10]))
+    if profile.get("employment_preferences"):
+        bits.append("prefs: " + ", ".join(profile["employment_preferences"]))
+    if profile.get("seniority"):
+        bits.append(f"seniority: {profile['seniority']}")
+    if profile.get("geo_remote"):
+        bits.append(f"format: {profile['geo_remote']}")
+    summary = "; ".join(bits) if bits else body[:400].replace("\n", " ")
+    return content, summary[:4000]
+
+
+def parse_profile_from_content(text: str) -> Dict[str, Any]:
+    raw = text or ""
+    if JR_PROFILE_MARKER not in raw:
+        return extract_resume_profile(raw)
+    try:
+        after = raw.split(JR_PROFILE_MARKER, 1)[1].lstrip()
+        json_part = after.split("\n---", 1)[0].strip()
+        data = json.loads(json_part)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, IndexError, TypeError):
+        pass
+    return extract_resume_profile(raw)
+
+
+def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> List[str]:
+    tags = list(RESUME_TAGS)
+    if extra:
+        tags.extend(extra)
+    for skill in (profile.get("skills") or [])[:8]:
+        tags.append(f"skill:{str(skill).lower()[:40]}")
+    for role in (profile.get("roles") or [])[:4]:
+        tags.append(f"role:{str(role).lower()[:40]}")
+    for dom in (profile.get("domains") or [])[:4]:
+        tags.append(f"domain:{str(dom).lower()[:40]}")
+    if profile.get("seniority"):
+        tags.append(f"seniority:{profile['seniority']}")
+    if profile.get("geo_remote"):
+        tags.append(f"format:{profile['geo_remote']}")
+    return list(dict.fromkeys(tags))[:24]
+
+
+def vacancy_to_match_blob(vacancy: JobResponderVacancyPayload) -> Dict[str, Any]:
+    st = vacancy.structured
+    skills = list(st.keySkills) if st and st.keySkills else []
+    blob = " ".join(
+        p
+        for p in (
+            vacancy.title,
+            vacancy.company or "",
+            vacancy.description[:3000],
+            (st.salary if st else None) or "",
+            (st.experience if st else None) or "",
+            (st.employmentType if st else None) or "",
+            (st.schedule if st else None) or "",
+            (st.workingHours if st else None) or "",
+            (st.workFormat if st else None) or "",
+            " ".join(skills),
+        )
+        if p
+    )
+    profile = extract_resume_profile(blob, title=vacancy.title)
+    if skills:
+        profile["skills"] = _uniq_lower([*skills, *profile.get("skills", [])], 50)
+    if st:
+        if st.workFormat:
+            wf = st.workFormat.lower()
+            if "удал" in wf or "remote" in wf:
+                profile["geo_remote"] = "remote"
+            elif "гибрид" in wf or "hybrid" in wf:
+                profile["geo_remote"] = "hybrid"
+            elif "офис" in wf or "office" in wf:
+                profile["geo_remote"] = "office"
+        if st.employmentType:
+            et = st.employmentType.lower()
+            prefs = list(profile.get("employment_preferences") or [])
+            if "частич" in et or "part" in et:
+                prefs.append("part_time")
+            if "полн" in et or "full" in et:
+                prefs.append("full_time")
+            profile["employment_preferences"] = _uniq_lower(prefs, 10)
+        if st.experience:
+            profile["experience_raw"] = st.experience[:200]
+        if st.seniority:
+            profile["seniority"] = st.seniority
+    return profile
+
+
+def score_resume_vs_vacancy(
+    vacancy: JobResponderVacancyPayload,
+    resume_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    vac_profile = vacancy_to_match_blob(vacancy)
+    vac_skills = {s.lower() for s in (vac_profile.get("skills") or [])}
+    vac_tools = {s.lower() for s in (vac_profile.get("tools") or [])}
+    vac_roles = {s.lower() for s in (vac_profile.get("roles") or [])}
+    vac_domains = {s.lower() for s in (vac_profile.get("domains") or [])}
+    vac_prefs = {s.lower() for s in (vac_profile.get("employment_preferences") or [])}
+    vac_format = (vac_profile.get("geo_remote") or "").lower()
+
+    merged_skills: set = set()
+    merged_tools: set = set()
+    merged_roles: set = set()
+    merged_domains: set = set()
+    merged_prefs: set = set()
+    resume_formats: set = set()
+    resume_seniority: Optional[str] = None
+
+    for row in resume_rows:
+        body = str(row.get("content_text") or row.get("ai_summary") or "")
+        prof = parse_profile_from_content(body)
+        merged_skills.update(s.lower() for s in (prof.get("skills") or []))
+        merged_tools.update(s.lower() for s in (prof.get("tools") or []))
+        merged_roles.update(s.lower() for s in (prof.get("roles") or []))
+        merged_domains.update(s.lower() for s in (prof.get("domains") or []))
+        merged_prefs.update(s.lower() for s in (prof.get("employment_preferences") or []))
+        if prof.get("geo_remote"):
+            resume_formats.add(str(prof["geo_remote"]).lower())
+        if prof.get("seniority") and not resume_seniority:
+            resume_seniority = str(prof["seniority"])
+
+    rationale: List[str] = []
+    score = 35  # baseline if any resume context exists
+
+    skill_hits = sorted(vac_skills & (merged_skills | merged_tools))
+    if vac_skills:
+        ratio = len(skill_hits) / max(len(vac_skills), 1)
+        score += int(35 * min(1.0, ratio))
+        if skill_hits:
+            rationale.append(f"Совпадение навыков: {', '.join(skill_hits[:8])}")
+        else:
+            rationale.append("Прямых совпадений ключевых навыков мало - опирайтесь на смежный опыт")
+            score -= 8
+    else:
+        # soft token overlap on title keywords
+        title_tokens = {t.lower() for t in _TOKEN_RE.findall(vacancy.title or "") if len(t) > 2}
+        soft = sorted(title_tokens & (merged_skills | merged_tools | merged_roles | merged_domains))
+        if soft:
+            score += min(20, 4 * len(soft))
+            rationale.append(f"Совпадения по заголовку: {', '.join(soft[:6])}")
+
+    role_hits = sorted(vac_roles & merged_roles)
+    if role_hits:
+        score += 8
+        rationale.append(f"Роли: {', '.join(role_hits[:4])}")
+
+    domain_hits = sorted(vac_domains & merged_domains)
+    if domain_hits:
+        score += 7
+        rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
+
+    if vac_format:
+        if vac_format in resume_formats or (vac_format == "remote" and "remote" in merged_prefs):
+            score += 10
+            rationale.append(f"Формат работы совпадает: {vac_format}")
+        else:
+            score -= 5
+            rationale.append(f"Формат вакансии ({vac_format}) не явно подтверждён в Resume RAG")
+
+    pref_hits = sorted(vac_prefs & merged_prefs)
+    if pref_hits:
+        score += 5
+        rationale.append(f"Занятость: {', '.join(pref_hits)}")
+
+    if vac_profile.get("experience_raw"):
+        rationale.append(f"Требуемый опыт: {vac_profile['experience_raw']}")
+        if resume_seniority:
+            rationale.append(f"В резюме seniority: {resume_seniority}")
+            score += 3
+
+    if not resume_rows:
+        score = 0
+        rationale = ["Нет выбранных/найденных источников Resume RAG"]
+
+    score = max(0, min(100, score))
+    if not rationale:
+        rationale.append("Базовая оценка по общему контексту резюме")
+
+    return {
+        "score": score,
+        "rationale": rationale[:8],
+        "vacancyProfile": vac_profile,
+        "matchedSkills": skill_hits[:12],
+    }
+
+
+def parse_drive_folder_id(folder_url_or_id: str) -> str:
+    raw = (folder_url_or_id or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="folderUrlOrId is required")
+    if re.fullmatch(r"[a-zA-Z0-9_-]{10,}", raw) and "://" not in raw:
+        return raw
+    parsed = urlparse(raw)
+    if "drive.google.com" in (parsed.netloc or ""):
+        m = re.search(r"/folders/([a-zA-Z0-9_-]+)", parsed.path or "")
+        if m:
+            return m.group(1)
+        qs = parse_qs(parsed.query or "")
+        if qs.get("id"):
+            return qs["id"][0]
+    raise HTTPException(
+        status_code=400,
+        detail="Не удалось извлечь folder id. Вставьте URL вида https://drive.google.com/drive/folders/FOLDER_ID",
+    )
+
+
 def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     parts = [vacancy.title.strip()]
     if vacancy.company:
         parts.append(vacancy.company.strip())
+    st = vacancy.structured
+    if st:
+        if st.keySkills:
+            parts.append(" ".join(st.keySkills[:20]))
+        if st.workFormat:
+            parts.append(st.workFormat)
+        if st.experience:
+            parts.append(st.experience)
     desc = re.sub(r"\s+", " ", vacancy.description or "").strip()
     if desc:
         parts.append(desc[:1200])
@@ -129,7 +564,7 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
 
 
 def build_system_prompt(mode: str) -> str:
-    base = """Ты помощник кандидата при отклике на вакансии на HeadHunter.
+    base = """Ты помощник кандидата при отклике на вакансии.
 
 Правила:
 - Пиши от первого лица кандидата.
@@ -138,6 +573,7 @@ def build_system_prompt(mode: str) -> str:
 - Формат HH: короткое тире "-", стрелки "->", кавычки ASCII ".
 - Язык: русский (если вакансия явно на другом языке - можно на языке вакансии).
 - Не используй markdown-заголовки и списки с буллетами - plain text для поля HH.
+- Учитывай STRUCTURED VACANCY (формат, занятость, навыки) если они есть.
 """
     if mode == "question_answers":
         return (
@@ -180,6 +616,7 @@ def build_user_prompt(
         )
     resume_context = "\n\n".join(ctx_lines) if ctx_lines else "(empty - do not invent facts)"
 
+    structured = vacancy.structured.model_dump(exclude_none=True) if vacancy.structured else None
     vacancy_block = json.dumps(
         {
             "host": host_label,
@@ -187,6 +624,7 @@ def build_user_prompt(
             "title": vacancy.title,
             "company": vacancy.company,
             "description": vacancy.description[:8000],
+            "structured": structured,
         },
         ensure_ascii=False,
         indent=2,
@@ -240,6 +678,52 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         if raw in RESUME_KINDS:
             return raw
         return normalize_kind(raw, default=PRIMARY_CV_KIND)
+
+    def _extract_text_with_vision(
+        safe_name: str,
+        raw: bytes,
+        mime_type: str,
+        *,
+        allow_vision: bool,
+        category_hint: str,
+    ) -> Tuple[str, Dict[str, Any], str]:
+        """Returns (text, meta, category_norm_override_or_empty)."""
+        extracted_text, meta = extract_text_from_bytes(safe_name, raw, mime_type)
+        extracted_text = (extracted_text or "").strip()
+        category_override = ""
+
+        if meta.get("needsVision"):
+            if not allow_vision:
+                raise HTTPException(
+                    status_code=422,
+                    detail="vision_required: изображение требует OCR/vision, но vision недоступен",
+                )
+            try:
+                from hermes_media import vision_analyze_from_settings
+            except Exception as exc:  # pragma: no cover
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"vision_unavailable: {exc}",
+                ) from exc
+
+            b64 = base64.b64encode(raw).decode("ascii")
+            vision = vision_analyze_from_settings(
+                "Извлеки весь читаемый текст со скриншота/изображения портфолио для Resume RAG. "
+                "Верни только текст (заголовки, описания проектов, стек). Без комментариев.",
+                image_base64=b64,
+            )
+            meta["vision"] = {"ok": bool(vision.get("ok")), "error": vision.get("error")}
+            if not vision.get("ok"):
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"vision_failed: {vision.get('error') or 'unknown'}",
+                )
+            extracted_text = str(vision.get("text") or vision.get("content") or "").strip()
+            meta["method"] = "vision"
+            if category_hint in ("experience", "portfolio", "drive", "cv", ""):
+                category_override = "screenshot"
+
+        return extracted_text, meta, category_override
 
     def _resume_search_rows(cur, workspace_id: int, query: str, limit: int) -> Tuple[str, List[Dict[str, Any]]]:
         emb = get_openai_embedding(query)
@@ -348,9 +832,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         kind_norm: str,
         category: str,
         url: Optional[str],
-    ) -> Tuple[int, bool, str]:
+        extra_tags: Optional[List[str]] = None,
+    ) -> Tuple[int, bool, str, Dict[str, Any]]:
+        profile = extract_resume_profile(text, title=title, category=category)
+        content_text, ai_summary = wrap_content_with_profile(text, profile)
+        tags = profile_tags(profile, [category, *(extra_tags or [])])
+
         canonical_url = normalize_url(url) if url else ""
-        content_hash = build_knowledge_content_hash(RESUME_SOURCE, canonical_url, text)
+        content_hash = build_knowledge_content_hash(RESUME_SOURCE, canonical_url, content_text)
         note_path = truncate_text(
             resolve_knowledge_obsidian_note_path(
                 workspace_id,
@@ -360,14 +849,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             ),
             4000,
         )
-        tags = list(dict.fromkeys([*RESUME_TAGS, category]))[:12]
 
         cur.execute(
             """
             insert into public.knowledge_items (
               workspace_id, source, title, url, canonical_url,
-              content_text, category, tags, content_hash, status, note_path, kind
-            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'to_process', %s, %s)
+              content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'to_process', %s, %s)
             on conflict (workspace_id, content_hash)
             do update set
               updated_at = now(),
@@ -381,6 +869,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 then excluded.content_text
                 else public.knowledge_items.content_text
               end,
+              ai_summary = coalesce(excluded.ai_summary, public.knowledge_items.ai_summary),
               category = excluded.category,
               tags = excluded.tags,
               note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
@@ -393,7 +882,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 title,
                 url or None,
                 canonical_url or None,
-                text,
+                content_text,
+                ai_summary,
                 category,
                 psycopg2.extras.Json(tags),
                 content_hash,
@@ -404,7 +894,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         row = cur.fetchone() or {}
         kid = int(row["id"]) if row.get("id") is not None else -1
 
-        embed_source = "\n".join(p for p in (title, text[:4000]) if p)[:8000]
+        embed_source = "\n".join(p for p in (title, ai_summary, text[:3500]) if p)[:8000]
         vec = get_openai_embedding(embed_source)
         embedded = False
         if vec and len(vec) == bookmarks_vector_dim and kid != -1:
@@ -426,7 +916,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 ),
             )
             embedded = True
-        return kid, embedded, content_hash
+        return kid, embedded, content_hash, profile
 
     @app.get("/api/v1/job-responder/resume/status")
     async def job_responder_resume_status(
@@ -456,6 +946,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 row = cur.fetchone() or {}
             return {
                 "workspaceId": str(workspace_id),
+                "defaultTestWorkspaceId": str(DEFAULT_TEST_WORKSPACE_ID),
+                "testMode": JOB_RESPONDER_TEST_MODE,
                 "count": int(row.get("total") or 0),
                 "primaryCvCount": int(row.get("primary_cv_count") or 0),
                 "hasPrimaryCv": int(row.get("primary_cv_count") or 0) > 0,
@@ -486,8 +978,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                       url,
                       kind,
                       category,
+                      tags,
                       updated_at,
-                      left(coalesce(ai_summary, content_text, ''), 220) as preview
+                      left(coalesce(ai_summary, content_text, ''), 280) as preview
                     from public.knowledge_items
                     where workspace_id = %s
                       and source = %s
@@ -502,6 +995,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 rows = cur.fetchall()
             return {
                 "workspaceId": str(workspace_id),
+                "defaultTestWorkspaceId": str(DEFAULT_TEST_WORKSPACE_ID),
+                "count": len(rows),
                 "items": [
                     {
                         "knowledgeItemId": int(r["id"]),
@@ -509,6 +1004,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         "url": r.get("url"),
                         "kind": r.get("kind"),
                         "category": r.get("category"),
+                        "tags": r.get("tags") or [],
                         "preview": r.get("preview"),
                         "updatedAt": r.get("updated_at").isoformat() if r.get("updated_at") else None,
                     }
@@ -536,7 +1032,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 category = truncate_text(str(payload.category or "cv").strip().lower(), 128) or "cv"
                 title = truncate_text(payload.title.strip(), 1000)
                 text = str(payload.text or "").strip()
-                kid, embedded, _content_hash = _upsert_resume_item_text(
+                kid, embedded, _content_hash, profile = _upsert_resume_item_text(
                     cur,
                     workspace_id,
                     title=title,
@@ -550,8 +1046,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "ok": True,
                 "knowledgeItemId": kid,
                 "kind": kind_norm,
+                "category": category,
                 "embedded": embedded,
                 "contentHash": _content_hash,
+                "profile": profile,
+                "workspaceId": str(workspace_id),
             }
         except Exception:
             conn.rollback()
@@ -587,7 +1086,24 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail="empty_file")
 
         mime_type = str(file.content_type or "application/octet-stream")
-        extracted_text, meta = extract_text_from_bytes(safe_name, raw, mime_type)
+        extracted_text, meta, category_override = _extract_text_with_vision(
+            safe_name,
+            raw,
+            mime_type,
+            allow_vision=True,
+            category_hint=category_norm,
+        )
+        if category_override:
+            category_norm = category_override
+            if kind_norm == PRIMARY_CV_KIND and category_norm == "screenshot":
+                # screenshots in portfolio path should stay experience; keep CV kind if user forced it
+                pass
+            elif kind_norm != PRIMARY_CV_KIND:
+                kind_norm = "job_experience"
+
+        if caption:
+            extracted_text = f"{caption.strip()}\n\n{extracted_text}".strip()
+
         extracted_text = (extracted_text or "").strip()
         if len(extracted_text) < 20:
             raise HTTPException(status_code=422, detail=f"no_text_extracted: {meta}")
@@ -596,11 +1112,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             (title or str(meta.get("filename") or safe_name) or "Resume").strip(),
             1000,
         )
+        extra_tags = ["screenshot"] if category_norm == "screenshot" else None
 
         conn = pg_connect()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                kid, embedded, content_hash = _upsert_resume_item_text(
+                kid, embedded, content_hash, profile = _upsert_resume_item_text(
                     cur,
                     workspace_id,
                     title=item_title,
@@ -608,15 +1125,19 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     kind_norm=kind_norm,
                     category=category_norm,
                     url=None,
+                    extra_tags=extra_tags,
                 )
             conn.commit()
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
                 "kind": kind_norm,
+                "category": category_norm,
                 "embedded": embedded,
                 "contentHash": content_hash,
                 "extract": meta,
+                "profile": profile,
+                "workspaceId": str(workspace_id),
             }
         except Exception:
             conn.rollback()
@@ -652,7 +1173,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         conn = pg_connect()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                kid, embedded, content_hash = _upsert_resume_item_text(
+                kid, embedded, content_hash, profile = _upsert_resume_item_text(
                     cur,
                     workspace_id,
                     title=item_title,
@@ -666,14 +1187,174 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "ok": True,
                 "knowledgeItemId": kid,
                 "kind": kind_norm,
+                "category": category_norm,
                 "embedded": embedded,
                 "contentHash": content_hash,
+                "profile": profile,
+                "workspaceId": str(workspace_id),
             }
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
+
+    @app.post("/api/v1/job-responder/resume/drive-import")
+    async def job_responder_drive_import(
+        payload: JobResponderDriveImportPayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """
+        MVP: list + download files from a Google Drive folder via user access token.
+        Full OAuth app consent is TODO - see docs/job-responder/drive.md
+        """
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+
+        token = (payload.accessToken or "").strip()
+        if not token:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "accessToken required for Drive import MVP. "
+                    "Paste a Google OAuth access token with drive.readonly "
+                    "(see docs/job-responder/drive.md). Full OAuth in-extension is TODO."
+                ),
+            )
+
+        folder_id = parse_drive_folder_id(payload.folderUrlOrId)
+        kind_norm = _resume_kind_norm(payload.kind)
+        category_norm = truncate_text(str(payload.category or "drive").strip().lower(), 128) or "drive"
+
+        try:
+            import urllib.error
+            import urllib.parse
+            import urllib.request
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        q = urllib.parse.quote(
+            f"'{folder_id}' in parents and trashed=false",
+            safe="",
+        )
+        list_url = (
+            "https://www.googleapis.com/drive/v3/files"
+            f"?q={q}&pageSize={int(payload.maxFiles)}"
+            "&fields=files(id,name,mimeType,size)"
+            "&supportsAllDrives=true&includeItemsFromAllDrives=true"
+        )
+
+        def _drive_get(url: str) -> bytes:
+            req = urllib.request.Request(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                method="GET",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    return resp.read()
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")[:500]
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"drive_http_{exc.code}: {body}",
+                ) from exc
+
+        list_raw = _drive_get(list_url)
+        try:
+            listing = json.loads(list_raw.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=502, detail="drive_list_invalid_json") from exc
+
+        files = listing.get("files") or []
+        imported: List[Dict[str, Any]] = []
+        errors: List[Dict[str, Any]] = []
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                for fmeta in files[: payload.maxFiles]:
+                    fid = str(fmeta.get("id") or "")
+                    fname = str(fmeta.get("name") or fid or "drive-file")
+                    mime = str(fmeta.get("mimeType") or "application/octet-stream")
+                    if mime == "application/vnd.google-apps.folder":
+                        continue
+                    try:
+                        if mime.startswith("application/vnd.google-apps."):
+                            # export Google Docs as plain text
+                            export_mime = "text/plain"
+                            if "spreadsheet" in mime:
+                                export_mime = "text/csv"
+                            elif "presentation" in mime:
+                                export_mime = "text/plain"
+                            dl_url = (
+                                f"https://www.googleapis.com/drive/v3/files/{fid}/export"
+                                f"?mimeType={urllib.parse.quote(export_mime)}"
+                            )
+                        else:
+                            dl_url = (
+                                f"https://www.googleapis.com/drive/v3/files/{fid}"
+                                f"?alt=media&supportsAllDrives=true"
+                            )
+                        raw = _drive_get(dl_url)
+                        text, meta, cat_override = _extract_text_with_vision(
+                            fname,
+                            raw,
+                            mime,
+                            allow_vision=True,
+                            category_hint=category_norm,
+                        )
+                        use_category = cat_override or category_norm
+                        use_kind = kind_norm
+                        if use_category == "screenshot":
+                            use_kind = "job_experience"
+                        if len((text or "").strip()) < 20:
+                            errors.append({"name": fname, "error": f"no_text: {meta}"})
+                            continue
+                        kid, embedded, content_hash, profile = _upsert_resume_item_text(
+                            cur,
+                            workspace_id,
+                            title=truncate_text(fname, 1000),
+                            text=text.strip(),
+                            kind_norm=use_kind,
+                            category=use_category,
+                            url=f"https://drive.google.com/file/d/{fid}/view",
+                            extra_tags=["drive", "screenshot"] if use_category == "screenshot" else ["drive"],
+                        )
+                        imported.append(
+                            {
+                                "knowledgeItemId": kid,
+                                "title": fname,
+                                "kind": use_kind,
+                                "category": use_category,
+                                "embedded": embedded,
+                                "contentHash": content_hash,
+                                "profile": profile,
+                            }
+                        )
+                    except HTTPException as exc:
+                        errors.append({"name": fname, "error": str(exc.detail)})
+                    except Exception as exc:
+                        errors.append({"name": fname, "error": str(exc)})
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return {
+            "ok": True,
+            "folderId": folder_id,
+            "workspaceId": str(workspace_id),
+            "importedCount": len(imported),
+            "imported": imported,
+            "errors": errors,
+            "todo": "Full in-extension Google OAuth consent is not wired yet - token is pasted manually for MVP.",
+        }
 
     @app.post("/api/v1/job-responder/resume/search")
     async def job_responder_resume_search(
@@ -704,6 +1385,40 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             return {"mode": mode, "query": payload.query, "items": items}
         finally:
             conn.close()
+
+    @app.post("/api/v1/job-responder/relevance")
+    async def job_responder_relevance(
+        payload: JobResponderRelevancePayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if payload.selectedSourceIds:
+                    rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
+                else:
+                    search_q = build_resume_search_query(payload.vacancy)
+                    _, rows = _resume_search_rows(cur, workspace_id, search_q, 12)
+        finally:
+            conn.close()
+
+        result = score_resume_vs_vacancy(payload.vacancy, [dict(r) for r in rows])
+        result["workspaceId"] = str(workspace_id)
+        result["sourcesUsed"] = [
+            {
+                "knowledgeItemId": int(r.get("id")),
+                "title": r.get("title"),
+                "kind": r.get("kind"),
+            }
+            for r in rows[:8]
+        ]
+        return result
 
     @app.post("/api/v1/job-responder/generate")
     async def job_responder_generate(
@@ -751,6 +1466,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             conn.close()
 
         rag_items = [dict(r) for r in rag_rows]
+        relevance = score_resume_vs_vacancy(payload.vacancy, rag_items)
         mode = payload.mode
         system_prompt = build_system_prompt(mode)
         user_prompt = build_user_prompt(
@@ -804,8 +1520,10 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "text": raw_text,
             "answers": answers,
             "sources": sources,
+            "relevance": relevance,
             "model": chat_result.model_resolved,
             "provider": chat_result.provider_used,
             "host": payload.host,
             "mode": mode,
+            "workspaceId": str(workspace_id),
         }
