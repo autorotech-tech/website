@@ -20,12 +20,15 @@ import { AdminBookmarksBro } from './components/AdminBookmarksBro'
 import { AssistantMemory } from './components/AssistantMemory'
 import { BookmarksBroApp } from './bookmarksBro/BookmarksBroApp'
 import { KeeptAdminApp } from './keeptAdmin/KeeptAdminApp'
+import { VoiceRecruiterApp } from './voiceRecruiter/VoiceRecruiterApp'
+import { UserSettings } from './components/UserSettings'
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/keept/admin/*" element={<KeeptAdminApp />} />
+        <Route path="/voice-recruiter" element={<VoiceRecruiterApp />} />
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<Layout />}>
           <Route index element={<TaskList />} />
@@ -48,7 +51,7 @@ function App() {
           <Route path="chat-agent" element={<ChatAgents />} />
           <Route path="assistant-memory" element={<AssistantMemory />} />
           <Route path="bookmarks-bro" element={<BookmarksBroApp />} />
-          <Route path="settings" element={<div className="p-4">Settings Component Coming Soon</div>} />
+          <Route path="settings" element={<UserSettings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -8,6 +8,45 @@ import {
 
 export type { OpenRouterModelMeta }
 
+export type OpenModelAdminStatus = {
+  configured?: boolean
+  api_base?: string
+  balance_ok?: boolean
+  balance?: {
+    balance_usd?: number | null
+    frozen_usd?: number | null
+    available_usd?: number | null
+    currency?: string
+    email?: string | null
+  } | null
+  balance_error?: string | null
+  balance_requires_console?: boolean
+  balance_error_code?: string | null
+  models_total?: number
+  model_ids?: string[]
+  updated_at?: string
+}
+
+export type SerpApiAdminStatus = {
+  configured?: boolean
+  default_engine?: string
+  engines?: string[]
+  account_ok?: boolean
+  account?: {
+    plan_name?: string | null
+    plan_id?: string | null
+    account_status?: string | null
+    account_email?: string | null
+    searches_per_month?: number | null
+    plan_searches_left?: number | null
+    total_searches_left?: number | null
+    this_month_usage?: number | null
+    plan_renewal_date?: string | null
+  } | null
+  account_error?: string | null
+  updated_at?: string
+}
+
 export type ApiKeyPoolMetaEntry = { enabled?: boolean }
 export type ApiKeyPoolMeta = Record<string, ApiKeyPoolMetaEntry[]>
 
@@ -23,7 +62,7 @@ export type ProviderKeyConfig = {
   id: string
   label: string
   shortLabel: string
-  category: 'llm' | 'search'
+  category: 'llm' | 'search' | 'parsing'
   description: string
   keysField: keyof ProviderKeysState
   healthKey: string
@@ -53,8 +92,28 @@ export type ProviderKeysState = {
   lmarena_keys: string[]
   lmarena_base_url: string
   lmarena_default_model: string
+  mimo_keys: string[]
+  mimo_base_url: string
+  mimo_default_model: string
+  /** API keys для [Kimi (Moonshot)](https://platform.kimi.ai/docs/api/overview). */
+  kimi_keys: string[]
+  kimi_base_url: string
+  kimi_default_model: string
+  openmodel_keys: string[]
+  openmodel_base_url: string
+  openmodel_default_model: string
   brave_keys: string[]
   tavily_keys: string[]
+  serpapi_keys: string[]
+  serpapi_default_engine: string
+  apify_keys: string[]
+  apify_default_actor: string
+  brightdata_keys: string[]
+  brightdata_zone: string
+  brightdata_base_url: string
+  omkar_keys: string[]
+  omkar_base_url: string
+  scrapingbee_keys: string[]
 }
 
 const MODEL_PRESETS: Record<string, string[]> = {
@@ -72,11 +131,16 @@ const MODEL_PRESETS: Record<string, string[]> = {
     'qwen/qwq-32b-preview',
   ],
   lmarena: ['default'],
+  mimo: ['mimo-v2.5-pro', 'mimo-v2.5-flash'],
+  kimi: ['kimi-k2-turbo-preview', 'kimi-k2-0711-preview', 'moonshot-v1-8k'],
+  openmodel: ['deepseek-v4-flash', 'claude-sonnet-4-6', 'gpt-5.4', 'gemini-3.5-flash'],
+  serpapi: ['google', 'bing', 'duckduckgo', 'google_maps', 'google_trends', 'youtube', 'google_short_videos'],
 }
 
 export const PROVIDER_CATEGORIES = [
   { id: 'llm' as const, label: 'LLM / Chat' },
   { id: 'search' as const, label: 'Поиск' },
+  { id: 'parsing' as const, label: 'Парсинг' },
 ]
 
 export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
@@ -181,6 +245,79 @@ export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
     ],
   },
   {
+    id: 'mimo_keys',
+    label: 'Xiaomi MiMo',
+    shortLabel: 'MiMo',
+    category: 'llm',
+    description:
+      'Ключи Xiaomi MiMo API (sk-… pay-as-you-go или tp-… Token Plan). Модель в запросе: mimo/<slug> или routing provider mimo.',
+    keysField: 'mimo_keys',
+    healthKey: 'mimo_keys',
+    newKeyPlaceholder: 'sk-… или tp-… из platform.xiaomimimo.com',
+    catalogKey: 'mimo',
+    modelField: 'mimo_default_model',
+    modelLabel: 'Модель по умолчанию',
+    modelPlaceholder: 'mimo-v2.5-pro',
+    modelHint: 'Документация: mimo.mi.com. V2 series deprecated — используйте V2.5.',
+    extraFields: [
+      {
+        field: 'mimo_base_url',
+        label: 'API base URL',
+        placeholder: 'https://api.xiaomimimo.com/v1',
+        hint: 'Pay-as-you-go: https://api.xiaomimimo.com/v1 · Token Plan: https://token-plan-cn.xiaomimimo.com/v1 · Пусто — env BOOKMARKS_MIMO_API_BASE.',
+      },
+    ],
+  },
+  {
+    id: 'kimi_keys',
+    label: 'Kimi (Moonshot)',
+    shortLabel: 'Kimi',
+    category: 'llm',
+    description:
+      'Kimi Open Platform — OpenAI-compatible API. Модель в запросе: kimi/<slug> или routing provider kimi.',
+    keysField: 'kimi_keys',
+    healthKey: 'kimi_keys',
+    newKeyPlaceholder: 'Ключ из platform.kimi.ai/console/api-keys',
+    catalogKey: 'kimi',
+    modelField: 'kimi_default_model',
+    modelLabel: 'Модель по умолчанию',
+    modelPlaceholder: 'kimi-k2-turbo-preview',
+    modelHint: 'Bearer auth. Список моделей подтягивается из GET /v1/models.',
+    extraFields: [
+      {
+        field: 'kimi_base_url',
+        label: 'API base URL',
+        placeholder: 'https://api.moonshot.ai/v1',
+        hint: 'Пусто — env BOOKMARKS_KIMI_API_BASE (по умолчанию https://api.moonshot.ai/v1).',
+      },
+    ],
+  },
+  {
+    id: 'openmodel_keys',
+    label: 'OpenModel',
+    shortLabel: 'OpenModel',
+    category: 'llm',
+    description:
+      'Multi-model gateway (OpenAI / Anthropic / Gemini / DeepSeek через один API). Ключ om-… из console.openmodel.ai. Модель: openmodel/<slug> или routing provider openmodel.',
+    keysField: 'openmodel_keys',
+    healthKey: 'openmodel_keys',
+    newKeyPlaceholder: 'om-… из console.openmodel.ai → API Keys',
+    catalogKey: 'openmodel',
+    modelField: 'openmodel_default_model',
+    modelLabel: 'Модель по умолчанию',
+    modelPlaceholder: 'deepseek-v4-flash',
+    modelHint:
+      'Список из GET /v1/models. Chat — POST /v1/messages (Anthropic format). Документация: docs.openmodel.ai.',
+    extraFields: [
+      {
+        field: 'openmodel_base_url',
+        label: 'API base URL',
+        placeholder: 'https://api.openmodel.ai',
+        hint: 'Пусто — env BOOKMARKS_OPENMODEL_API_BASE (по умолчанию https://api.openmodel.ai).',
+      },
+    ],
+  },
+  {
     id: 'brave_keys',
     label: 'Brave Search',
     shortLabel: 'Brave',
@@ -200,6 +337,92 @@ export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
     keysField: 'tavily_keys',
     healthKey: 'tavily_keys',
     newKeyPlaceholder: 'tvly-...',
+  },
+  {
+    id: 'serpapi_keys',
+    label: 'SerpApi',
+    shortLabel: 'SerpApi',
+    category: 'search',
+    description:
+      'Multi-engine SERP (Google, Bing, DuckDuckGo и др.). Free plan — 250 searches/month. Ключ из serpapi.com/manage-api-key.',
+    keysField: 'serpapi_keys',
+    healthKey: 'serpapi_keys',
+    newKeyPlaceholder: 'SerpApi private key',
+    catalogKey: 'serpapi',
+    modelField: 'serpapi_default_engine',
+    modelLabel: 'Engine по умолчанию',
+    modelPlaceholder: 'google',
+    modelHint: 'Presets или свой engine slug (см. serpapi.com/search-engine-apis). Проверка ключа — account.json (бесплатно).',
+  },
+  {
+    id: 'apify_keys',
+    label: 'Apify',
+    shortLabel: 'Apify',
+    category: 'parsing',
+    description:
+      'Пул ключей Apify для Google Maps, Booking, Trip.com (pquoc.com). Ротация по бюджету; проверка — GET /v2/users/me.',
+    keysField: 'apify_keys',
+    healthKey: 'apify_keys',
+    newKeyPlaceholder: 'apify_api_…',
+    modelField: 'apify_default_actor',
+    modelLabel: 'Actor по умолчанию',
+    modelPlaceholder: 'compass/crawler-google-places',
+    modelHint: 'Slug actor для Best Places / hotels pipeline.',
+  },
+  {
+    id: 'brightdata_keys',
+    label: 'Bright Data',
+    shortLabel: 'Bright Data',
+    category: 'parsing',
+    description:
+      'Web Unlocker + Datasets API (Google Hotels, Booking, Trip.com). Нужны ключ и zone из dashboard Bright Data.',
+    keysField: 'brightdata_keys',
+    healthKey: 'brightdata_keys',
+    newKeyPlaceholder: 'Bright Data API token',
+    extraFields: [
+      {
+        field: 'brightdata_zone',
+        label: 'Web Unlocker zone',
+        placeholder: 'web_unlocker1',
+        hint: 'Имя zone из Bright Data → Proxies & Scraping. Без zone verify вернёт brightdata_zone_not_configured.',
+      },
+      {
+        field: 'brightdata_base_url',
+        label: 'API base URL',
+        placeholder: 'https://api.brightdata.com',
+        hint: 'Пусто — https://api.brightdata.com',
+      },
+    ],
+  },
+  {
+    id: 'omkar_keys',
+    label: 'Omkar.cloud (Tripadvisor)',
+    shortLabel: 'Omkar',
+    category: 'parsing',
+    description:
+      'REST Tripadvisor scraper (autorotech-tech/tripadvisor-scraper). Header API-Key; verify — hotels/list ping.',
+    keysField: 'omkar_keys',
+    healthKey: 'omkar_keys',
+    newKeyPlaceholder: 'ok_… из omkar.cloud',
+    extraFields: [
+      {
+        field: 'omkar_base_url',
+        label: 'List endpoint URL',
+        placeholder: 'https://tripadvisor-scraper-api.omkar.cloud/tripadvisor/hotels/list',
+        hint: 'Пусто — дефолтный list endpoint omkar.cloud.',
+      },
+    ],
+  },
+  {
+    id: 'scrapingbee_keys',
+    label: 'ScrapingBee',
+    shortLabel: 'ScrapingBee',
+    category: 'parsing',
+    description:
+      'HTML/JS render API для Booking snippets и fallback chain pquoc.com. Проверка — GET /api/v1/usage.',
+    keysField: 'scrapingbee_keys',
+    healthKey: 'scrapingbee_keys',
+    newKeyPlaceholder: 'Ключ из app.scrapingbee.com',
   },
 ]
 
@@ -229,9 +452,21 @@ function summarizeProvider(
   return { active, inactive, unknown, disabled, total: keys.length }
 }
 
-function healthDotClass(status?: KeyHealthEntry['status']) {
-  if (status === 'active') return 'bg-emerald-500'
-  if (status === 'inactive') return 'bg-rose-500'
+function healthStatusLabel(health?: KeyHealthEntry) {
+  const reason = (health?.reason || '').toLowerCase()
+  if (reason.includes('proxy_blocked') || reason.includes('cloudflare') || reason.includes('1010')) {
+    return 'proxy'
+  }
+  if (health?.status === 'active') return 'ok'
+  if (health?.status === 'inactive') return 'fail'
+  return '?'
+}
+
+function healthDotClassExtended(health?: KeyHealthEntry) {
+  const label = healthStatusLabel(health)
+  if (label === 'ok') return 'bg-emerald-500'
+  if (label === 'proxy') return 'bg-amber-500'
+  if (label === 'fail') return 'bg-rose-500'
   return 'bg-gray-300'
 }
 
@@ -296,6 +531,14 @@ type ProviderApiKeysPanelProps = {
   openrouterCatalogLoading?: boolean
   openrouterCatalogError?: string | null
   onRefreshOpenrouterCatalog?: () => void
+  openmodelStatus?: OpenModelAdminStatus | null
+  openmodelStatusLoading?: boolean
+  openmodelStatusError?: string | null
+  onRefreshOpenmodelStatus?: () => void
+  serpapiStatus?: SerpApiAdminStatus | null
+  serpapiStatusLoading?: boolean
+  serpapiStatusError?: string | null
+  onRefreshSerpapiStatus?: () => void
   onSettingsChange: (patch: Partial<ProviderKeysState>) => void
   onMetaChange: (meta: ApiKeyPoolMeta) => void
   onCopy?: (text: string) => void
@@ -336,6 +579,11 @@ function ProviderSummaryPill({
   )
 }
 
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return '—'
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
+}
+
 export function ProviderApiKeysPanel({
   settings,
   apiKeyPoolMeta,
@@ -345,6 +593,14 @@ export function ProviderApiKeysPanel({
   openrouterCatalogLoading = false,
   openrouterCatalogError = null,
   onRefreshOpenrouterCatalog,
+  openmodelStatus = null,
+  openmodelStatusLoading = false,
+  openmodelStatusError = null,
+  onRefreshOpenmodelStatus,
+  serpapiStatus = null,
+  serpapiStatusLoading = false,
+  serpapiStatusError = null,
+  onRefreshSerpapiStatus,
   onSettingsChange,
   onMetaChange,
   onCopy,
@@ -498,6 +754,189 @@ export function ProviderApiKeysPanel({
             </div>
           </div>
 
+          {config.id === 'openmodel_keys' && (
+            <div className="rounded-md border border-sky-200 bg-sky-50/70 px-3 py-2.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-sky-900">Account balance</p>
+                  <p className="text-[10px] text-sky-700">
+                    <a
+                      href="https://console.openmodel.ai/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-sky-900"
+                    >
+                      console.openmodel.ai
+                    </a>
+                    {openmodelStatus?.api_base ? (
+                      <>
+                        {' '}
+                        · API{' '}
+                        <span className="font-mono">{openmodelStatus.api_base}</span>
+                      </>
+                    ) : null}
+                  </p>
+                </div>
+                {onRefreshOpenmodelStatus ? (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshOpenmodelStatus()}
+                    disabled={openmodelStatusLoading}
+                    className="text-[10px] px-2 py-0.5 rounded border border-sky-300 bg-white hover:bg-sky-50 disabled:opacity-50"
+                  >
+                    {openmodelStatusLoading ? 'Загрузка…' : 'Обновить баланс и модели'}
+                  </button>
+                ) : null}
+              </div>
+              {openmodelStatusError ? (
+                <p className="text-[10px] text-rose-700">{openmodelStatusError}</p>
+              ) : openmodelStatusLoading && !openmodelStatus ? (
+                <p className="text-[10px] text-sky-700">Загружаем баланс и каталог моделей…</p>
+              ) : !openmodelStatus?.configured && keys.length === 0 ? (
+                <p className="text-[10px] text-sky-700">Добавьте ключ om-… и сохраните настройки.</p>
+              ) : openmodelStatus?.balance_ok && openmodelStatus.balance ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-sky-950">
+                  <span>
+                    <span className="text-[10px] uppercase tracking-wide text-sky-700">Balance</span>{' '}
+                    <span className="font-semibold tabular-nums">
+                      {formatUsd(openmodelStatus.balance.balance_usd)}
+                    </span>{' '}
+                    {openmodelStatus.balance.currency || 'USD'}
+                  </span>
+                  {openmodelStatus.balance.available_usd != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-sky-700">Available</span>{' '}
+                      <span className="font-medium tabular-nums">
+                        {formatUsd(openmodelStatus.balance.available_usd)}
+                      </span>
+                    </span>
+                  ) : null}
+                  {openmodelStatus.balance.frozen_usd != null && openmodelStatus.balance.frozen_usd > 0 ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-sky-700">Frozen</span>{' '}
+                      <span className="font-medium tabular-nums">
+                        {formatUsd(openmodelStatus.balance.frozen_usd)}
+                      </span>
+                    </span>
+                  ) : null}
+                  {openmodelStatus.models_total != null ? (
+                    <span className="text-[10px] text-sky-700">
+                      Моделей в каталоге: {openmodelStatus.models_total}
+                    </span>
+                  ) : null}
+                </div>
+              ) : openmodelStatus?.balance_requires_console ? (
+                <p className="text-[10px] text-amber-800">
+                  Баланс аккаунта смотрите в{' '}
+                  <a
+                    href="https://console.openmodel.ai/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-amber-950"
+                  >
+                    console.openmodel.ai
+                  </a>
+                  . API <span className="font-mono">/web/v1/self</span> принимает console access token (JWT после
+                  входа), а не ключ <span className="font-mono">om-…</span>. Ключ om-… работает для inference и
+                  каталога моделей
+                  {openmodelStatus.models_total != null ? ` (${openmodelStatus.models_total})` : ''}.
+                </p>
+              ) : openmodelStatus?.balance_error ? (
+                <p className="text-[10px] text-amber-800">
+                  Баланс недоступен: {openmodelStatus.balance_error}. Каталог моделей может загрузиться отдельно.
+                </p>
+              ) : (
+                <p className="text-[10px] text-sky-700">
+                  Сохраните ключ и нажмите «Обновить баланс и модели».
+                </p>
+              )}
+            </div>
+          )}
+
+          {config.id === 'serpapi_keys' && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-emerald-900">Account status</p>
+                  <p className="text-[10px] text-emerald-700">
+                    <a
+                      href="https://serpapi.com/manage-api-key"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-emerald-900"
+                    >
+                      serpapi.com/manage-api-key
+                    </a>
+                    {' · '}
+                    <a
+                      href="https://serpapi.com/search-engine-apis"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-emerald-900"
+                    >
+                      engines
+                    </a>
+                  </p>
+                </div>
+                {onRefreshSerpapiStatus ? (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshSerpapiStatus()}
+                    disabled={serpapiStatusLoading}
+                    className="text-[10px] px-2 py-0.5 rounded border border-emerald-300 bg-white hover:bg-emerald-50 disabled:opacity-50"
+                  >
+                    {serpapiStatusLoading ? 'Загрузка…' : 'Обновить account.json'}
+                  </button>
+                ) : null}
+              </div>
+              {serpapiStatusError ? (
+                <p className="text-[10px] text-rose-700">{serpapiStatusError}</p>
+              ) : serpapiStatusLoading && !serpapiStatus ? (
+                <p className="text-[10px] text-emerald-700">Загружаем account.json…</p>
+              ) : !serpapiStatus?.configured && keys.length === 0 ? (
+                <p className="text-[10px] text-emerald-700">Добавьте SerpApi key и сохраните настройки.</p>
+              ) : serpapiStatus?.account_ok && serpapiStatus.account ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-emerald-950">
+                  <span>
+                    <span className="text-[10px] uppercase tracking-wide text-emerald-700">Plan</span>{' '}
+                    <span className="font-semibold">{serpapiStatus.account.plan_name || serpapiStatus.account.plan_id || '—'}</span>
+                  </span>
+                  {serpapiStatus.account.plan_searches_left != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-emerald-700">Left</span>{' '}
+                      <span className="font-semibold tabular-nums">{serpapiStatus.account.plan_searches_left}</span>
+                      {serpapiStatus.account.searches_per_month != null
+                        ? ` / ${serpapiStatus.account.searches_per_month}`
+                        : ''}
+                    </span>
+                  ) : serpapiStatus.account.total_searches_left != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-emerald-700">Credits left</span>{' '}
+                      <span className="font-semibold tabular-nums">{serpapiStatus.account.total_searches_left}</span>
+                    </span>
+                  ) : null}
+                  {serpapiStatus.account.this_month_usage != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-emerald-700">Used this month</span>{' '}
+                      <span className="font-medium tabular-nums">{serpapiStatus.account.this_month_usage}</span>
+                    </span>
+                  ) : null}
+                  {serpapiStatus.account.account_status ? (
+                    <span className="text-[10px] text-emerald-700">{serpapiStatus.account.account_status}</span>
+                  ) : null}
+                </div>
+              ) : serpapiStatus?.account_error ? (
+                <p className="text-[10px] text-amber-800">
+                  Account API: {serpapiStatus.account_error}. Проверьте ключ на serpapi.com.
+                </p>
+              ) : (
+                <p className="text-[10px] text-emerald-700">
+                  Сохраните ключ и нажмите «Обновить account.json».
+                </p>
+              )}
+            </div>
+          )}
+
           {config.modelField && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="space-y-1 sm:col-span-2">
@@ -511,6 +950,15 @@ export function ProviderApiKeysPanel({
                       className="text-[10px] px-2 py-0.5 rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
                     >
                       {openrouterCatalogLoading ? 'Загрузка…' : 'Обновить каталог OpenRouter'}
+                    </button>
+                  ) : config.catalogKey === 'openmodel' && onRefreshOpenmodelStatus ? (
+                    <button
+                      type="button"
+                      onClick={() => onRefreshOpenmodelStatus()}
+                      disabled={openmodelStatusLoading}
+                      className="text-[10px] px-2 py-0.5 rounded border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {openmodelStatusLoading ? 'Загрузка…' : 'Обновить список моделей'}
                     </button>
                   ) : null}
                 </div>
@@ -529,6 +977,46 @@ export function ProviderApiKeysPanel({
                     emptyLabel="Бесплатные и платные модели из openrouter.ai"
                   />
                 ) : modelOptions.length > 0 ? (
+                  config.id === 'serpapi_keys' ? (
+                    <div className="space-y-1.5">
+                      <select
+                        value={
+                          modelOptions.includes(String(settings[config.modelField] ?? ''))
+                            ? String(settings[config.modelField] ?? '')
+                            : ''
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v) {
+                            onSettingsChange({ [config.modelField!]: v } as Partial<ProviderKeysState>)
+                          }
+                        }}
+                        className="w-full border rounded-md px-2.5 py-1.5 text-xs font-mono bg-white"
+                      >
+                        <option value="">— preset —</option>
+                        {modelOptions.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        list="serpapi-engine-presets"
+                        value={String(settings[config.modelField] ?? '')}
+                        onChange={(e) =>
+                          onSettingsChange({ [config.modelField!]: e.target.value } as Partial<ProviderKeysState>)
+                        }
+                        placeholder={config.modelPlaceholder}
+                        className="w-full border rounded-md px-2.5 py-1.5 text-xs font-mono bg-white"
+                      />
+                      <datalist id="serpapi-engine-presets">
+                        {modelOptions.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                    </div>
+                  ) : (
                   <select
                     value={String(settings[config.modelField] ?? '')}
                     onChange={(e) =>
@@ -543,6 +1031,7 @@ export function ProviderApiKeysPanel({
                       </option>
                     ))}
                   </select>
+                  )
                 ) : (
                   <input
                     type="text"
@@ -626,13 +1115,9 @@ export function ProviderApiKeysPanel({
                       {maskKey(k)}
                     </span>
                     <span className="inline-flex items-center gap-1" title={health?.reason || health?.status}>
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotClass(health?.status)}`} />
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotClassExtended(health)}`} />
                       <span className="text-[10px] text-gray-600 truncate">
-                        {health?.status === 'active'
-                          ? 'ok'
-                          : health?.status === 'inactive'
-                            ? 'fail'
-                            : '?'}
+                        {healthStatusLabel(health)}
                       </span>
                     </span>
                     <div className="flex justify-end gap-0.5">

@@ -31,6 +31,8 @@
     "keept:adk:grade": "bash scripts/keept-adk.sh grade",
     "keept:security:test": "bash scripts/keept-adk.sh test-all",
     "keept:deploy:staging": "bash scripts/deploy-keept-staging.sh",
+    "voice-recruiter:deploy": "bash scripts/deploy-voice-recruiter.sh",
+    "voice-recruiter:sim": "node scripts/voice-recruiter-sim-interviews.mjs",
     "understand-anything:install": "bash scripts/setup-understand-anything.sh",
     "keept:env:local": "bash scripts/setup-keept-local-env.sh",
     "keept:env:github-secrets": "bash scripts/setup-keept-local-env.sh --github-secrets",

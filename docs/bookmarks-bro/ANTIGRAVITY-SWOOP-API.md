@@ -16,10 +16,11 @@ Keept end-users **не** логинятся в Swoop. Antigravity как опе�
 | Режим | Заголовок | Кто | Для чего |
 |-------|-----------|-----|----------|
 | **Ops / extension bootstrap** | `X-API-Key: <agent_api_key>` | Swoop `service_settings.agent_api_key` | bootstrap, worker, admin, n8n без user JWT |
+| **Personal user key** | `X-API-Key: auk_…` или `Bearer` | [Settings → API Keys](https://swoop.autoro.tech/settings) | chat/completions, models, scrape (не Admin) |
 | **Keept user** | `Authorization: Bearer <BB Supabase access_token>` | BB Supabase Auth | capture, search, workspaces, telegram link |
 | **OpenAI-compatible** | `Authorization: Bearer <key>` или `X-API-Key` | клиенты LLM | `/api/v1/chat/completions` |
 
-`agent_api_key` задаётся в Swoop **Admin → Settings**. Не коммитить.
+`agent_api_key` задаётся в Swoop **Admin → Settings**. Персональные ключи — `/settings` (см. [agent-api-user-keys.md](../agent-api-user-keys.md)). Не коммитить.
 
 ### Получить user JWT (smoke / тест)
 

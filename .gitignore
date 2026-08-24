@@ -146,3 +146,8 @@ extensions/bookmarks-bro/e2e/test-results/
 extensions/bookmarks-bro/e2e/playwright-report/
 livekit_test_session.json
 
+# browser-ops local runtime (node_modules covered globally; keep profiles/.env/out local)
+tools/browser-ops/.env
+tools/browser-ops/profiles/*/
+tools/browser-ops/out/results-*.csv
+

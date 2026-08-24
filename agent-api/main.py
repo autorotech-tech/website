@@ -1,7 +1,10 @@
 """
-Autoro Scraping Agent — public API for web scraping without an account.
-Authentication via X-API-Key header, validated against service_settings.agent_api_key
-(единый ключ для клиентов; LLM-вызовы маршрутизируются по типу задачи к провайдерам из Swoop settings).
+Autoro Scraping Agent — public API for web scraping and OpenAI-compatible LLM proxy.
+Authentication:
+  - Service key: X-API-Key / Bearer = service_settings.agent_api_key (ops / Admin Settings)
+  - Personal keys: auk_… from /api/v1/account/api-keys (per logged-in Swoop user)
+  - Keept: Supabase JWT (Bookmarks Bro) on bookmarks routes
+LLM calls are routed to providers configured in Swoop settings.
 """
 
 import os
@@ -9,6 +12,7 @@ import time
 import uuid
 import hmac
 import base64
+import ast
 import datetime
 import re
 import shlex
@@ -30,12 +34,44 @@ import psycopg2
 import psycopg2.extras
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from swoop_lmarena import (
     lmarena_api_base as _lmarena_api_base,
     verify_lmarena_key as _verify_lmarena_key,
+)
+from swoop_mimo import (
+    mimo_api_base as _mimo_api_base,
+    verify_mimo_key as _verify_mimo_key,
+)
+from swoop_kimi import (
+    kimi_api_base as _kimi_api_base,
+    verify_kimi_key as _verify_kimi_key,
+)
+from swoop_openmodel import (
+    fetch_openmodel_balance as _fetch_openmodel_balance,
+    fetch_openmodel_models as _fetch_openmodel_models,
+    openmodel_origin as _openmodel_origin,
+    post_openmodel_messages_raw as _post_openmodel_messages_raw,
+    post_openmodel_messages_text as _post_openmodel_messages_text,
+    verify_openmodel_key as _verify_openmodel_key,
+)
+from swoop_serpapi import (
+    SERPAPI_ENGINE_PRESETS as _SERPAPI_ENGINE_PRESETS,
+    fetch_serpapi_account as _fetch_serpapi_account,
+    resolve_serpapi_engine as _resolve_serpapi_engine,
+    serpapi_engine_search as _serpapi_engine_search,
+    serpapi_search_raw as _serpapi_search_raw,
+    serpapi_web_search as _serpapi_web_search,
+    verify_serpapi_key as _verify_serpapi_key,
+)
+from swoop_groq import is_proxy_blocked as _is_proxy_blocked, verify_groq_key as _verify_groq_key
+from swoop_parsing import (
+    verify_apify_key as _verify_apify_key,
+    verify_brightdata_key as _verify_brightdata_key,
+    verify_omkar_key as _verify_omkar_key,
+    verify_scrapingbee_key as _verify_scrapingbee_key,
 )
 from swoop_provider_catalog import (
     build_openai_models_list,
@@ -264,6 +300,7 @@ async def _app_lifespan(app: FastAPI):
         ensure_service_settings_schema()
         ensure_expired_domains_schema()
         ensure_telegram_assistant_schema()
+        ensure_agent_user_api_keys_schema()
     except Exception as exc:
         logger.warning("Bookmarks schema bootstrap skipped (DB unreachable?): %s", exc)
     refresh_task: Optional[asyncio.Task] = None
@@ -482,14 +519,193 @@ def save_click_async(
         conn.close()
 
 
+USER_API_KEY_PREFIX = "auk_"
+USER_API_KEY_MAX_PER_USER = 5
+
+
+def hash_user_api_key(raw_key: str) -> str:
+    return hashlib.sha256((raw_key or "").strip().encode("utf-8")).hexdigest()
+
+
+def ensure_agent_user_api_keys_schema() -> None:
+    conn = pg_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS public.agent_user_api_keys (
+                    id              BIGSERIAL PRIMARY KEY,
+                    user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+                    name            TEXT NOT NULL DEFAULT 'default',
+                    key_prefix      TEXT NOT NULL,
+                    key_hash        TEXT NOT NULL UNIQUE,
+                    scopes          TEXT[] NOT NULL DEFAULT ARRAY['api:v1']::TEXT[],
+                    last_used_at    TIMESTAMPTZ,
+                    revoked_at      TIMESTAMPTZ,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_agent_user_api_keys_user_id
+                    ON public.agent_user_api_keys (user_id)
+                    WHERE revoked_at IS NULL
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_agent_user_api_keys_key_hash
+                    ON public.agent_user_api_keys (key_hash)
+                    WHERE revoked_at IS NULL
+                """
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def lookup_user_api_key(raw_key: str) -> Optional[Dict[str, Any]]:
+    """Resolve a personal auk_… key. Returns None if missing/revoked/blocked."""
+    key = (raw_key or "").strip()
+    if not key.startswith(USER_API_KEY_PREFIX) or len(key) < 20:
+        return None
+    key_hash = hash_user_api_key(key)
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT k.id, k.user_id, k.name, k.scopes, k.revoked_at,
+                       p.is_blocked
+                FROM public.agent_user_api_keys k
+                LEFT JOIN public.profiles p ON p.id = k.user_id
+                WHERE k.key_hash = %s
+                LIMIT 1
+                """,
+                (key_hash,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            if row.get("revoked_at"):
+                return None
+            if row.get("is_blocked"):
+                return None
+            cur.execute(
+                """
+                UPDATE public.agent_user_api_keys
+                SET last_used_at = now(), updated_at = now()
+                WHERE id = %s
+                """,
+                (row["id"],),
+            )
+        conn.commit()
+        return {
+            "key_id": int(row["id"]),
+            "user_id": str(row["user_id"]),
+            "name": str(row.get("name") or "default"),
+            "scopes": list(row.get("scopes") or ["api:v1"]),
+        }
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("lookup_user_api_key failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def _safe_secret_eq(a: str, b: str) -> bool:
+    if not a or not b or len(a) != len(b):
+        return False
+    return secrets.compare_digest(a, b)
+
+
+def resolve_agent_credential(raw_key: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Accept service agent_api_key or personal auk_ key.
+    Returns auth context fragment or None.
+    """
+    key = (raw_key or "").strip()
+    if not key:
+        return None
+    settings = load_agent_settings()
+    stored_key = str(settings.get("agent_api_key") or "").strip()
+    if stored_key and _safe_secret_eq(key, stored_key):
+        return {"auth_mode": "api_key"}
+    if TELEGRAM_WEBHOOK_SECRET and _safe_secret_eq(key, TELEGRAM_WEBHOOK_SECRET):
+        return {"auth_mode": "api_key"}
+    user_key = lookup_user_api_key(key)
+    if user_key:
+        return {
+            "auth_mode": "user_api_key",
+            "user_id": user_key["user_id"],
+            "key_id": user_key["key_id"],
+            "key_name": user_key["name"],
+        }
+    return None
+
+
+def swoop_supabase_get_user(access_token: str) -> Dict[str, Any]:
+    """Validate JWT against main Swoop Supabase (SPA login), not Bookmarks Bro."""
+    anon = (SUPABASE_ANON_KEY or "").strip()
+    if not anon:
+        raise HTTPException(status_code=503, detail="SUPABASE_ANON_KEY не задан в agent-api")
+    req = UrlRequest(
+        url=f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "apikey": anon,
+            "Authorization": f"Bearer {access_token}",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw) if raw else {}
+            if not isinstance(data, dict) or not data.get("id"):
+                raise HTTPException(status_code=401, detail="Invalid Supabase user token")
+            return data
+    except HTTPError:
+        raise HTTPException(status_code=401, detail="Invalid or expired Supabase session")
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Supabase user check network error: {exc}")
+
+
+def require_swoop_user_from_bearer(authorization: Optional[str]) -> Dict[str, Any]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authorization: Bearer <supabase access_token> required")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty Bearer token")
+    user = swoop_supabase_get_user(token)
+    user_id = str(user.get("id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid Supabase user token")
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT is_blocked FROM public.profiles WHERE id = %s LIMIT 1", (user_id,))
+            row = cur.fetchone()
+            if row and row.get("is_blocked"):
+                raise HTTPException(status_code=403, detail="Account is blocked")
+    finally:
+        conn.close()
+    return user
+
+
 def verify_api_key(request: Request, x_api_key: str = Header(..., alias="X-API-Key")) -> Dict[str, Any]:
     settings = load_agent_settings()
 
     if not settings.get("agent_enabled"):
         raise HTTPException(status_code=503, detail="Agent API is currently disabled")
 
-    stored_key = settings.get("agent_api_key", "")
-    if not stored_key or x_api_key != stored_key:
+    cred = resolve_agent_credential(x_api_key)
+    if not cred:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     client_ip = request.client.host if request.client else "unknown"
@@ -497,7 +713,7 @@ def verify_api_key(request: Request, x_api_key: str = Header(..., alias="X-API-K
     if not check_rate_limit(client_ip, limit):
         raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({limit}/min)")
 
-    return {"client_ip": client_ip}
+    return {"client_ip": client_ip, **cred}
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -580,19 +796,19 @@ def verify_bookmarks_access(
     limit = settings.get("agent_rate_limit", 30)
 
     if x_api_key:
-        stored_key = settings.get("agent_api_key", "")
-        if (stored_key and x_api_key == stored_key) or (TELEGRAM_WEBHOOK_SECRET and x_api_key == TELEGRAM_WEBHOOK_SECRET):
+        cred = resolve_agent_credential(x_api_key)
+        if cred:
             if not check_rate_limit(client_ip, limit):
                 raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({limit}/min)")
-            return {"client_ip": client_ip, "auth_mode": "api_key"}
+            return {"client_ip": client_ip, **cred}
 
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
-        stored_key = settings.get("agent_api_key", "")
-        if (stored_key and token == stored_key) or (TELEGRAM_WEBHOOK_SECRET and token == TELEGRAM_WEBHOOK_SECRET):
+        cred = resolve_agent_credential(token)
+        if cred:
             if not check_rate_limit(client_ip, limit):
                 raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({limit}/min)")
-            return {"client_ip": client_ip, "auth_mode": "api_key"}
+            return {"client_ip": client_ip, **cred}
 
         extension_payload = verify_extension_access_token(token, client_ip)
         if extension_payload:
@@ -625,10 +841,10 @@ def verify_workspace_membership(auth_ctx: Dict[str, Any], workspace_id: int) -> 
     
     if auth_mode in ("dev_bypass", "api_key", "env_api_key"):
         return
-        
+
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized: No user identity found")
-        
+
     conn = pg_connect_bookmarks()
     try:
         with conn.cursor() as cur:
@@ -806,6 +1022,23 @@ class WebSearchPayload(BaseModel):
     )
 
 
+class SerpApiSearchPayload(BaseModel):
+    """SerpApi-only SERP (engine override + Moscow/RU geo defaults)."""
+
+    query: str = Field(..., min_length=2, max_length=500)
+    engine: str = Field(default="google", min_length=2, max_length=40)
+    limit: int = Field(default=10, ge=1, le=20)
+    geo: Optional[Dict[str, Any]] = Field(default=None)
+
+
+class SerpApiEnginePayload(BaseModel):
+    """Full SerpApi engine call (google_maps_reviews, tripadvisor, yelp, …)."""
+
+    engine: str = Field(..., min_length=2, max_length=40)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    geo: Optional[Dict[str, Any]] = Field(default=None)
+
+
 class VisionAnalyzePayload(BaseModel):
     """OCR / описание загруженного изображения (URL или base64)."""
 
@@ -825,6 +1058,14 @@ class MediaTranscribePayload(BaseModel):
 
     media_url: str = Field(..., min_length=8, max_length=2000)
     language: Optional[str] = Field(default=None, max_length=16)
+
+
+class MediaSpeechPayload(BaseModel):
+    """Синтез речи (OpenAI TTS через ключ OpenAI в Swoop)."""
+
+    text: str = Field(..., min_length=1, max_length=4096)
+    voice: Optional[str] = Field(default="nova", max_length=32)
+    model: Optional[str] = Field(default="tts-1", max_length=64)
 
 
 class BookmarkAiRecommendPayload(BaseModel):
@@ -1828,6 +2069,15 @@ def external_web_search_from_settings(
             break
         _key_health_mark_failure("tavily_keys", str(key), 429, "empty_or_failed_search")
 
+    serp_engine = _resolve_serpapi_engine(cfg)
+    for key in _iter_keys_with_health("serpapi_keys", cfg.get("serpapi_keys") or []):
+        out = _serpapi_web_search(str(key), task, per_cap, engine=serp_engine, settings=cfg)
+        if out:
+            _key_health_mark_success("serpapi_keys", str(key))
+            buckets.append(out)
+            break
+        _key_health_mark_failure("serpapi_keys", str(key), 429, "empty_or_failed_search")
+
     for key in _iter_keys_with_health("glm_keys", cfg.get("glm_keys") or []):
         out = glm_web_search(str(key), task, per_cap)
         if out:
@@ -2450,6 +2700,39 @@ def ensure_service_settings_schema() -> None:
                 "alter table public.service_settings add column if not exists lmarena_default_model text not null default ''"
             )
             cur.execute(
+                "alter table public.service_settings add column if not exists mimo_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists mimo_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists mimo_default_model text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists kimi_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists kimi_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists kimi_default_model text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists openmodel_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists openmodel_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists openmodel_default_model text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists serpapi_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists serpapi_default_engine text not null default 'google'"
+            )
+            cur.execute(
                 "alter table public.service_settings add column if not exists api_key_pool_meta jsonb not null default '{}'::jsonb"
             )
             cur.execute(
@@ -2466,6 +2749,30 @@ def ensure_service_settings_schema() -> None:
             )
             cur.execute(
                 "alter table public.service_settings add column if not exists expireddomains_api_base text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists apify_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists apify_default_actor text not null default 'compass/crawler-google-places'"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists brightdata_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists brightdata_zone text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists brightdata_base_url text not null default 'https://api.brightdata.com'"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists omkar_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists omkar_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists scrapingbee_keys jsonb not null default '[]'::jsonb"
             )
         conn.commit()
     except Exception as exc:
@@ -3083,6 +3390,8 @@ def _mask_secret_key(key: str) -> str:
 
 def _is_retryable_key_error(code: int, msg: str) -> bool:
     text = (msg or "").lower()
+    if _is_proxy_blocked(code, msg):
+        return True
     if code in {401, 403} or "unauthorized" in text or "forbidden" in text or "invalid_api_key" in text or "incorrect api key" in text or "expired" in text:
         return False
     # 400/422 — ошибка payload/сообщений (Hermes tool turns), не «битый» API-ключ
@@ -3113,6 +3422,8 @@ def _is_retryable_key_error(code: int, msg: str) -> bool:
 
 def _key_cooldown_sec(code: int, msg: str) -> int:
     text = (msg or "").lower()
+    if _is_proxy_blocked(code, msg):
+        return min(_KEY_FAILURE_COOLDOWN_DEFAULT_SEC, 600)
     if code in {401, 403} or "unauthorized" in text or "forbidden" in text:
         return _KEY_FAILURE_COOLDOWN_AUTH_SEC
     if code in {402, 429} or "rate" in text or "quota" in text or "limit" in text:
@@ -3406,10 +3717,13 @@ def _select_api_key_group_keys(
             continue
         any_keys.extend(keys)
 
-        # provider filter (if both specified)
+        # provider filter: tagged groups must match; untagged groups are not provider-specific.
         item_provider = str(item.get("provider") or "").strip().lower()
-        if prov_norm and item_provider and item_provider != prov_norm:
-            continue
+        if prov_norm:
+            if not item_provider:
+                continue
+            if item_provider != prov_norm:
+                continue
 
         # tier filter (if both specified)
         item_tiers = item.get("tiers") or []
@@ -3441,6 +3755,8 @@ def _select_api_key_group_keys(
         matches.append((priority, idx, keys))
 
     if not matches:
+        if prov_norm:
+            return []
         return _flatten_api_key_groups(groups) if any_keys else []
 
     matches.sort(key=lambda t: (-t[0], t[1]))
@@ -3451,7 +3767,7 @@ def _select_api_key_group_keys(
 
 
 _LLM_ROUTING_PROVIDERS = frozenset(
-    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "api_key_groups", "env_openai"}
+    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "mimo", "kimi", "openmodel", "api_key_groups", "env_openai"}
 )
 _LLM_TIER_NAMES: Tuple[str, ...] = ("code", "reasoning", "fast", "general", "vision")
 
@@ -3636,8 +3952,27 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "lmarena_keys": [],
         "lmarena_base_url": "",
         "lmarena_default_model": "",
+        "mimo_keys": [],
+        "mimo_base_url": "",
+        "mimo_default_model": "",
+        "kimi_keys": [],
+        "kimi_base_url": "",
+        "kimi_default_model": "",
+        "openmodel_keys": [],
+        "openmodel_base_url": "",
+        "openmodel_default_model": "deepseek-v4-flash",
         "brave_keys": [],
         "tavily_keys": [],
+        "serpapi_keys": [],
+        "serpapi_default_engine": "google",
+        "apify_keys": [],
+        "apify_default_actor": "compass/crawler-google-places",
+        "brightdata_keys": [],
+        "brightdata_zone": "",
+        "brightdata_base_url": "https://api.brightdata.com",
+        "omkar_keys": [],
+        "omkar_base_url": "",
+        "scrapingbee_keys": [],
         "api_key_groups_keys": [],
         "api_key_groups_raw": [],
         "agent_llm_routing": {},
@@ -3669,8 +4004,16 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "groq_keys",
         "gemini_keys",
         "lmarena_keys",
+        "mimo_keys",
+        "kimi_keys",
+        "openmodel_keys",
         "brave_keys",
         "tavily_keys",
+        "serpapi_keys",
+        "apify_keys",
+        "brightdata_keys",
+        "omkar_keys",
+        "scrapingbee_keys",
     ):
         cfg[k] = _normalize_key_list(row.get(k))
     cfg["gemini_api_key"] = (str(row.get("gemini_api_key") or "").strip())
@@ -3689,6 +4032,39 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     lm_mod = row.get("lmarena_default_model")
     if lm_mod is not None:
         cfg["lmarena_default_model"] = str(lm_mod).strip()
+    mimo_base = row.get("mimo_base_url")
+    if mimo_base is not None:
+        cfg["mimo_base_url"] = str(mimo_base).strip()
+    mimo_mod = row.get("mimo_default_model")
+    if mimo_mod is not None:
+        cfg["mimo_default_model"] = str(mimo_mod).strip()
+    kimi_base = row.get("kimi_base_url")
+    if kimi_base is not None:
+        cfg["kimi_base_url"] = str(kimi_base).strip()
+    kimi_mod = row.get("kimi_default_model")
+    if kimi_mod is not None:
+        cfg["kimi_default_model"] = str(kimi_mod).strip()
+    om_base = row.get("openmodel_base_url")
+    if om_base is not None:
+        cfg["openmodel_base_url"] = str(om_base).strip()
+    om_mod = row.get("openmodel_default_model")
+    if om_mod is not None:
+        cfg["openmodel_default_model"] = str(om_mod).strip()
+    serp_engine = row.get("serpapi_default_engine")
+    if serp_engine is not None and str(serp_engine).strip():
+        cfg["serpapi_default_engine"] = str(serp_engine).strip()
+    apify_actor = row.get("apify_default_actor")
+    if apify_actor is not None and str(apify_actor).strip():
+        cfg["apify_default_actor"] = str(apify_actor).strip()
+    bd_zone = row.get("brightdata_zone")
+    if bd_zone is not None:
+        cfg["brightdata_zone"] = str(bd_zone).strip()
+    bd_base = row.get("brightdata_base_url")
+    if bd_base is not None and str(bd_base).strip():
+        cfg["brightdata_base_url"] = str(bd_base).strip()
+    om_base = row.get("omkar_base_url")
+    if om_base is not None:
+        cfg["omkar_base_url"] = str(om_base).strip()
     cfg["api_key_groups_raw"] = row.get("api_key_groups") if isinstance(row.get("api_key_groups"), list) else []
     cfg["api_key_groups_keys"] = _flatten_api_key_groups(cfg["api_key_groups_raw"])
     cfg["agent_llm_routing"] = _normalize_agent_llm_routing_payload(row.get("agent_llm_routing"))
@@ -3708,7 +4084,7 @@ def has_any_bookmark_llm_keys() -> bool:
     cfg = load_swoop_llm_key_settings()
     if cfg.get("gemini_api_key"):
         return True
-    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys"):
+    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys", "mimo_keys", "kimi_keys", "openmodel_keys"):
         if cfg.get(k):
             return True
     if cfg.get("api_key_groups_keys"):
@@ -3814,13 +4190,107 @@ def _parse_afford_max_tokens(msg: str) -> Optional[int]:
     return max(1, n - 64)
 
 
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "reasoning", "redacted_thinking"})
+
+
+def _extract_text_from_structured_dump(raw: str) -> str:
+    """Pull user-visible text blocks from stringified OpenAI/Gemini part arrays."""
+    chunks: List[str] = []
+    patterns = (
+        r'"type"\s*:\s*"text"\s*,\s*"text"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r"'type'\s*:\s*'text'\s*,\s*'text'\s*:\s*'((?:\\'|[^'])*)'",
+    )
+    for pat in patterns:
+        for m in re.finditer(pat, raw):
+            unescaped = (
+                m.group(1)
+                .replace("\\n", "\n")
+                .replace("\\'", "'")
+                .replace('\\"', '"')
+                .replace("\\\\", "\\")
+            )
+            if unescaped.strip():
+                chunks.append(unescaped)
+    return "\n".join(chunks).strip()
+
+
+def _content_block_visible_text(block: Any) -> str:
+    if isinstance(block, str):
+        return block.strip()
+    if not isinstance(block, dict):
+        return ""
+    btype = str(block.get("type") or "").strip().lower()
+    if btype in _THINKING_BLOCK_TYPES:
+        return ""
+    if btype == "text":
+        return str(block.get("text") or "").strip()
+    if block.get("text"):
+        return str(block["text"]).strip()
+    if block.get("content"):
+        return str(block["content"]).strip()
+    return ""
+
+
+def _normalize_llm_visible_content(content: Any) -> str:
+    """Strip model thinking/reasoning; keep only user-visible assistant text."""
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        parts = [_content_block_visible_text(block) for block in content]
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(content, dict):
+        text = _content_block_visible_text(content)
+        if text:
+            return text
+        return json.dumps(content, ensure_ascii=False)
+    if isinstance(content, str):
+        trimmed = content.strip()
+        if not trimmed:
+            return ""
+        if (
+            "'type': 'text'" in trimmed
+            or '"type": "text"' in trimmed
+            or "'type': 'thinking'" in trimmed
+            or '"type": "thinking"' in trimmed
+        ):
+            extracted = _extract_text_from_structured_dump(trimmed)
+            if extracted:
+                return extracted
+            if trimmed.startswith("[") and trimmed.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(trimmed)
+                except (ValueError, SyntaxError):
+                    parsed = None
+                if isinstance(parsed, list):
+                    normalized = _normalize_llm_visible_content(parsed)
+                    if normalized:
+                        return normalized
+                try:
+                    parsed_json = json.loads(trimmed)
+                except json.JSONDecodeError:
+                    parsed_json = None
+                if isinstance(parsed_json, list):
+                    normalized = _normalize_llm_visible_content(parsed_json)
+                    if normalized:
+                        return normalized
+            if (
+                ("'type': 'thinking'" in trimmed or '"type": "thinking"' in trimmed)
+                and "'type': 'text'" not in trimmed
+                and '"type": "text"' not in trimmed
+            ):
+                return ""
+        return trimmed
+    return str(content).strip()
+
+
 def _assistant_visible_text(msg: Dict[str, Any]) -> str:
     if not isinstance(msg, dict):
         return ""
-    for key in ("content", "reasoning", "reasoning_content"):
-        val = msg.get(key)
-        if val is not None and str(val).strip():
-            return str(val).strip()
+    content = msg.get("content")
+    if content is not None:
+        visible = _normalize_llm_visible_content(content)
+        if visible:
+            return visible
     return ""
 
 
@@ -3829,26 +4299,7 @@ def _messages_have_tool_results(messages: List[Dict[str, Any]]) -> bool:
 
 
 def _coerce_openai_message_content(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: List[str] = []
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text" and block.get("text"):
-                    parts.append(str(block["text"]))
-                elif block.get("text"):
-                    parts.append(str(block["text"]))
-            elif isinstance(block, str):
-                parts.append(block)
-        if parts:
-            return "\n".join(parts)
-        return json.dumps(content, ensure_ascii=False)
-    if isinstance(content, dict):
-        return json.dumps(content, ensure_ascii=False)
-    return str(content)
+    return _normalize_llm_visible_content(content)
 
 
 def _normalize_hermes_proxy_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -3930,10 +4381,15 @@ def _post_openai_compatible_chat_completions_raw(
     max_tokens: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
+    auth_scheme: str = "bearer",
 ) -> Tuple[Optional[Dict[str, Any]], int, str]:
     """Полный assistant message (content, tool_calls, reasoning, finish_reason)."""
     url = api_base.rstrip("/") + "/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
+    if auth_scheme == "api-key":
+        headers["api-key"] = api_key
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
     if extra_headers:
         headers.update(extra_headers)
     tokens_try = int(max_tokens if max_tokens is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200"))
@@ -3951,6 +4407,9 @@ def _post_openai_compatible_chat_completions_raw(
             payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        gemini_extra = _gemini_openai_extra_body(model)
+        if gemini_extra and "generativelanguage.googleapis.com" in (api_base or ""):
+            payload["extra_body"] = gemini_extra
         code, body, raw = _http_post_json(url, headers, payload, timeout=120)
         if code == 200 and isinstance(body, dict):
             break
@@ -3973,8 +4432,9 @@ def _post_openai_compatible_chat_completions_raw(
         return None, code, "empty_content"
     out: Dict[str, Any] = dict(msg)
     out["finish_reason"] = choice.get("finish_reason") if isinstance(choice, dict) else None
-    if not visible:
-        out["content"] = ""
+    out["content"] = visible if visible else ""
+    out.pop("reasoning", None)
+    out.pop("reasoning_content", None)
     return out, code, "ok"
 
 
@@ -3989,6 +4449,7 @@ def _post_openai_compatible_chat_completions(
     max_tokens: Optional[int] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
+    auth_scheme: str = "bearer",
 ) -> Tuple[Optional[str], int, str]:
     msg, code, status = _post_openai_compatible_chat_completions_raw(
         api_base,
@@ -4001,6 +4462,7 @@ def _post_openai_compatible_chat_completions(
         max_tokens=max_tokens,
         tools=tools,
         tool_choice=tool_choice,
+        auth_scheme=auth_scheme,
     )
     if msg is None:
         return None, code, status
@@ -4020,6 +4482,7 @@ def _post_openai_compatible_chat_json(
     user_prompt: str,
     extra_headers: Optional[Dict[str, str]] = None,
     max_tokens: Optional[int] = None,
+    auth_scheme: str = "bearer",
 ) -> Tuple[Optional[Dict[str, Any]], int, str]:
     messages = [
         {"role": "system", "content": system_prompt},
@@ -4034,6 +4497,7 @@ def _post_openai_compatible_chat_json(
         response_format={"type": "json_object"},
         extra_headers=extra_headers,
         max_tokens=max_tokens,
+        auth_scheme=auth_scheme,
     )
     if content is None:
         return None, code, msg
@@ -4041,6 +4505,64 @@ def _post_openai_compatible_chat_json(
         return json.loads(content), code, "ok"
     except json.JSONDecodeError:
         return None, code, "bad_json_content"
+
+
+def _post_openmodel_chat_json(
+    settings: Dict[str, Any],
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: Optional[int] = None,
+) -> Tuple[Optional[Dict[str, Any]], int, str]:
+    sys_text = (system_prompt or "").strip()
+    if sys_text:
+        sys_text = sys_text + "\n\nRespond with valid JSON only."
+    else:
+        sys_text = "Respond with valid JSON only."
+    messages = [
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_prompt},
+    ]
+    tokens = int(max_tokens if max_tokens is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200"))
+    content, code, msg = _post_openmodel_messages_text(
+        api_key,
+        model,
+        messages,
+        settings=settings,
+        max_tokens=tokens,
+        temperature=0.35,
+    )
+    if content is None:
+        return None, code, msg
+    try:
+        return json.loads(content), code, "ok"
+    except json.JSONDecodeError:
+        return None, code, "bad_json_content"
+
+
+def _gemini_model_uses_thinking(model: str) -> bool:
+    """Gemini 2.5+ spends output budget on internal thinking unless disabled."""
+    m = (model or "").strip().lower()
+    if not m.startswith("gemini-"):
+        return False
+    for token in ("2.5", "2.6", "3.1", "3.5", "3.6", "-3-"):
+        if token in m:
+            return True
+    return m.startswith("gemini-3")
+
+
+def _gemini_native_generation_config(model: str, **kwargs: Any) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = dict(kwargs)
+    if _gemini_model_uses_thinking(model):
+        cfg["thinkingConfig"] = {"thinkingBudget": 0}
+    return cfg
+
+
+def _gemini_openai_extra_body(model: str) -> Optional[Dict[str, Any]]:
+    if not _gemini_model_uses_thinking(model):
+        return None
+    return {"google": {"thinking_config": {"thinking_budget": 0}}}
 
 
 def _gemini_generate_json(
@@ -4055,11 +4577,12 @@ def _gemini_generate_json(
     payload = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "temperature": 0.35,
-            "maxOutputTokens": 2500,
-            "responseMimeType": "application/json",
-        },
+        "generationConfig": _gemini_native_generation_config(
+            model,
+            temperature=0.35,
+            maxOutputTokens=2500,
+            responseMimeType="application/json",
+        ),
     }
     code, body, raw = _http_post_json(url, headers, payload, timeout=120)
     if code != 200 or not isinstance(body, dict):
@@ -4250,7 +4773,7 @@ def _gemini_chat_key_pool(settings: Dict[str, Any], group_gemini_keys: Optional[
     legacy = str(settings.get("gemini_api_key") or "").strip()
     if legacy:
         pool = _merge_unique_key_lists(pool, [legacy])
-    return pool
+    return [k for k in pool if str(k).strip().startswith("AIza")]
 
 
 def _make_model_resolver(
@@ -4331,6 +4854,8 @@ def openai_chat_json_object(
     openrouter_base = os.environ.get("BOOKMARKS_OPENROUTER_API_BASE", "https://openrouter.ai/api/v1").strip()
     groq_base = os.environ.get("BOOKMARKS_GROQ_BASE", "https://api.groq.com/openai/v1").strip()
     lmarena_base = _lmarena_api_base(settings)
+    mimo_base = _mimo_api_base(settings)
+    kimi_base = _kimi_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -4385,12 +4910,24 @@ def openai_chat_json_object(
     group_lmarena_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "lmarena", tier, "", user_email_norm
     )
+    group_mimo_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "mimo", tier, "", user_email_norm
+    )
+    group_kimi_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
+    )
+    group_openmodel_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
+    )
     openrouter_pool = _merge_unique_key_lists(list(settings.get("openrouter_keys") or []), group_or_keys)
     openai_pool = _merge_unique_key_lists(list(settings.get("openai_keys") or []), group_oa_keys)
     groq_pool = _merge_unique_key_lists(list(settings.get("groq_keys") or []), group_groq_keys)
     glm_pool = _merge_unique_key_lists(list(settings.get("glm_keys") or []), group_glm_keys)
     gemini_pool = _gemini_chat_key_pool(settings, group_gemini_keys)
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
+    mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
+    kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
     chat_max_tokens = int(
         max_tokens_override if max_tokens_override is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200")
     )
@@ -4537,6 +5074,57 @@ def openai_chat_json_object(
                 if out:
                     return ChatJsonObjectResult(
                         data=out, tier=tier, provider_used="lmarena", model_resolved=model_use
+                    )
+
+        elif prov == "mimo":
+            model_use = resolve_model("mimo", mraw)
+            for key in _iter_keys_with_health("mimo_keys", mimo_pool):
+                out = ok_tuple(
+                    _post_openai_compatible_chat_json(
+                        mimo_base,
+                        key,
+                        model_use,
+                        system_prompt,
+                        user_prompt,
+                        max_tokens=chat_max_tokens,
+                        auth_scheme="api-key",
+                    ),
+                    "mimo_keys",
+                    key,
+                )
+                if out:
+                    return ChatJsonObjectResult(
+                        data=out, tier=tier, provider_used="mimo", model_resolved=model_use
+                    )
+
+        elif prov == "kimi":
+            model_use = resolve_model("kimi", mraw)
+            for key in _iter_keys_with_health("kimi_keys", kimi_pool):
+                out = ok_tuple(
+                    _post_openai_compatible_chat_json(
+                        kimi_base, key, model_use, system_prompt, user_prompt, max_tokens=chat_max_tokens
+                    ),
+                    "kimi_keys",
+                    key,
+                )
+                if out:
+                    return ChatJsonObjectResult(
+                        data=out, tier=tier, provider_used="kimi", model_resolved=model_use
+                    )
+
+        elif prov == "openmodel":
+            model_use = resolve_model("openmodel", mraw)
+            for key in _iter_keys_with_health("openmodel_keys", openmodel_pool):
+                out = ok_tuple(
+                    _post_openmodel_chat_json(
+                        settings, key, model_use, system_prompt, user_prompt, max_tokens=chat_max_tokens
+                    ),
+                    "openmodel_keys",
+                    key,
+                )
+                if out:
+                    return ChatJsonObjectResult(
+                        data=out, tier=tier, provider_used="openmodel", model_resolved=model_use
                     )
 
         elif prov == "api_key_groups":
@@ -4761,6 +5349,8 @@ def openai_chat_completions_generic(
     openrouter_base = os.environ.get("BOOKMARKS_OPENROUTER_API_BASE", "https://openrouter.ai/api/v1").strip()
     groq_base = os.environ.get("BOOKMARKS_GROQ_BASE", "https://api.groq.com/openai/v1").strip()
     lmarena_base = _lmarena_api_base(settings)
+    mimo_base = _mimo_api_base(settings)
+    kimi_base = _kimi_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -4819,6 +5409,7 @@ def openai_chat_completions_generic(
         key: str,
         model_use: str,
         extra_headers: Optional[Dict[str, str]] = None,
+        auth_scheme: str = "bearer",
     ):
         if hermes_proxy:
             return _post_openai_compatible_chat_completions_raw(
@@ -4832,6 +5423,7 @@ def openai_chat_completions_generic(
                 max_tokens=chat_max_tokens,
                 tools=proxy_tools,
                 tool_choice=proxy_tool_choice,
+                auth_scheme=auth_scheme,
             )
         return _post_openai_compatible_chat_completions(
             api_base,
@@ -4844,6 +5436,7 @@ def openai_chat_completions_generic(
             max_tokens=chat_max_tokens,
             tools=proxy_tools,
             tool_choice=proxy_tool_choice,
+            auth_scheme=auth_scheme,
         )
 
     def _finish_provider_attempt(
@@ -4888,12 +5481,24 @@ def openai_chat_completions_generic(
     group_lmarena_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "lmarena", tier, "", user_email_norm
     )
+    group_mimo_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "mimo", tier, "", user_email_norm
+    )
+    group_kimi_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
+    )
+    group_openmodel_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
+    )
     openrouter_pool = _merge_unique_key_lists(list(settings.get("openrouter_keys") or []), group_or_keys)
     openai_pool = _merge_unique_key_lists(list(settings.get("openai_keys") or []), group_oa_keys)
     groq_pool = _merge_unique_key_lists(list(settings.get("groq_keys") or []), group_groq_keys)
     glm_pool = _merge_unique_key_lists(list(settings.get("glm_keys") or []), group_glm_keys)
     gemini_pool = _gemini_chat_key_pool(settings, group_gemini_keys)
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
+    mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
+    kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
 
     for step in chain:
         prov = str(step.get("provider") or "").strip().lower()
@@ -4937,24 +5542,18 @@ def openai_chat_completions_generic(
 
         elif prov == "groq":
             model_use = resolve_model("groq",mraw)
-            for key in _iter_keys_with_health("groq_pool", groq_pool):
-                out = ok_tuple(
-                    _post_openai_compatible_chat_completions(
-                        groq_base,
-                        key,
-                        model_use,
-                        proxy_messages,
-                        temperature=temperature,
-                        response_format=response_format,
-                        max_tokens=chat_max_tokens,
-                    ),
+            groq_ps = len(groq_pool)
+            for key in _iter_keys_for_llm("groq_pool", groq_pool):
+                got = _finish_provider_attempt(
+                    _provider_chat_call(groq_base, key, model_use),
                     "groq_pool",
                     key,
+                    "groq",
+                    model_use,
+                    pool_size=groq_ps,
                 )
-                if out is not None:
-                    return ChatCompletionsResult(
-                        content=out, tier=tier, provider_used="groq", model_resolved=model_use
-                    )
+                if got is not None:
+                    return got
 
         elif prov == "glm":
             model_use = resolve_model("glm",mraw)
@@ -4997,24 +5596,16 @@ def openai_chat_completions_generic(
             gemini_base = "https://generativelanguage.googleapis.com/v1beta/openai"
             gemini_ps = len(gemini_pool)
             for key in _iter_keys_for_llm("gemini_pool", gemini_pool):
-                out = ok_tuple(
-                    _post_openai_compatible_chat_completions(
-                        gemini_base,
-                        key,
-                        model_use,
-                        proxy_messages,
-                        temperature=temperature,
-                        response_format=response_format,
-                        max_tokens=chat_max_tokens,
-                    ),
+                got = _finish_provider_attempt(
+                    _provider_chat_call(gemini_base, key, model_use),
                     "gemini_pool",
                     key,
+                    "gemini",
+                    model_use,
                     pool_size=gemini_ps,
                 )
-                if out is not None:
-                    return ChatCompletionsResult(
-                        content=out, tier=tier, provider_used="gemini", model_resolved=model_use
-                    )
+                if got is not None:
+                    return got
 
         elif prov == "lmarena":
             model_use = resolve_model("lmarena", mraw)
@@ -5024,6 +5615,65 @@ def openai_chat_completions_generic(
                     "lmarena_keys",
                     key,
                     "lmarena",
+                    model_use,
+                )
+                if got is not None:
+                    return got
+
+        elif prov == "mimo":
+            model_use = resolve_model("mimo", mraw)
+            for key in _iter_keys_with_health("mimo_keys", mimo_pool):
+                got = _finish_provider_attempt(
+                    _provider_chat_call(mimo_base, key, model_use, auth_scheme="api-key"),
+                    "mimo_keys",
+                    key,
+                    "mimo",
+                    model_use,
+                )
+                if got is not None:
+                    return got
+
+        elif prov == "kimi":
+            model_use = resolve_model("kimi", mraw)
+            for key in _iter_keys_with_health("kimi_keys", kimi_pool):
+                got = _finish_provider_attempt(
+                    _provider_chat_call(kimi_base, key, model_use),
+                    "kimi_keys",
+                    key,
+                    "kimi",
+                    model_use,
+                )
+                if got is not None:
+                    return got
+
+        elif prov == "openmodel":
+            model_use = resolve_model("openmodel", mraw)
+
+            def _openmodel_chat_attempt(api_key: str):
+                if hermes_proxy:
+                    return _post_openmodel_messages_raw(
+                        api_key,
+                        model_use,
+                        proxy_messages,
+                        settings=settings,
+                        max_tokens=chat_max_tokens,
+                        temperature=temperature,
+                    )
+                return _post_openmodel_messages_text(
+                    api_key,
+                    model_use,
+                    proxy_messages,
+                    settings=settings,
+                    max_tokens=chat_max_tokens,
+                    temperature=temperature,
+                )
+
+            for key in _iter_keys_with_health("openmodel_keys", openmodel_pool):
+                got = _finish_provider_attempt(
+                    _openmodel_chat_attempt(key),
+                    "openmodel_keys",
+                    key,
+                    "openmodel",
                     model_use,
                 )
                 if got is not None:
@@ -5515,6 +6165,154 @@ async def health():
     return {"status": "ok", "service": "autoro-scraping-agent"}
 
 
+class UserApiKeyCreateBody(BaseModel):
+    name: str = Field(default="default", max_length=80)
+
+
+def _mint_user_api_key_raw() -> str:
+    body = secrets.token_urlsafe(32).replace("-", "").replace("_", "")[:40]
+    return f"{USER_API_KEY_PREFIX}{body}"
+
+
+@app.get("/api/v1/account/api-keys")
+async def list_user_api_keys(authorization: Optional[str] = Header(None, alias="Authorization")):
+    """List personal API keys for the logged-in Swoop user (JWT). Never returns raw secrets."""
+    user = require_swoop_user_from_bearer(authorization)
+    user_id = str(user["id"])
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, name, key_prefix, scopes, last_used_at, revoked_at, created_at
+                FROM public.agent_user_api_keys
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall() or []
+    finally:
+        conn.close()
+    return {
+        "keys": [
+            {
+                "id": int(r["id"]),
+                "name": r.get("name") or "default",
+                "key_prefix": r.get("key_prefix") or "",
+                "scopes": list(r.get("scopes") or ["api:v1"]),
+                "last_used_at": r["last_used_at"].isoformat() if r.get("last_used_at") else None,
+                "revoked_at": r["revoked_at"].isoformat() if r.get("revoked_at") else None,
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                "active": r.get("revoked_at") is None,
+            }
+            for r in rows
+        ],
+        "base_url": "https://swoop.autoro.tech/api/v1",
+        "max_keys": USER_API_KEY_MAX_PER_USER,
+    }
+
+
+@app.post("/api/v1/account/api-keys")
+async def create_user_api_key(
+    body: UserApiKeyCreateBody,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """
+    Create a personal API key. Raw key returned once in `api_key`.
+    Use as X-API-Key or Authorization: Bearer against /api/v1/* (not Admin settings endpoints).
+    """
+    user = require_swoop_user_from_bearer(authorization)
+    user_id = str(user["id"])
+    name = (body.name or "default").strip() or "default"
+    raw = _mint_user_api_key_raw()
+    key_hash = hash_user_api_key(raw)
+    key_prefix = raw[:10] + "…"
+
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c FROM public.agent_user_api_keys
+                WHERE user_id = %s AND revoked_at IS NULL
+                """,
+                (user_id,),
+            )
+            active_count = int((cur.fetchone() or {}).get("c") or 0)
+            if active_count >= USER_API_KEY_MAX_PER_USER:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Limit of {USER_API_KEY_MAX_PER_USER} active API keys reached. Revoke one first.",
+                )
+            cur.execute(
+                """
+                INSERT INTO public.agent_user_api_keys (user_id, name, key_prefix, key_hash)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, created_at
+                """,
+                (user_id, name, key_prefix, key_hash),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        logger.exception("create_user_api_key failed")
+        raise HTTPException(status_code=500, detail=f"Failed to create API key: {exc}")
+    finally:
+        conn.close()
+
+    return {
+        "id": int(row["id"]),
+        "name": name,
+        "key_prefix": key_prefix,
+        "api_key": raw,
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "base_url": "https://swoop.autoro.tech/api/v1",
+        "usage_hint": {
+            "header": "X-API-Key",
+            "also_supported": "Authorization: Bearer <api_key>",
+            "chat_completions": "POST https://swoop.autoro.tech/api/v1/chat/completions",
+            "models": "GET https://swoop.autoro.tech/api/v1/models",
+        },
+        "warning": "Copy the api_key now. It will not be shown again.",
+    }
+
+
+@app.delete("/api/v1/account/api-keys/{key_id}")
+async def revoke_user_api_key(
+    key_id: int,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    user = require_swoop_user_from_bearer(authorization)
+    user_id = str(user["id"])
+    conn = pg_connect()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE public.agent_user_api_keys
+                SET revoked_at = now(), updated_at = now()
+                WHERE id = %s AND user_id = %s AND revoked_at IS NULL
+                RETURNING id
+                """,
+                (key_id, user_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to revoke API key: {exc}")
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="API key not found or already revoked")
+    return {"ok": True, "id": int(row["id"]), "revoked": True}
+
+
 def _provider_health_rows(provider: str, keys: List[str]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     now = time.time()
@@ -5570,8 +6368,16 @@ async def admin_key_health(
         "groq_keys": _provider_health_rows("groq_keys", list(settings.get("groq_keys") or [])),
         "gemini_keys": _provider_health_rows("gemini_keys", gemini_all),
         "lmarena_keys": _provider_health_rows("lmarena_keys", list(settings.get("lmarena_keys") or [])),
+        "mimo_keys": _provider_health_rows("mimo_keys", list(settings.get("mimo_keys") or [])),
+        "kimi_keys": _provider_health_rows("kimi_keys", list(settings.get("kimi_keys") or [])),
+        "openmodel_keys": _provider_health_rows("openmodel_keys", list(settings.get("openmodel_keys") or [])),
         "brave_keys": _provider_health_rows("brave_keys", list(settings.get("brave_keys") or [])),
         "tavily_keys": _provider_health_rows("tavily_keys", list(settings.get("tavily_keys") or [])),
+        "serpapi_keys": _provider_health_rows("serpapi_keys", list(settings.get("serpapi_keys") or [])),
+        "apify_keys": _provider_health_rows("apify_keys", list(settings.get("apify_keys") or [])),
+        "brightdata_keys": _provider_health_rows("brightdata_keys", list(settings.get("brightdata_keys") or [])),
+        "omkar_keys": _provider_health_rows("omkar_keys", list(settings.get("omkar_keys") or [])),
+        "scrapingbee_keys": _provider_health_rows("scrapingbee_keys", list(settings.get("scrapingbee_keys") or [])),
         "api_key_groups_keys": _provider_health_rows("api_key_groups_keys", list(settings.get("api_key_groups_keys") or [])),
     }
     return {
@@ -5616,6 +6422,110 @@ async def admin_provider_catalog(
         "openrouter_meta_free": or_free,
         "openrouter_meta_total": len(or_meta_all),
         "openrouter_free_total": len(or_free),
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/v1/admin/openmodel/status")
+async def admin_openmodel_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """Баланс аккаунта OpenModel + полный каталог моделей (GET /v1/models)."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("openmodel_keys") or []) if str(k).strip()]
+    api_base = _openmodel_origin(settings)
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "api_base": api_base,
+            "balance": None,
+            "models": [],
+            "model_ids": [],
+            "models_total": 0,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    balance_ok, balance_payload, balance_msg = _fetch_openmodel_balance(probe_key, settings)
+    balance_requires_console = bool((balance_payload or {}).get("requires_console_token")) if not balance_ok else False
+    balance_error_code = (balance_payload or {}).get("error_code") if not balance_ok else None
+    balance_error = None if balance_ok else balance_msg
+    if balance_requires_console:
+        balance_error = "console_access_token_required"
+    models = _fetch_openmodel_models(probe_key, settings)
+    model_ids = [str(m.get("id") or "").strip() for m in models if str(m.get("id") or "").strip()]
+
+    return {
+        "status": "ok",
+        "configured": True,
+        "api_base": api_base,
+        "balance_ok": balance_ok,
+        "balance": balance_payload if balance_ok else None,
+        "balance_error": balance_error,
+        "balance_requires_console": balance_requires_console,
+        "balance_error_code": balance_error_code,
+        "models": models,
+        "model_ids": model_ids,
+        "models_total": len(model_ids),
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/v1/admin/serpapi/status")
+async def admin_serpapi_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """SerpApi account info (account.json) + supported engine presets."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("serpapi_keys") or []) if str(k).strip()]
+    default_engine = _resolve_serpapi_engine(settings)
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "default_engine": default_engine,
+            "engines": list(_SERPAPI_ENGINE_PRESETS),
+            "account": None,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    account_ok, account_payload, account_msg = _fetch_serpapi_account(probe_key)
+    return {
+        "status": "ok",
+        "configured": True,
+        "default_engine": default_engine,
+        "engines": list(_SERPAPI_ENGINE_PRESETS),
+        "account_ok": account_ok,
+        "account": account_payload if account_ok else None,
+        "account_error": None if account_ok else account_msg,
         "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
     }
 
@@ -5711,8 +6621,10 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
         api_base = os.environ.get("BOOKMARKS_OPENROUTER_API_BASE", "https://openrouter.ai/api/v1").strip()
         model = resolve_model_for_provider("openrouter-qwen", "fast", "", ping_settings, catalogs=ping_catalogs)
     elif prov in ("groq", "groq_keys", "groq_pool"):
-        api_base = os.environ.get("BOOKMARKS_GROQ_BASE", "https://api.groq.com/openai/v1").strip()
+        swoop = load_swoop_llm_key_settings()
         model = resolve_model_for_provider("groq", "fast", "", ping_settings, catalogs=ping_catalogs)
+        api_base = os.environ.get("BOOKMARKS_GROQ_BASE", "https://api.groq.com/openai/v1").strip()
+        return _verify_groq_key(clean_key, api_base=api_base, model=model, timeout=timeout)
     elif prov in ("glm", "glm_keys", "glm_pool"):
         api_base = os.environ.get("BOOKMARKS_GLM_BASE", "https://open.bigmodel.cn/api/paas/v4").strip()
         model = resolve_model_for_provider("glm", "fast", "", ping_settings, catalogs=ping_catalogs)
@@ -5722,6 +6634,15 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
     elif prov in ("lmarena", "lmarena_keys"):
         swoop = load_swoop_llm_key_settings()
         return _verify_lmarena_key(swoop, clean_key, timeout=timeout)
+    elif prov in ("mimo", "mimo_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_mimo_key(swoop, clean_key, timeout=timeout)
+    elif prov in ("kimi", "kimi_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_kimi_key(swoop, clean_key, timeout=timeout)
+    elif prov in ("openmodel", "openmodel_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_openmodel_key(swoop, clean_key, timeout=timeout)
     elif prov in ("tavily", "tavily_keys"):
         url = "https://api.tavily.com/search"
         headers = {"Content-Type": "application/json"}
@@ -5741,6 +6662,21 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
             return False, int(exc.code), _sanitize_llm_error_text(raw, exc.code)
         except Exception as exc:
             return False, -1, str(exc)
+    elif prov in ("serpapi", "serpapi_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_serpapi_key(clean_key, swoop)
+    elif prov in ("apify", "apify_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_apify_key(clean_key, swoop)
+    elif prov in ("brightdata", "brightdata_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_brightdata_key(clean_key, swoop)
+    elif prov in ("omkar", "omkar_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_omkar_key(clean_key, swoop)
+    elif prov in ("scrapingbee", "scrapingbee_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_scrapingbee_key(clean_key, swoop)
     else:
         # Fallback to auto-detection
         detected = "openrouter"
@@ -5767,9 +6703,14 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
         "max_tokens": 5,
     }
     code, body, raw = _http_post_json(url, headers, payload, timeout=timeout)
+    if code == 429:
+        time.sleep(2)
+        code, body, raw = _http_post_json(url, headers, payload, timeout=timeout)
     if code == 200 and isinstance(body, dict):
         return True, 200, "ok"
     err_msg = _sanitize_llm_error_text(raw, code)
+    if _is_proxy_blocked(code, err_msg):
+        return False, code, f"proxy_blocked: {err_msg[:240]}"
     return False, code, err_msg
 
 
@@ -5803,8 +6744,16 @@ async def admin_verify_keys(
         "groq_keys": list(settings.get("groq_keys") or []),
         "gemini_keys": list(settings.get("gemini_keys") or []),
         "lmarena_keys": list(settings.get("lmarena_keys") or []),
+        "mimo_keys": list(settings.get("mimo_keys") or []),
+        "kimi_keys": list(settings.get("kimi_keys") or []),
+        "openmodel_keys": list(settings.get("openmodel_keys") or []),
         "brave_keys": list(settings.get("brave_keys") or []),
         "tavily_keys": list(settings.get("tavily_keys") or []),
+        "serpapi_keys": list(settings.get("serpapi_keys") or []),
+        "apify_keys": list(settings.get("apify_keys") or []),
+        "brightdata_keys": list(settings.get("brightdata_keys") or []),
+        "omkar_keys": list(settings.get("omkar_keys") or []),
+        "scrapingbee_keys": list(settings.get("scrapingbee_keys") or []),
     }
     if settings.get("gemini_api_key"):
         providers_map["gemini_keys"].append(str(settings["gemini_api_key"]))
@@ -5920,6 +6869,11 @@ async def admin_environment_report(
         "gemini_slots": _count_gemini_slots(swoop_settings),
         "brave_keys": len(list(swoop_settings.get("brave_keys") or [])),
         "tavily_keys": len(list(swoop_settings.get("tavily_keys") or [])),
+        "serpapi_keys": len(list(swoop_settings.get("serpapi_keys") or [])),
+        "apify_keys": len(list(swoop_settings.get("apify_keys") or [])),
+        "brightdata_keys": len(list(swoop_settings.get("brightdata_keys") or [])),
+        "omkar_keys": len(list(swoop_settings.get("omkar_keys") or [])),
+        "scrapingbee_keys": len(list(swoop_settings.get("scrapingbee_keys") or [])),
         "api_key_groups_keys": len(list(swoop_settings.get("api_key_groups_keys") or [])),
     }
 
@@ -6304,6 +7258,7 @@ async def create_scrape_job(body: ScrapeRequest, request: Request, x_api_key: st
             conn.close()
 
     job_id = str(uuid.uuid4())
+    job_type = "batch" if is_batch else ("crawl" if is_crawl else "single")
     job_data = {
         "id": job_id,
         "url": body.url,
@@ -6319,6 +7274,10 @@ async def create_scrape_job(body: ScrapeRequest, request: Request, x_api_key: st
         "is_crawl": is_crawl,
         "crawl_depth": body.crawl_depth or 0,
         "crawl_max_pages": body.max_pages or 20,
+        # Worker-facing fields (canonical schema)
+        "job_type": job_type,
+        "urls": body.urls if is_batch else None,
+        "max_pages": body.max_pages or 20,
         "template_id": template_id,
     }
 
@@ -6403,7 +7362,11 @@ async def download_result(job_id: str, request: Request, x_api_key: str = Header
 
     result_path = row.get("result_path")
     if result_path:
-        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_url = (
+            os.environ.get("SUPABASE_URL")
+            or os.environ.get("SUPABASE_PUBLIC_URL")
+            or "https://swoop.autoro.tech/supabase"
+        ).rstrip("/")
         download_url = f"{supabase_url}/storage/v1/object/public/user_uploads/{result_path}"
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url=download_url)
@@ -9436,6 +10399,115 @@ async def web_search(
     }
 
 
+@app.post("/api/v1/web/search/serpapi")
+async def serpapi_web_search_endpoint(
+    payload: SerpApiSearchPayload,
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """SerpApi SERP with per-request engine (google/yandex/bing/duckduckgo) and RU geo defaults."""
+    verify_hermes_agent_access(request, x_api_key, authorization)
+    query = payload.query.strip()
+    limit = max(1, min(int(payload.limit or 10), 20))
+    engine = str(payload.engine or "google").strip().lower() or "google"
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("serpapi_keys") or []) if str(k).strip()]
+    if not keys:
+        raise HTTPException(status_code=503, detail="SerpApi keys are not configured in Swoop settings")
+
+    last_error = "empty_or_failed_search"
+    last_code = 502
+    geo = payload.geo if isinstance(payload.geo, dict) else None
+    for key in _iter_keys_with_health("serpapi_keys", keys):
+        result = _serpapi_search_raw(
+            key,
+            query,
+            limit,
+            engine=engine,
+            settings=settings,
+            geo=geo,
+        )
+        if result.get("ok"):
+            _key_health_mark_success("serpapi_keys", key)
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            return {
+                "ok": True,
+                "query": query,
+                "engine": engine,
+                "count": len(items),
+                "items": items,
+                "organic_results": result.get("organic_results") or [],
+                "short_video_results": result.get("short_video_results") or [],
+                "search_information": result.get("search_information"),
+                "search_metadata": result.get("search_metadata"),
+                "serpapi_id": result.get("serpapi_id"),
+                "sourceProvider": "serpapi",
+            }
+        last_error = str(result.get("error") or "empty_or_failed_search")
+        last_code = int(result.get("http_code") or 502)
+        _key_health_mark_failure("serpapi_keys", key, last_code, last_error)
+
+    raise HTTPException(status_code=502, detail=f"SerpApi search failed: {last_error}")
+
+
+@app.post("/api/v1/serpapi/engine")
+async def serpapi_engine_endpoint(
+    payload: SerpApiEnginePayload,
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Proxy arbitrary SerpApi engine + params using serpapi_keys from Swoop Admin → Settings."""
+    verify_hermes_agent_access(request, x_api_key, authorization)
+    engine = str(payload.engine or "google").strip().lower() or "google"
+    params = payload.params if isinstance(payload.params, dict) else {}
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("serpapi_keys") or []) if str(k).strip()]
+    if not keys:
+        raise HTTPException(status_code=503, detail="SerpApi keys are not configured in Swoop settings")
+
+    last_error = "empty_or_failed_search"
+    last_code = 502
+    geo = payload.geo if isinstance(payload.geo, dict) else None
+    for key in _iter_keys_with_health("serpapi_keys", keys):
+        result = _serpapi_engine_search(key, engine, params, geo=geo)
+        if result.get("ok"):
+            _key_health_mark_success("serpapi_keys", key)
+            body = result.get("body") if isinstance(result.get("body"), dict) else {}
+            return {
+                "ok": True,
+                "engine": engine,
+                "body": body,
+                "search_metadata": body.get("search_metadata"),
+                "sourceProvider": "serpapi",
+            }
+        last_error = str(result.get("error") or "empty_or_failed_search")
+        last_code = int(result.get("http_code") or 502)
+        _key_health_mark_failure("serpapi_keys", key, last_code, last_error)
+
+    raise HTTPException(status_code=502, detail=f"SerpApi engine search failed: {last_error}")
+
+
+@app.get("/api/v1/serpapi/keys")
+async def serpapi_keys_for_agent(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Return SerpApi key pool for authenticated agent-api clients (scripts on trusted hosts)."""
+    verify_hermes_agent_access(request, x_api_key, authorization)
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("serpapi_keys") or []) if str(k).strip()]
+    return {
+        "ok": bool(keys),
+        "count": len(keys),
+        "keys": keys,
+        "default_engine": _resolve_serpapi_engine(settings),
+        "source": "swoop:serpapi_keys",
+    }
+
+
 @app.post("/api/v1/vision/analyze")
 async def vision_analyze(
     payload: VisionAnalyzePayload,
@@ -9482,6 +10554,66 @@ async def media_transcribe(
     from hermes_media import transcribe_media_url
 
     return transcribe_media_url(payload.media_url, language=payload.language)
+
+
+@app.post("/api/v1/media/transcribe-upload")
+async def media_transcribe_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    language: Optional[str] = Form(default="ru"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Транскрипция загруженного аудио (Whisper; для браузерной записи webm/ogg)."""
+    verify_hermes_agent_access(request, x_api_key, authorization)
+    from hermes_media import transcribe_audio_bytes
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty_file")
+    if len(raw) > 24 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="file_too_large_max_24mb")
+
+    filename = str(file.filename or "audio.webm")
+    mime_type = str(file.content_type or "application/octet-stream")
+    result = transcribe_audio_bytes(
+        raw,
+        filename=filename,
+        mime_type=mime_type,
+        language=(language or "ru").strip() or "ru",
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result.get("error") or "transcription_failed")
+    return result
+
+
+@app.post("/api/v1/media/speech")
+async def media_speech(
+    payload: MediaSpeechPayload,
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+):
+    """Синтез речи (OpenAI TTS через openai_keys в Swoop). Возвращает audio/mpeg."""
+    verify_hermes_agent_access(request, x_api_key, authorization)
+    from hermes_media import synthesize_speech
+
+    result = synthesize_speech(
+        payload.text,
+        voice=payload.voice or "nova",
+        model=payload.model or "tts-1",
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=503, detail=result.get("error") or "tts_failed")
+    return Response(
+        content=result["audio_bytes"],
+        media_type=str(result.get("content_type") or "audio/mpeg"),
+        headers={
+            "X-TTS-Provider": str(result.get("provider") or "openai"),
+            "X-TTS-Model": str(result.get("model") or "tts-1"),
+            "X-TTS-Voice": str(result.get("voice") or "nova"),
+        },
+    )
 
 
 @app.post("/api/v1/bookmarks/ai-recommend")

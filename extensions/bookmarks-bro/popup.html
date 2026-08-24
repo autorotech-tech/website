@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <title>Keep It For Me</title>
@@ -62,15 +62,16 @@
   <body>
     <h1>Keep It For Me</h1>
     <p class="hint" id="buildHint"></p>
-    <p class="hint" id="authHint">Loading...</p>
-    <button type="button" id="syncBtn" class="sync-primary">Sync</button>
+    <p class="hint" id="authHint">Загрузка…</p>
+    <button type="button" id="syncBtn" class="sync-primary">Sync → Vector + Obsidian</button>
+    <p class="hint">Закладки → enrich → embedding → Unified KB → заметка в Obsidian vault.</p>
     <div class="search-wrap">
-      <input id="aiTaskInput" type="text" placeholder="AI Search: what to find?" />
+      <input id="aiTaskInput" type="text" placeholder="AI-поиск: что найти?" />
       <button id="aiSearchBtn">AI Search</button>
     </div>
     <div class="row">
       <select id="searchModeSelect" style="width:100%; min-height:40px; border:1px solid #d1d5db; border-radius:8px; padding:8px; font-size:12px; color:#0f172a; background:#fff;">
-        <option value="bookmarks">Search my bookmarks</option>
+        <option value="bookmarks">Поиск по закладкам</option>
         <option value="web_research">Web Research</option>
       </select>
     </div>
@@ -79,14 +80,14 @@
       <button type="button" id="libraryBtn" class="outline-btn">Library</button>
     </div>
     <div class="row">
-      <button type="button" id="settingsBtn" class="link-btn">Settings</button>
+      <button type="button" id="settingsBtn" class="link-btn">Настройки</button>
     </div>
     <div class="row">
-      <button type="button" id="statusBtn">Job status</button>
+      <button type="button" id="statusBtn">Статус job</button>
     </div>
     <div class="muted">
-      Last Job: <span id="lastJob">—</span><br/>
-      Last Sync: <span id="lastSync">—</span>
+      Последний job: <span id="lastJob">—</span><br/>
+      Последняя синхронизация: <span id="lastSync">—</span>
     </div>
     <div id="status"></div>
     <script src="extension-config.js"></script>

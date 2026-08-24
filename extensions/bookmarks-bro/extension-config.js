@@ -3,7 +3,7 @@
  * Load via <script> in pages or importScripts() in the service worker.
  */
 const BB_EXTENSION = {
-  build: '0.1.1-testing',
+  build: '0.1.3-testing',
   apiBaseDefault: 'https://swoop.autoro.tech',
   supabaseAuthPathDefault: '/bb-supabase',
   workspaceIdFallback: '1',

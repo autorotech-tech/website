@@ -6,8 +6,10 @@ import {
   buildApiKeyPoolMetaForSave,
   normalizeApiKeyPoolMeta,
   type ApiKeyPoolMeta,
+  type OpenModelAdminStatus,
   type OpenRouterModelMeta,
   type ProviderCatalogs,
+  type SerpApiAdminStatus,
 } from './ProviderApiKeysPanel'
 import { ModelSearchCombobox, buildOpenRouterMetaMap } from './ModelSearchCombobox'
 import { formatAgentApiError } from '../lib/formatAgentApiError'
@@ -36,8 +38,30 @@ interface ServiceSettings {
   lmarena_keys: string[]
   lmarena_base_url: string
   lmarena_default_model: string
+  /** API keys для [Xiaomi MiMo](https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call) (OpenAI-compatible). */
+  mimo_keys: string[]
+  mimo_base_url: string
+  mimo_default_model: string
+  /** API keys для [Kimi (Moonshot)](https://platform.kimi.ai/docs/api/overview). */
+  kimi_keys: string[]
+  kimi_base_url: string
+  kimi_default_model: string
+  /** API keys для [OpenModel](https://console.openmodel.ai/) (om-…, multi-provider gateway). */
+  openmodel_keys: string[]
+  openmodel_base_url: string
+  openmodel_default_model: string
   brave_keys: string[]
   tavily_keys: string[]
+  serpapi_keys: string[]
+  serpapi_default_engine: string
+  apify_keys: string[]
+  apify_default_actor: string
+  brightdata_keys: string[]
+  brightdata_zone: string
+  brightdata_base_url: string
+  omkar_keys: string[]
+  omkar_base_url: string
+  scrapingbee_keys: string[]
   api_key_groups: ApiKeyGroup[]
   /** jsonb: цепочки LLM для Bookmarks Bro (см. agent-api agent_llm_routing). */
   agent_llm_routing?: Record<string, unknown>
@@ -192,8 +216,27 @@ export function AdminSettings() {
     lmarena_keys: [],
     lmarena_base_url: '',
     lmarena_default_model: '',
+    mimo_keys: [],
+    mimo_base_url: '',
+    mimo_default_model: 'mimo-v2.5-pro',
+    kimi_keys: [],
+    kimi_base_url: '',
+    kimi_default_model: 'kimi-k2-turbo-preview',
+    openmodel_keys: [],
+    openmodel_base_url: '',
+    openmodel_default_model: 'deepseek-v4-flash',
     brave_keys: [],
     tavily_keys: [],
+    serpapi_keys: [],
+    serpapi_default_engine: 'google',
+    apify_keys: [],
+    apify_default_actor: 'compass/crawler-google-places',
+    brightdata_keys: [],
+    brightdata_zone: '',
+    brightdata_base_url: 'https://api.brightdata.com',
+    omkar_keys: [],
+    omkar_base_url: '',
+    scrapingbee_keys: [],
     api_key_groups: [],
     telegram_gateway_routing_enabled: false,
     telegram_n8n_assistant_webhook_url: '',
@@ -214,6 +257,12 @@ export function AdminSettings() {
   const [openrouterMeta, setOpenrouterMeta] = useState<OpenRouterModelMeta[]>([])
   const [openrouterCatalogLoading, setOpenrouterCatalogLoading] = useState(false)
   const [openrouterCatalogError, setOpenrouterCatalogError] = useState<string | null>(null)
+  const [openmodelStatus, setOpenmodelStatus] = useState<OpenModelAdminStatus | null>(null)
+  const [openmodelStatusLoading, setOpenmodelStatusLoading] = useState(false)
+  const [openmodelStatusError, setOpenmodelStatusError] = useState<string | null>(null)
+  const [serpapiStatus, setSerpapiStatus] = useState<SerpApiAdminStatus | null>(null)
+  const [serpapiStatusLoading, setSerpapiStatusLoading] = useState(false)
+  const [serpapiStatusError, setSerpapiStatusError] = useState<string | null>(null)
   const [verifyingKeys, setVerifyingKeys] = useState(false)
   const [llmRoutingDraft, setLlmRoutingDraft] = useState(() => JSON.stringify(DEFAULT_AGENT_LLM_ROUTING, null, 2))
   const openrouterMetaById = useMemo(() => buildOpenRouterMetaMap(openrouterMeta), [openrouterMeta])
@@ -346,8 +395,85 @@ export function AdminSettings() {
     await fetchOpenRouterCatalog(key)
   }
 
+  const fetchOpenModelStatus = async (apiKey: string) => {
+    const key = String(apiKey || '').trim()
+    if (!key) {
+      setOpenmodelStatus(null)
+      setOpenmodelStatusError(null)
+      return
+    }
+    setOpenmodelStatusLoading(true)
+    setOpenmodelStatusError(null)
+    try {
+      const resp = await fetch('/api/v1/admin/openmodel/status', {
+        headers: { 'X-API-Key': key },
+      })
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => '')
+        throw new Error(formatAgentApiError(detail, resp.status))
+      }
+      const body = (await resp.json()) as OpenModelAdminStatus & {
+        model_ids?: string[]
+        models_total?: number
+      }
+      setOpenmodelStatus(body)
+      if (Array.isArray(body.model_ids) && body.model_ids.length) {
+        setModelCatalogs((prev) => ({
+          ...prev,
+          openmodel: body.model_ids as string[],
+        }))
+      }
+      if (
+        body.configured &&
+        body.balance_ok === false &&
+        body.balance_error &&
+        !body.balance_requires_console
+      ) {
+        setOpenmodelStatusError(`Баланс: ${body.balance_error}`)
+      }
+    } catch (e: unknown) {
+      setOpenmodelStatusError(e instanceof Error ? e.message : 'Не удалось загрузить статус OpenModel')
+    } finally {
+      setOpenmodelStatusLoading(false)
+    }
+  }
+
+  const fetchSerpapiStatus = async (apiKey: string) => {
+    const key = String(apiKey || '').trim()
+    if (!key) {
+      setSerpapiStatus(null)
+      setSerpapiStatusError(null)
+      return
+    }
+    setSerpapiStatusLoading(true)
+    setSerpapiStatusError(null)
+    try {
+      const resp = await fetch('/api/v1/admin/serpapi/status', {
+        headers: { 'X-API-Key': key },
+      })
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => '')
+        throw new Error(formatAgentApiError(detail, resp.status))
+      }
+      const body = (await resp.json()) as SerpApiAdminStatus
+      setSerpapiStatus(body)
+      if (body.configured && body.account_ok === false && body.account_error) {
+        setSerpapiStatusError(`Account: ${body.account_error}`)
+      }
+    } catch (e: unknown) {
+      setSerpapiStatusError(e instanceof Error ? e.message : 'Не удалось загрузить статус SerpApi')
+    } finally {
+      setSerpapiStatusLoading(false)
+    }
+  }
+
   const refreshAdminKeyInsights = async (apiKey: string) => {
-    await Promise.all([fetchKeyHealth(apiKey), fetchProviderCatalogs(apiKey)])
+    await Promise.all([
+      fetchKeyHealth(apiKey),
+      fetchProviderCatalogs(apiKey),
+      fetchOpenModelStatus(apiKey),
+      fetchSerpapiStatus(apiKey),
+    ])
   }
 
   const verifyAllApiKeys = async () => {
@@ -411,8 +537,27 @@ export function AdminSettings() {
           lmarena_keys: (data.lmarena_keys || []).filter((k: string) => k && k.trim()),
           lmarena_base_url: String((data as Record<string, unknown>).lmarena_base_url || '').trim(),
           lmarena_default_model: String((data as Record<string, unknown>).lmarena_default_model || '').trim(),
+          mimo_keys: ((data as Record<string, unknown>).mimo_keys as string[] || []).filter((k: string) => k && k.trim()),
+          mimo_base_url: String((data as Record<string, unknown>).mimo_base_url || '').trim(),
+          mimo_default_model: String((data as Record<string, unknown>).mimo_default_model || 'mimo-v2.5-pro').trim(),
+          kimi_keys: ((data as Record<string, unknown>).kimi_keys as string[] || []).filter((k: string) => k && k.trim()),
+          kimi_base_url: String((data as Record<string, unknown>).kimi_base_url || '').trim(),
+          kimi_default_model: String((data as Record<string, unknown>).kimi_default_model || 'kimi-k2-turbo-preview').trim(),
+          openmodel_keys: ((data as Record<string, unknown>).openmodel_keys as string[] || []).filter((k: string) => k && k.trim()),
+          openmodel_base_url: String((data as Record<string, unknown>).openmodel_base_url || '').trim(),
+          openmodel_default_model: String((data as Record<string, unknown>).openmodel_default_model || 'deepseek-v4-flash').trim(),
           brave_keys: (data.brave_keys || []).filter((k: string) => k && k.trim()),
           tavily_keys: (data.tavily_keys || []).filter((k: string) => k && k.trim()),
+          serpapi_keys: ((data as Record<string, unknown>).serpapi_keys as string[] || []).filter((k: string) => k && k.trim()),
+          serpapi_default_engine: String((data as Record<string, unknown>).serpapi_default_engine || 'google').trim() || 'google',
+          apify_keys: ((data as Record<string, unknown>).apify_keys as string[] || []).filter((k: string) => k && k.trim()),
+          apify_default_actor: String((data as Record<string, unknown>).apify_default_actor || 'compass/crawler-google-places').trim(),
+          brightdata_keys: ((data as Record<string, unknown>).brightdata_keys as string[] || []).filter((k: string) => k && k.trim()),
+          brightdata_zone: String((data as Record<string, unknown>).brightdata_zone || '').trim(),
+          brightdata_base_url: String((data as Record<string, unknown>).brightdata_base_url || 'https://api.brightdata.com').trim(),
+          omkar_keys: ((data as Record<string, unknown>).omkar_keys as string[] || []).filter((k: string) => k && k.trim()),
+          omkar_base_url: String((data as Record<string, unknown>).omkar_base_url || '').trim(),
+          scrapingbee_keys: ((data as Record<string, unknown>).scrapingbee_keys as string[] || []).filter((k: string) => k && k.trim()),
           api_key_groups: parseApiKeyGroups((data as Record<string, unknown>).api_key_groups),
           telegram_gateway_routing_enabled: Boolean((data as Record<string, unknown>).telegram_gateway_routing_enabled),
           telegram_n8n_assistant_webhook_url: String(
@@ -633,6 +778,14 @@ export function AdminSettings() {
           openrouterCatalogLoading={openrouterCatalogLoading}
           openrouterCatalogError={openrouterCatalogError}
           onRefreshOpenrouterCatalog={() => void refreshOpenRouterCatalog(settings.agent_api_key || '', true)}
+          openmodelStatus={openmodelStatus}
+          openmodelStatusLoading={openmodelStatusLoading}
+          openmodelStatusError={openmodelStatusError}
+          onRefreshOpenmodelStatus={() => void fetchOpenModelStatus(settings.agent_api_key || '')}
+          serpapiStatus={serpapiStatus}
+          serpapiStatusLoading={serpapiStatusLoading}
+          serpapiStatusError={serpapiStatusError}
+          onRefreshSerpapiStatus={() => void fetchSerpapiStatus(settings.agent_api_key || '')}
           onSettingsChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onMetaChange={(api_key_pool_meta) => setSettings((s) => ({ ...s, api_key_pool_meta }))}
           onCopy={copyToClipboard}
@@ -817,8 +970,27 @@ export function AdminSettings() {
                 lmarena_keys: settings.lmarena_keys,
                 lmarena_base_url: settings.lmarena_base_url.trim(),
                 lmarena_default_model: settings.lmarena_default_model.trim(),
+                mimo_keys: settings.mimo_keys,
+                mimo_base_url: settings.mimo_base_url.trim(),
+                mimo_default_model: settings.mimo_default_model.trim(),
+                kimi_keys: settings.kimi_keys,
+                kimi_base_url: settings.kimi_base_url.trim(),
+                kimi_default_model: settings.kimi_default_model.trim(),
+                openmodel_keys: settings.openmodel_keys,
+                openmodel_base_url: settings.openmodel_base_url.trim(),
+                openmodel_default_model: settings.openmodel_default_model.trim(),
                 brave_keys: settings.brave_keys,
                 tavily_keys: settings.tavily_keys,
+                serpapi_keys: settings.serpapi_keys,
+                serpapi_default_engine: settings.serpapi_default_engine.trim() || 'google',
+                apify_keys: settings.apify_keys,
+                apify_default_actor: settings.apify_default_actor.trim() || 'compass/crawler-google-places',
+                brightdata_keys: settings.brightdata_keys,
+                brightdata_zone: settings.brightdata_zone.trim(),
+                brightdata_base_url: settings.brightdata_base_url.trim() || 'https://api.brightdata.com',
+                omkar_keys: settings.omkar_keys,
+                omkar_base_url: settings.omkar_base_url.trim(),
+                scrapingbee_keys: settings.scrapingbee_keys,
                 api_key_pool_meta: buildApiKeyPoolMetaForSave(
                   settings,
                   settings.api_key_pool_meta || {},
@@ -847,6 +1019,11 @@ export function AdminSettings() {
         <p className="text-xs text-gray-500">
           Public scraping API without user account. You can share it with clients or publish it on marketplaces.
           Authentication is done via API key in the <code className="bg-gray-100 px-1 rounded">X-API-Key</code> header.
+          Сервисный ключ ниже - для ops/n8n. Персональные ключи пользователей:{" "}
+          <a href="/settings" className="text-blue-700 underline">
+            /settings
+          </a>{" "}
+          (формат <code className="bg-gray-100 px-1 rounded">auk_…</code>).
         </p>
         <p className="text-xs text-gray-600 border-l-2 border-violet-300 pl-2">
           Один ключ ниже — для всех вызовов agent API (скрейпинг, закладки, LLM-обогащение). Маршрутизация JSON-LLM к

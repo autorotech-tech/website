@@ -24,6 +24,7 @@ def _catalog_msg(fmt: str, *args: Any) -> None:
 
 
 MAX_MODELS_PER_PROVIDER = 20
+MAX_OPENMODEL_MODELS = 128
 HTTP_TIMEOUT = 25
 _CATALOG_CACHE_TTL_SEC = 900.0
 _CATALOG_CACHE: Dict[str, Any] = {"ts": 0.0, "catalogs": None}
@@ -405,6 +406,67 @@ def fetch_lmarena_models(api_key: str, base_url: str) -> List[str]:
     return models[:MAX_MODELS_PER_PROVIDER]
 
 
+def fetch_mimo_models(api_key: str, base_url: str) -> List[str]:
+    key = (api_key or "").strip()
+    base = (base_url or "").strip().rstrip("/") or "https://api.xiaomimimo.com/v1"
+    if not key:
+        return []
+    code, body = _http_get_json(
+        f"{base}/models",
+        headers={"api-key": key, "Accept": "application/json"},
+    )
+    if code != 200 or not isinstance(body, dict):
+        return []
+    models: List[str] = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            models.append(mid)
+    models.sort(reverse=True)
+    return models[:MAX_MODELS_PER_PROVIDER]
+
+
+def fetch_openmodel_model_ids(api_key: str, settings: Dict[str, Any]) -> List[str]:
+    key = (api_key or "").strip()
+    if not key:
+        return []
+    try:
+        from swoop_openmodel import fetch_openmodel_models
+    except ImportError:
+        return []
+    items = fetch_openmodel_models(key, settings)
+    models: List[str] = []
+    for item in items:
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            models.append(mid)
+    return models[:MAX_OPENMODEL_MODELS]
+
+
+def fetch_kimi_models(api_key: str, base_url: str) -> List[str]:
+    key = (api_key or "").strip()
+    base = (base_url or "").strip().rstrip("/") or "https://api.moonshot.ai/v1"
+    if not key:
+        return []
+    code, body = _http_get_json(
+        f"{base}/models",
+        headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+    )
+    if code != 200 or not isinstance(body, dict):
+        return []
+    models: List[str] = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            models.append(mid)
+    models.sort(reverse=True)
+    return models[:MAX_MODELS_PER_PROVIDER]
+
+
 def _catalog_vals_from_swoop_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "GEMINI": list(settings.get("gemini_keys") or []),
@@ -416,6 +478,12 @@ def _catalog_vals_from_swoop_settings(settings: Dict[str, Any]) -> Dict[str, Any
         "OPENAI": list(settings.get("openai_keys") or []),
         "LMARENA": list(settings.get("lmarena_keys") or []),
         "LMARENA_BASE": str(settings.get("lmarena_base_url") or "").strip(),
+        "MIMO": list(settings.get("mimo_keys") or []),
+        "MIMO_BASE": str(settings.get("mimo_base_url") or "").strip(),
+        "KIMI": list(settings.get("kimi_keys") or []),
+        "KIMI_BASE": str(settings.get("kimi_base_url") or "").strip(),
+        "OPENMODEL": list(settings.get("openmodel_keys") or []),
+        "OPENMODEL_BASE": str(settings.get("openmodel_base_url") or "").strip(),
     }
 
 
@@ -476,6 +544,28 @@ def collect_live_provider_models(vals: Dict[str, Any]) -> Dict[str, List[str]]:
         if live:
             out["lmarena"] = live
             _catalog_msg("catalog: lmarena %s models (e.g. %s)", len(live), live[0])
+
+    mimo_key = _first_key(vals.get("MIMO"))
+    if mimo_key:
+        live = fetch_mimo_models(mimo_key, str(vals.get("MIMO_BASE") or ""))
+        if live:
+            out["mimo"] = live
+            _catalog_msg("catalog: mimo %s models (e.g. %s)", len(live), live[0])
+
+    kimi_key = _first_key(vals.get("KIMI"))
+    if kimi_key:
+        live = fetch_kimi_models(kimi_key, str(vals.get("KIMI_BASE") or ""))
+        if live:
+            out["kimi"] = live
+            _catalog_msg("catalog: kimi %s models (e.g. %s)", len(live), live[0])
+
+    om_key = _first_key(vals.get("OPENMODEL"))
+    if om_key:
+        om_settings = {"openmodel_base_url": str(vals.get("OPENMODEL_BASE") or "").strip()}
+        live = fetch_openmodel_model_ids(om_key, om_settings)
+        if live:
+            out["openmodel"] = live
+            _catalog_msg("catalog: openmodel %s models (e.g. %s)", len(live), live[0])
 
     return out
 
@@ -561,6 +651,12 @@ def _static_fallback(provider: str, settings: Dict[str, Any]) -> str:
         return str(settings.get("openrouter_qwen_model") or "").strip() or "qwen/qwen3.6-plus-preview:free"
     if prov == "lmarena":
         return str(settings.get("lmarena_default_model") or "").strip()
+    if prov == "mimo":
+        return str(settings.get("mimo_default_model") or "").strip() or "mimo-v2.5-pro"
+    if prov == "kimi":
+        return str(settings.get("kimi_default_model") or "").strip() or "kimi-k2-turbo-preview"
+    if prov == "openmodel":
+        return str(settings.get("openmodel_default_model") or "").strip() or "deepseek-v4-flash"
     env_key, default = _PROVIDER_ENV_FALLBACK.get(prov, ("", ""))
     if env_key:
         return os.environ.get(env_key, default).strip() or default
@@ -668,6 +764,9 @@ def build_openai_models_list(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         str(settings.get("openrouter_default_model") or "").strip(),
         str(settings.get("openrouter_qwen_model") or "").strip(),
         str(settings.get("lmarena_default_model") or "").strip(),
+        str(settings.get("mimo_default_model") or "").strip(),
+        str(settings.get("kimi_default_model") or "").strip(),
+        str(settings.get("openmodel_default_model") or "").strip(),
     ]
     for mid in pinned:
         if mid and mid not in seen:

@@ -70,6 +70,7 @@ npm run ai-engineering-coach:install  # autorotech-tech/AI-Engineering-Coach →
 | Новый/рефакторинг UI-компонентов            | `modern-web-guidance`, `frontend-design`, `frontend-dev-guidelines`, `refero-cursor-warm-ivory` + `DESIGN.md` |
 | A11y, dialog/popover, формы, CWV (LCP/INP)  | `modern-web-guidance` (обязательно search + retrieve перед кодом) |
 | E2E браузер, стабильные тесты               | `playwright-skill`, при необходимости `playwright-skill-lackeyjb`                 |
+| Table-driven регистрации / reverse links / Playwright+mousecrack | `browser-ops` (`tools/browser-ops/`; skill `.cursor/skills/browser-ops`) |
 | Многофазный сценарий (план → сборка → тест) | `antigravity-workflows`                                                           |
 | Автономный end-to-end build (план → фазы → аудит) | `supergoal` (после `npm run supergoal-skills:install`); slash `/supergoal`      |
 | Коучинг agentic workflow, anti-patterns, prompt quality | `ai-engineering-coach` (после `npm run ai-engineering-coach:install`); slash `/ai-engineering-coach`; дашборд — Command Palette → AI Engineer Coach |

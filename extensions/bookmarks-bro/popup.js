@@ -180,8 +180,8 @@ async function updateAuthHint() {
   const loggedIn = Boolean(saved.userAccessToken?.trim?.());
   if (authHintEl) {
     authHintEl.textContent = loggedIn
-      ? `Account: ${String(saved.userEmail || 'signed in')}`
-      : 'Not signed in. Sync will open the authorization window.';
+      ? `Аккаунт: ${String(saved.userEmail || 'вход выполнен')}`
+      : 'Не авторизован. Sync откроет окно входа.';
   }
   syncBtn.disabled = false;
   statusBtn.disabled = false;
@@ -349,22 +349,22 @@ async function syncBookmarks() {
 
   if (!saved.userAccessToken || !String(saved.userAccessToken).trim()) {
     openAuthPopupWindow();
-    setStatus('Please open the login window, authenticate, then click Sync again.');
+    setStatus('Откройте окно входа, авторизуйтесь и нажмите Sync снова.');
     return;
   }
 
   if (!apiBase || !workspaceId || !profileId) {
-    setStatus('Not configured. Open Settings and provide workspace/profile.');
+    setStatus('Не настроено. Откройте Настройки и укажите workspace/profile.');
     return;
   }
 
   syncBtn.disabled = true;
-  setStatus('Collecting bookmarks...');
+  setStatus('Сбор закладок…');
 
   try {
     const tree = await chrome.bookmarks.getTree();
     const bookmarks = flattenBookmarks(tree);
-    setStatus(`Found ${bookmarks.length} bookmarks. Sending...`);
+    setStatus(`Найдено ${bookmarks.length} закладок. Отправка…`);
 
     const headers = await getAuthorizedHeaders(apiBase);
     const syncData = await fetchAgentJson(`${apiBase}/api/v1/bookmarks/sync/start`, {
@@ -383,7 +383,7 @@ async function syncBookmarks() {
 
     await saveSyncMeta({ jobId: syncData.jobId, syncedAt: new Date().toISOString() });
     setStatus(
-      `Sync started.\nJob ID: ${syncData.jobId}\nAccepted: ${syncData.accepted}\nDeduplicated: ${syncData.deduplicated}\nProcessing...`,
+      `Sync запущен.\nJob: ${syncData.jobId}\nПринято: ${syncData.accepted}, дубликаты: ${syncData.deduplicated}\nОбработка (worker → enrich → vector → Obsidian)…`,
     );
 
     await chrome.runtime.sendMessage({
@@ -394,17 +394,17 @@ async function syncBookmarks() {
     });
     if (Number(syncData.accepted || 0) > 0) {
       setStatus(
-        `Sync started.\nJob: ${syncData.jobId}\nAccepted: ${syncData.accepted}, duplicates: ${syncData.deduplicated}\nProcessing in background (you can close popup).`,
+        `Sync запущен.\nJob: ${syncData.jobId}\nПринято: ${syncData.accepted}, дубликаты: ${syncData.deduplicated}\nФоновая обработка (можно закрыть popup).`,
       );
     } else {
       await chrome.runtime.sendMessage({ type: 'bookmarksBro:clearActiveJob' });
       setStatus(
-        `Sync complete (no new bookmarks).\nJob: ${syncData.jobId}\nAccepted: ${syncData.accepted}, dedup: ${syncData.deduplicated}.`,
+        `Sync завершён (новых закладок нет).\nJob: ${syncData.jobId}\nПринято: ${syncData.accepted}, дубликаты: ${syncData.deduplicated}.`,
       );
     }
     await updateAuthHint();
   } catch (err) {
-    setStatus(`Sync failed: ${err.message || err}`);
+    setStatus(`Ошибка sync: ${err.message || err}`);
   } finally {
     syncBtn.disabled = false;
   }
@@ -444,19 +444,19 @@ function parseOverviewToPicks(overview) {
 async function aiSearchBookmarks() {
   const query = (aiTaskInput?.value || '').trim();
   if (query.length < 5) {
-    setStatus('Enter an AI Search query (minimum 5 characters).');
+    setStatus('Введите запрос AI-поиска (минимум 5 символов).');
     return;
   }
   const saved = await chrome.storage.local.get(['apiBase', 'workspaceId']);
   const apiBase = (saved.apiBase || DEFAULTS.apiBase).trim().replace(/\/$/, '');
   const workspaceId = (saved.workspaceId || DEFAULTS.workspaceId).trim();
   if (!apiBase || !workspaceId) {
-    setStatus('API Base or Workspace ID not configured.');
+    setStatus('Не заданы API Base или Workspace ID.');
     return;
   }
 
   aiSearchBtn.disabled = true;
-  setStatus('AI Searching...');
+  setStatus('AI-поиск…');
   try {
     const searchMode = String(searchModeSelect?.value || DEFAULTS.searchMode);
     await chrome.storage.local.set({ searchMode });
@@ -481,7 +481,7 @@ async function aiSearchBookmarks() {
     }
 
     if (!picks.length) {
-      setStatus(`AI search:\n${result?.overview || 'No recommendations yet. Start Sync and wait for enrichment.'}`);
+      setStatus(`AI-поиск:\n${result?.overview || 'Пока нет рекомендаций. Запустите Sync и дождитесь enrich.'}`);
       return;
     }
 
@@ -491,9 +491,9 @@ async function aiSearchBookmarks() {
       candidateCount: result?.candidateCount || picks.length,
       picks,
     });
-    setStatus('AI search complete — results tab opened.');
+    setStatus('AI-поиск завершён — открыта вкладка результатов.');
   } catch (err) {
-    setStatus(`AI search failed: ${err.message || err}`);
+    setStatus(`Ошибка AI-поиска: ${err.message || err}`);
   } finally {
     aiSearchBtn.disabled = false;
   }
@@ -504,22 +504,22 @@ async function refreshJobStatus() {
   const apiBase = (saved.apiBase || DEFAULTS.apiBase).trim().replace(/\/$/, '');
   const jobId = currentJobId || (await chrome.storage.local.get(['lastJobId'])).lastJobId;
   if (!apiBase || !jobId) {
-    setStatus('Missing apiBase or last Job ID.');
+    setStatus('Не заданы apiBase или последний Job ID.');
     return;
   }
 
   statusBtn.disabled = true;
-  setStatus('Loading job status...');
+  setStatus('Загрузка статуса job…');
   try {
     const headers = await getAuthorizedHeaders(apiBase);
     const data = await fetchAgentJson(`${apiBase}/api/v1/bookmarks/sync/jobs/${jobId}`, {
       headers: { Authorization: headers.Authorization },
     });
     setStatus(
-      `Job ${jobId}: ${data.status}\nProcessed: ${data.processedItems}/${data.totalItems}\nFailed: ${data.failedItems}\nFinished: ${formatDate(data.finishedAt)}`,
+      `Job ${jobId}: ${data.status}\nОбработано: ${data.processedItems}/${data.totalItems}\nОшибки: ${data.failedItems}\nЗавершён: ${formatDate(data.finishedAt)}`,
     );
   } catch (err) {
-    setStatus(`Status check failed: ${err.message || err}`);
+    setStatus(`Ошибка статуса: ${err.message || err}`);
   } finally {
     statusBtn.disabled = false;
   }
@@ -591,6 +591,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 loadSettings()
   .then(() => updateAuthHint())
   .then(() => {
-    setStatus('Click Sync to upload bookmarks or use AI Search.');
+    setStatus('Нажмите Sync для загрузки закладок или используйте AI Search.');
   })
-  .catch((err) => setStatus(`Init failed: ${err.message || err}`));
+  .catch((err) => setStatus(`Ошибка инициализации: ${err.message || err}`));

@@ -38,6 +38,9 @@ const PROVIDER_OPTIONS: Array<{ id: string; label: string; catalogKey?: string }
   { id: 'glm', label: 'GLM (BigModel)', catalogKey: 'glm' },
   { id: 'gemini', label: 'Gemini', catalogKey: 'gemini' },
   { id: 'lmarena', label: 'LMArena Bridge', catalogKey: 'lmarena' },
+  { id: 'mimo', label: 'Xiaomi MiMo', catalogKey: 'mimo' },
+  { id: 'kimi', label: 'Kimi (Moonshot)', catalogKey: 'kimi' },
+  { id: 'openmodel', label: 'OpenModel', catalogKey: 'openmodel' },
 ]
 
 const TIER_OPTIONS: Array<{ id: string; label: string }> = [

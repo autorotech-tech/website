@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { LogOut, Settings, Menu, X, BarChart3, MessageSquareText, FileText, Share2, Search, Cog, Zap, ExternalLink, Link2, PanelsTopLeft, Bookmark, NotebookPen, Globe2 } from 'lucide-react'
+import { LogOut, Menu, X, BarChart3, MessageSquareText, FileText, Share2, Search, Cog, Zap, ExternalLink, Link2, PanelsTopLeft, Bookmark, NotebookPen, Globe2, Mic, KeyRound } from 'lucide-react'
 
 export function Layout() {
   const navigate = useNavigate()
@@ -53,6 +53,7 @@ export function Layout() {
       { icon: BarChart3, label: 'Marketing Audit', path: '/' }, // Default to tasks
       { icon: MessageSquareText, label: 'Chat Agent', path: '/chat-agent' },
       { icon: NotebookPen, label: 'Assistant Memory', path: '/assistant-memory' },
+      { icon: Mic, label: 'Voice Recruiter', path: '/voice-recruiter' },
     ]
 
   const adminItems = [
@@ -67,9 +68,11 @@ export function Layout() {
     { icon: Link2, label: 'Ad Spots', path: '/admin/spots' },
     { icon: PanelsTopLeft, label: 'Landings', path: '/admin/landings' },
     { icon: Bookmark, label: 'Bookmarks Bro', path: '/admin/bookmarks-bro' },
+    { icon: Mic, label: 'Voice Recruiter', path: '/voice-recruiter' },
     { icon: ExternalLink, label: 'DeerFlow (Research)', externalUrl: deerflowUrl },
     { icon: Search, label: 'Perplexica AI', path: '/admin/perplexica' },
     { icon: Cog, label: 'Settings', path: '/admin/settings' },
+    { icon: KeyRound, label: 'My API Keys', path: '/settings' },
   ]
 
   return (
@@ -153,8 +156,8 @@ export function Layout() {
                     : 'hover:bg-slate-800 text-gray-300'
                   }`}
               >
-                <Settings size={20} />
-                {isSidebarOpen && <span className="ml-3">Settings</span>}
+                <KeyRound size={20} />
+                {isSidebarOpen && <span className="ml-3">API Keys</span>}
               </button>
             </>
           )}

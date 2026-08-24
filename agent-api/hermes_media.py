@@ -317,7 +317,7 @@ def _whisper_transcribe_bytes(
     from main import load_swoop_llm_key_settings, _iter_keys_with_health
 
     settings = load_swoop_llm_key_settings()
-    openai_base = "https://api.openai.com/v1"
+    openai_base = _openai_audio_base()
     openai_pool = list(settings.get("openai_keys") or [])
 
     import io
@@ -387,13 +387,24 @@ def transcribe_audio_bytes(
         return {"ok": False, "error": "empty_audio"}
     if len(data) > _MAX_DOWNLOAD_BYTES:
         return {"ok": False, "error": f"audio_too_large_max_{_MAX_DOWNLOAD_BYTES}"}
-    return _whisper_transcribe_bytes(
+    gemini_result = _gemini_transcribe_bytes(
+        data,
+        content_type=mime_type or "application/octet-stream",
+        language=language,
+        source_label="bytes",
+    )
+    if gemini_result.get("ok"):
+        return gemini_result
+    whisper_result = _whisper_transcribe_bytes(
         data,
         filename=filename or "audio.ogg",
         content_type=mime_type or "application/octet-stream",
         language=language,
         source_label="bytes",
     )
+    if whisper_result.get("ok"):
+        return whisper_result
+    return gemini_result if gemini_result.get("error") else whisper_result
 
 
 def transcribe_media_url(
@@ -431,3 +442,265 @@ def transcribe_media_url(
         return result
     result["url"] = raw
     return result
+
+
+def _openai_audio_base() -> str:
+    return os.environ.get("BOOKMARKS_OPENAI_API_BASE", "https://api.openai.com/v1").strip().rstrip("/")
+
+
+_GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+_GEMINI_TTS_DEFAULT_MODEL = "gemini-2.5-flash-preview-tts"
+_GEMINI_STT_MODEL = "gemini-2.0-flash"
+_GEMINI_TTS_VOICES = frozenset(
+    {
+        "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
+        "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+        "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+        "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+        "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+    }
+)
+
+
+def _gemini_media_key_pool(settings: Dict[str, Any]) -> List[str]:
+    from main import _gemini_chat_key_pool
+
+    return list(_gemini_chat_key_pool(settings))
+
+
+def _gemini_transcribe_bytes(
+    data: bytes,
+    *,
+    content_type: str,
+    language: Optional[str] = None,
+    source_label: str = "bytes",
+) -> Dict[str, Any]:
+    from main import load_swoop_llm_key_settings, _iter_keys_with_health
+
+    settings = load_swoop_llm_key_settings()
+    gemini_pool = _gemini_media_key_pool(settings)
+    if not gemini_pool:
+        return {"ok": False, "source": source_label, "error": "no_gemini_keys"}
+
+    mime = (content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
+    lang_hint = (language or "auto").strip()
+    prompt = (
+        "Transcribe the spoken audio accurately. "
+        f"Language hint: {lang_hint}. "
+        "Return only the transcript text, no commentary."
+    )
+    b64 = base64.b64encode(data).decode("ascii")
+    payload = json.dumps(
+        {
+            "contents": [
+                {
+                    "parts": [
+                        {"inline_data": {"mime_type": mime, "data": b64}},
+                        {"text": prompt},
+                    ]
+                }
+            ]
+        }
+    ).encode("utf-8")
+
+    last_error = "no_gemini_keys"
+    for key in _iter_keys_with_health("gemini_pool", gemini_pool):
+        try:
+            url = f"{_GEMINI_API_BASE}/models/{_GEMINI_STT_MODEL}:generateContent?key={key}"
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                out = json.loads(resp.read().decode("utf-8", errors="replace"))
+            text = ""
+            for cand in out.get("candidates") or []:
+                content = cand.get("content") or {}
+                for part in content.get("parts") or []:
+                    text += str(part.get("text") or "")
+            text = text.strip()
+            if text:
+                return {
+                    "ok": True,
+                    "source": source_label,
+                    "transcript": text,
+                    "provider": "gemini",
+                    "model": _GEMINI_STT_MODEL,
+                    "language": language,
+                }
+            last_error = "empty_transcript"
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning("gemini stt fail: %s", exc)
+            continue
+
+    return {"ok": False, "source": source_label, "error": last_error}
+
+
+def _gemini_synthesize_speech(
+    text: str,
+    *,
+    voice: str = "Kore",
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    from main import load_swoop_llm_key_settings, _iter_keys_with_health
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return {"ok": False, "error": "empty_text"}
+    if len(cleaned) > 4096:
+        cleaned = cleaned[:4096]
+
+    voice_use = (voice or "Kore").strip()
+    if voice_use not in _GEMINI_TTS_VOICES:
+        voice_use = "Kore"
+    model_use = (model or _GEMINI_TTS_DEFAULT_MODEL).strip() or _GEMINI_TTS_DEFAULT_MODEL
+
+    settings = load_swoop_llm_key_settings()
+    gemini_pool = _gemini_media_key_pool(settings)
+    if not gemini_pool:
+        return {"ok": False, "error": "no_gemini_keys"}
+
+    payload = json.dumps(
+        {
+            "model": model_use,
+            "input": cleaned,
+            "response_format": {"type": "audio"},
+            "generation_config": {"speech_config": [{"voice": voice_use}]},
+        }
+    ).encode("utf-8")
+
+    last_error = "no_gemini_keys"
+    for key in _iter_keys_with_health("gemini_pool", gemini_pool):
+        try:
+            url = f"{_GEMINI_API_BASE}/interactions"
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": key,
+                },
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                out = json.loads(resp.read().decode("utf-8", errors="replace"))
+            audio_b64 = None
+            output_audio = out.get("output_audio") or {}
+            if isinstance(output_audio, dict):
+                audio_b64 = output_audio.get("data")
+            if not audio_b64:
+                for part in out.get("outputs") or []:
+                    if isinstance(part, dict) and part.get("type") == "audio":
+                        audio_b64 = part.get("data")
+                        break
+            if not audio_b64:
+                last_error = "empty_audio_response"
+                continue
+            audio = base64.b64decode(audio_b64)
+            if not audio:
+                last_error = "empty_audio_response"
+                continue
+            return {
+                "ok": True,
+                "audio_bytes": audio,
+                "content_type": "audio/wav",
+                "provider": "gemini",
+                "model": model_use,
+                "voice": voice_use,
+            }
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning("gemini tts fail: %s", exc)
+            continue
+
+    return {
+        "ok": False,
+        "error": (
+            "Синтез речи Gemini недоступен: проверьте gemini_keys в Swoop. "
+            f"Последняя ошибка: {last_error}"
+        ),
+    }
+
+
+_TTS_VOICES = frozenset(
+    {"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"}
+)
+
+
+def synthesize_speech(
+    text: str,
+    *,
+    voice: str = "nova",
+    model: str = "tts-1",
+) -> Dict[str, Any]:
+    """OpenAI-compatible TTS via Swoop openai_keys. Returns ok + audio_bytes or error."""
+    from main import load_swoop_llm_key_settings, _iter_keys_with_health
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return {"ok": False, "error": "empty_text"}
+    if len(cleaned) > 4096:
+        cleaned = cleaned[:4096]
+
+    voice_use = (voice or "nova").strip().lower()
+    if voice_use not in _TTS_VOICES:
+        voice_use = "nova"
+    model_use = (model or "tts-1").strip() or "tts-1"
+
+    gemini_voice = voice if voice in _GEMINI_TTS_VOICES else "Kore"
+    gemini_model = model if str(model or "").startswith("gemini") else _GEMINI_TTS_DEFAULT_MODEL
+    gemini_result = _gemini_synthesize_speech(
+        cleaned,
+        voice=gemini_voice,
+        model=gemini_model,
+    )
+    if gemini_result.get("ok"):
+        return gemini_result
+
+    settings = load_swoop_llm_key_settings()
+    openai_pool = list(settings.get("openai_keys") or [])
+    base = _openai_audio_base()
+    payload = json.dumps(
+        {"model": model_use, "input": cleaned, "voice": voice_use, "response_format": "mp3"}
+    ).encode("utf-8")
+
+    last_error = "no_openai_keys"
+    for key in _iter_keys_with_health("openai_pool", openai_pool):
+        try:
+            url = f"{base}/audio/speech"
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                audio = resp.read()
+            if audio:
+                return {
+                    "ok": True,
+                    "audio_bytes": audio,
+                    "content_type": "audio/mpeg",
+                    "provider": "openai",
+                    "model": model_use,
+                    "voice": voice_use,
+                }
+            last_error = "empty_audio_response"
+        except Exception as exc:
+            last_error = str(exc)
+            logger.warning("tts fail: %s", exc)
+            continue
+
+    return {
+        "ok": False,
+        "error": (
+            "Синтез речи недоступен: нужен OpenAI-ключ в Swoop (tts-1). "
+            f"Последняя ошибка: {last_error}"
+        ),
+    }

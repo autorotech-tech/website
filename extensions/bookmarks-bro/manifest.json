@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Keep It For Me",
-  "description": "Sync bookmarks to Keept (keept.me); testing build 0.1.1-testing (workspace ensure, UI state, Knowledge App).",
-  "version": "0.3.1",
+  "description": "Sync bookmarks → vector KB + Obsidian (Keept). Staging: swoop.autoro.tech",
+  "version": "0.3.3",
   "permissions": ["bookmarks", "storage", "alarms", "windows", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
