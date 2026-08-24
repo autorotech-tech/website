@@ -127,6 +127,12 @@ npm run deploy:job-responder-api
 
 Если в side panel **Not Found** / API 404 - маршруты ещё не на проде; после деплоя: Chrome -> `chrome://extensions` -> **Reload** у Job Responder.
 
+## Gemini RAG / NotebookLM
+
+Исследование и рекомендация (File Search vs NotebookLM Enterprise vs unofficial): [gemini-rag.md](./gemini-rag.md).
+
+**Кратко:** MVP = compact profile; opt-in позже = Gemini File Search на `gemini_keys`. NotebookLM Enterprise и `notebooklm-py` — не для JR MVP.
+
 ## Фаза 2
 
 См. [phase2-autofill.md](./phase2-autofill.md)
