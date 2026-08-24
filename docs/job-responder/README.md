@@ -48,9 +48,9 @@ Chrome MV3 extension: персонализированные отклики с R
 
 ## LLM (generate)
 
-Порядок провайдеров: **Gemini flash → openmodel → GLM** (быстрые первыми). OpenRouter не используется.
-Ключи: Swoop Admin -> Settings (Gemini / openmodel / GLM).
-Модель Gemini: `gemini-3.6-flash` (старая `gemini-2.0-flash` на проде давала 404 и сжигала бюджет).
+Порядок провайдеров: **openmodel → Gemini flash → GLM** (быстрые первыми). OpenRouter не используется.
+Ключи: Swoop Admin -> Settings (openmodel / Gemini / GLM).
+Модель Gemini: `gemini-3.5-flash` (старая `gemini-2.0-flash` на проде давала 404 и сжигала бюджет).
 
 Первый запрос уже с **агрессивным** unified profile (≤2800 символов), vacancy ≤1600, cover template ≤1200.
 Бюджет wall-clock ~34с; при timeout - сразу mini-retry (1600/600), в ошибке указаны провайдеры.
@@ -82,7 +82,7 @@ Chrome MV3 extension: персонализированные отклики с R
 
 ## v0.5.7
 
-- Generate latency: Gemini→openmodel→GLM, compact ≤2800 first, `gemini-3.6-flash`
+- Generate latency: openmodel→Gemini→GLM, compact ≤2800 first, `gemini-3.5-flash`
 - Google Forms + table Q&A в side panel («Вопросы формы»)
 
 ## Парсинг вакансии

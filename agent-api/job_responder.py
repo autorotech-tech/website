@@ -62,8 +62,8 @@ LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
 LLM_ATTEMPT_TIMEOUT_SEC = 11.0
-# gemini-2.0-flash is retired (404). Prefer flash from current Gemini catalog.
-JR_GEMINI_MODEL = "gemini-3.6-flash"
+# gemini-2.0-flash is retired (404). Prefer current catalog flash.
+JR_GEMINI_MODEL = "gemini-3.5-flash"
 _COVER_SNIPPET_RE = re.compile(
     r"сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|шаблон\s*отклик",
     re.I,
@@ -2844,14 +2844,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             ]
             max_tokens = 1200 if mode == "question_answers" else 700
             # Fast providers first. OpenRouter intentionally skipped.
-            # gemini-2.0-flash is retired (404 on prod); use JR_GEMINI_MODEL.
+            # Prefer openmodel (stable) then Gemini flash; GLM last (slow key pool).
             attempts = (
+                {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
                 {
                     "tier_override": "fast",
                     "route_provider_override": "gemini",
                     "route_model_override": JR_GEMINI_MODEL,
                 },
-                {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
                 {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
             )
             chat_result = None
