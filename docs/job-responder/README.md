@@ -32,7 +32,11 @@ Chrome MV3 extension: персонализированные отклики с R
 - Кнопка **Удалить** у каждого source
 - Google Drive folder -> Connect через `chrome.identity` + import (см. [drive.md](./drive.md); нужен OAuth client ID в manifest)
 - Чекбоксы: генерация только по выбранным источникам
-- При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, …) для matching
+- При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, `experience`, `education`, `links` с title+описанием)
+- Дедуп: тот же URL / content_hash / близкий текст -> merge (бейдж «слит»)
+- Ссылки: title + 1–3 предложения (лёгкий fetch, async, не блокирует ingest)
+- Список sources: компактные строки (не таблица)
+- Generate: лимит 6 источников, JSON-ошибки без HTTP 502 (Cloudflare иначе подменяет HTML)
 - После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
 
 ## Сопроводительное (шаблон)

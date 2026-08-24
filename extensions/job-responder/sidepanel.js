@@ -66,14 +66,62 @@ function escapeHtml(s) {
 }
 
 function formatUpdatedAt(iso) {
-  if (!iso) return '-';
+  if (!iso) return '';
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleString('ru-RU', { hour12: false });
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}.${mm} ${hh}:${mi}`;
   } catch {
     return String(iso);
   }
+}
+
+function kindLabel(kind) {
+  if (kind === 'job_resume') return 'CV';
+  if (kind === 'job_skills') return 'навыки';
+  if (kind === 'job_experience') return 'опыт';
+  return kind || '';
+}
+
+function renderSources(items) {
+  currentSources = Array.isArray(items) ? items : [];
+  if (!sourcesListEl) return;
+  if (!currentSources.length) {
+    sourcesListEl.innerHTML =
+      '<div class="hint">Список пуст. Проверьте workspaceId (test = 1), затем «Обновить sources».</div>';
+    return;
+  }
+  sourcesListEl.innerHTML = currentSources
+    .map((item) => {
+      const id = Number(item.knowledgeItemId || 0);
+      const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
+      const isNew = lastAddedSourceIds.has(id) ? ' isNew' : '';
+      const cat = item.category || '';
+      const metaParts = [kindLabel(item.kind), cat, formatUpdatedAt(item.updatedAt)].filter(Boolean);
+      const title = escapeHtml(item.title || 'Untitled');
+      const isLink = cat === 'link' || Boolean(item.url);
+      const descRaw = String(item.description || (isLink ? item.preview : '') || '').trim();
+      const desc = descRaw && isLink ? escapeHtml(descRaw) : '';
+      const merged = item.merged
+        ? '<span class="sourceBadge" title="Дубликат слит с существующим">слит</span>'
+        : '';
+      return `
+        <div class="sourceItem${isNew}">
+          <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
+          <div class="sourceItemBody">
+            <div class="sourceItemTitle" title="${title}">${title}${merged}</div>
+            <div class="sourceItemMeta">${escapeHtml(metaParts.join(' · '))}</div>
+            ${desc ? `<div class="sourceItemDesc" title="${desc}">${desc}</div>` : ''}
+          </div>
+          <button type="button" class="sourceDeleteBtn" data-id="${id}" data-title="${title}">×</button>
+        </div>
+      `;
+    })
+    .join('');
 }
 
 async function refreshAuthHint() {
@@ -104,43 +152,6 @@ async function refreshResumeStatus() {
   } catch (err) {
     resumeStatus.textContent = `Resume RAG: ${err.message}`;
   }
-}
-
-function renderSources(items) {
-  currentSources = Array.isArray(items) ? items : [];
-  if (!sourcesListEl) return;
-  if (!currentSources.length) {
-    sourcesListEl.innerHTML =
-      '<div class="hint">Список пуст для текущего workspaceId. Проверьте поле выше (test default = 1), затем «Обновить sources». После загрузки CV элемент появится здесь.</div>';
-    return;
-  }
-  sourcesListEl.innerHTML = currentSources
-    .map((item) => {
-      const id = Number(item.knowledgeItemId || 0);
-      const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
-      const isNew = lastAddedSourceIds.has(id) ? ' isNew' : '';
-      const meta = [item.kind || '-', item.category || '-', formatUpdatedAt(item.updatedAt)].join(' | ');
-      const urlLine = item.url
-        ? `<div class="sourceItemPreview"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></div>`
-        : '';
-      const preview = escapeHtml(item.preview || '');
-      const title = escapeHtml(item.title || 'Untitled');
-      return `
-        <div class="sourceItem${isNew}">
-          <div class="sourceItemHeader">
-            <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
-            <div class="sourceItemBody">
-              <div class="sourceItemTitle">${title}</div>
-              <div class="sourceItemMeta">${escapeHtml(meta)}</div>
-              ${urlLine}
-              ${preview ? `<div class="sourceItemPreview">${preview}</div>` : ''}
-            </div>
-            <button type="button" class="sourceDeleteBtn" data-id="${id}" data-title="${title}">Удалить</button>
-          </div>
-        </div>
-      `;
-    })
-    .join('');
 }
 
 function getSelectedSourceIds() {
@@ -326,6 +337,9 @@ async function runGenerate(mode) {
     genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
     }${tplNote}`;
+    if (data.limitMessage) {
+      genMeta.textContent += ` | ${data.limitMessage}`;
+    }
     if (!letter) {
       setError('API ответил без текста письма. Проверьте sources и попробуйте ещё раз.');
       return;

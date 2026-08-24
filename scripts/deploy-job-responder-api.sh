@@ -49,7 +49,101 @@ for path in (
 PY
 REMOTE
 
-echo "=== 4. Purge smoke-test CV titles (workspace 1 only) ==="
+echo "=== 4b. Smoke file-capture + generate (then purge) ==="
+ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
+set -euo pipefail
+docker exec autoro-agent-api python3 - <<'PY'
+import json, time, uuid, urllib.request
+
+pdf = (
+    b"%PDF-1.4\n"
+    b"% smoke multi-block CV\n"
+    b"(Vlad Holodin smoke CV page 1. Skills: Python, n8n, FastAPI, RAG.)\n"
+    b"(Experience: automated job responder ingest and cover letters for HH.)\n"
+    b"(Education: bachelor computer science. Portfolio https://example.com/jr-smoke)\n"
+    b"%%EOF\n"
+)
+print("smoke pdf bytes", len(pdf))
+
+boundary = "----jrSmoke" + uuid.uuid4().hex
+parts = []
+def add_field(name, value):
+    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode())
+add_field("workspaceId", "1")
+add_field("kind", "job_resume")
+add_field("category", "cv")
+add_field("title", "jr-smoke-cv.pdf")
+parts.append(
+    f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"jr-smoke-cv.pdf\"\r\nContent-Type: application/pdf\r\n\r\n".encode()
+    + pdf
+    + b"\r\n"
+)
+parts.append(f"--{boundary}--\r\n".encode())
+body = b"".join(parts)
+req = urllib.request.Request(
+    "http://127.0.0.1:8900/api/v1/job-responder/resume/file-capture",
+    data=body,
+    method="POST",
+    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+)
+t0 = time.monotonic()
+try:
+    with urllib.request.urlopen(req, timeout=45) as r:
+        raw = r.read()
+        elapsed = time.monotonic() - t0
+        print("file-capture", r.status, f"{elapsed:.2f}s", raw[:500])
+        data = json.loads(raw.decode())
+except Exception as e:
+    elapsed = time.monotonic() - t0
+    code = getattr(e, "code", None)
+    payload = e.read()[:500] if hasattr(e, "read") else b""
+    print("file-capture ERR", code, f"{elapsed:.2f}s", payload or e)
+    data = {}
+    raise SystemExit(1)
+
+kid = data.get("knowledgeItemId")
+gen = {
+    "workspaceId": "1",
+    "mode": "cover_letter",
+    "host": "web",
+    "locale": "ru",
+    "selectedSourceIds": [kid] if kid else [],
+    "vacancy": {
+        "title": "n8n automation engineer",
+        "company": "SmokeCo",
+        "description": "Need Python n8n RAG automation engineer for HH cover letters and workflows.",
+        "questions": [],
+    },
+}
+gt0 = time.monotonic()
+greq = urllib.request.Request(
+    "http://127.0.0.1:8900/api/v1/job-responder/generate",
+    data=json.dumps(gen).encode(),
+    method="POST",
+    headers={"Content-Type": "application/json"},
+)
+try:
+    with urllib.request.urlopen(greq, timeout=50) as r:
+        graw = r.read()
+        gelapsed = time.monotonic() - gt0
+        print("generate", r.status, f"{gelapsed:.2f}s", graw[:400])
+except Exception as e:
+    gelapsed = time.monotonic() - gt0
+    code = getattr(e, "code", None)
+    payload = e.read()[:400] if hasattr(e, "read") else b""
+    print("generate ERR", code, f"{gelapsed:.2f}s", payload or e)
+
+# purge smoke
+dreq = urllib.request.Request(
+    "http://127.0.0.1:8900/api/v1/job-responder/resume/sources/delete",
+    data=json.dumps({"workspaceId": "1", "titles": ["jr-smoke-cv.pdf"]}).encode(),
+    method="POST",
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(dreq, timeout=20) as r:
+    print("purge-smoke", r.status, r.read()[:300])
+PY
+REMOTE
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker exec autoro-agent-api python3 - <<'PY'
@@ -57,7 +151,7 @@ import os, urllib.request, json
 url = "http://127.0.0.1:8900/api/v1/job-responder/resume/sources/delete"
 body = json.dumps({
     "workspaceId": "1",
-    "titles": ["second-cv.pdf", "smoke-nul-cv.pdf"],
+    "titles": ["second-cv.pdf", "smoke-nul-cv.pdf", "jr-smoke-cv.pdf"],
 }).encode()
 req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
 try:

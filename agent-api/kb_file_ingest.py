@@ -16,9 +16,11 @@ import zlib
 from typing import Any, Dict, List, Optional, Tuple
 
 MAX_FILE_BYTES = 12 * 1024 * 1024  # 12 MiB
-PDF_MAX_PAGES = 12
-PDF_EXTRACT_BUDGET_SEC = 18.0
-PDF_FLATE_STREAM_LIMIT = 60
+PDF_MAX_PAGES = 8
+PDF_EXTRACT_BUDGET_SEC = 12.0
+PDF_FLATE_STREAM_LIMIT = 24
+PDF_FLATE_MAX_BYTES = 400_000
+PDF_LITERAL_MAX_BYTES = 800_000
 
 _TEXT_EXTENSIONS = frozenset({
     ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".html", ".htm", ".log", ".yaml", ".yml",
@@ -297,9 +299,12 @@ def _extract_pdf_text(data: bytes) -> Tuple[str, str, Dict[str, Any]]:
     deadline = started + PDF_EXTRACT_BUDGET_SEC
     extra: Dict[str, Any] = {}
 
-    pypdf_text, pypdf_meta = _extract_pdf_pypdf(data)
+    pypdf_text, pypdf_meta = _extract_pdf_pypdf(
+        data, max_pages=PDF_MAX_PAGES, budget_sec=min(PDF_EXTRACT_BUDGET_SEC, max(2.0, deadline - time.monotonic()))
+    )
     extra.update(pypdf_meta)
-    if len(pypdf_text) >= 80:
+    # Enough text from first pages: never run flate/literal (those blow past CF/nginx).
+    if len(pypdf_text) >= 40:
         extra["pdfElapsedSec"] = round(time.monotonic() - started, 3)
         return pypdf_text, "pdf_pypdf", extra
 
@@ -307,7 +312,8 @@ def _extract_pdf_text(data: bytes) -> Tuple[str, str, Dict[str, Any]]:
     if pypdf_text:
         candidates.append((pypdf_text, "pdf_pypdf"))
 
-    if time.monotonic() < deadline:
+    # Deep scan only for small files when pypdf got almost nothing.
+    if time.monotonic() < deadline and len(data) <= PDF_FLATE_MAX_BYTES:
         inflated = _inflate_pdf_streams(data, limit=PDF_FLATE_STREAM_LIMIT)
         if inflated:
             flate_chunks: List[str] = []
@@ -319,13 +325,14 @@ def _extract_pdf_text(data: bytes) -> Tuple[str, str, Dict[str, Any]]:
             flate_text = sanitize_extracted_text("\n".join(flate_chunks))
             if flate_text:
                 candidates.append((flate_text, "pdf_flate"))
+    elif len(data) > PDF_FLATE_MAX_BYTES:
+        extra["pdfSkippedFlate"] = True
 
-    # Full-file literal scan is O(file size) and can exceed Cloudflare 524.
-    if time.monotonic() < deadline and len(data) <= 1_500_000:
+    if time.monotonic() < deadline and len(data) <= PDF_LITERAL_MAX_BYTES:
         raw_text = sanitize_extracted_text("\n".join(_iter_pdf_literal_strings(data)))
         if raw_text:
             candidates.append((raw_text, "pdf_literals"))
-    elif len(data) > 1_500_000:
+    else:
         extra["pdfSkippedLiterals"] = True
 
     extra["pdfElapsedSec"] = round(time.monotonic() - started, 3)

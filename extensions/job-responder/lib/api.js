@@ -15,7 +15,8 @@ const JR_API = (() => {
 
   async function fetchJson(url, options = {}) {
     const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
-    const { timeoutMs: _ignored, ...fetchOpts } = options;
+    const errorKind = options.errorKind || inferErrorKind(url);
+    const { timeoutMs: _ignored, errorKind: _kindIgnored, ...fetchOpts } = options;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;
@@ -23,10 +24,7 @@ const JR_API = (() => {
       response = await fetch(url, { ...fetchOpts, signal: controller.signal });
     } catch (err) {
       if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-        throw new Error(
-          `Таймаут ${Math.round(timeoutMs / 1000)}с: сервер не ответил вовремя. ` +
-            'Если это большой PDF - подождите и нажмите «Обновить sources», либо загрузите меньший файл.'
-        );
+        throw new Error(localTimeoutMessage(errorKind, timeoutMs));
       }
       throw err;
     } finally {
@@ -42,39 +40,92 @@ const JR_API = (() => {
       }
     }
     if (!response.ok) {
-      throw new Error(formatApiError(response.status, data, raw, url));
+      throw new Error(formatApiError(response.status, data, raw, url, errorKind));
     }
     if (data == null && looksLikeHtml(raw)) {
-      throw new Error(cloudflareTimeoutMessage(response.status));
+      throw new Error(gatewayMessage(response.status, errorKind));
     }
     return data || {};
   }
 
-  function looksLikeHtml(raw) {
-    const s = String(raw || '').trim();
-    return /^<!DOCTYPE html/i.test(s) || /^<html[\s>]/i.test(s);
+  function inferErrorKind(url) {
+    const u = String(url || '');
+    if (/file-capture|drive-import|text-capture|link-capture|\/capture/i.test(u)) return 'upload';
+    if (/\/generate/i.test(u)) return 'generate';
+    if (/\/relevance/i.test(u)) return 'relevance';
+    return 'generic';
   }
 
-  function cloudflareTimeoutMessage(status) {
-    const code = status || 524;
+  function looksLikeHtml(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return false;
     return (
-      `Таймаут Cloudflare (${code}): сервер не успел обработать файл. ` +
-      'Попробуйте ещё раз после обновления API или загрузите PDF поменьше. Список sources можно обновить вручную.'
+      /^<!DOCTYPE html/i.test(s) ||
+      /^<html[\s>]/i.test(s) ||
+      /^<head[\s>]/i.test(s) ||
+      /<title[^>]*>[^<]*(502|504|524|error|cloudflare)/i.test(s) ||
+      /cloudflare/i.test(s) && /<\/html>/i.test(s) ||
+      /502 Bad Gateway/i.test(s) ||
+      /Error code (502|504|524)/i.test(s)
     );
   }
 
-  function formatApiError(status, data, raw, url) {
+  function stripHtmlSnippet(raw) {
+    return String(raw || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+  }
+
+  function localTimeoutMessage(kind, timeoutMs) {
+    const sec = Math.round(timeoutMs / 1000);
+    if (kind === 'generate') {
+      return (
+        `Генерация прервана локально через ${sec}с: сервер не успел ответить. ` +
+        'Это не размер PDF. Выберите меньше sources и нажмите «Отклик» ещё раз.'
+      );
+    }
+    if (kind === 'upload') {
+      return (
+        `Загрузка прервана локально через ${sec}с. ` +
+        'Нажмите «Обновить sources» - файл мог уже сохраниться. Если нет, повторите загрузку.'
+      );
+    }
+    return `Таймаут ${sec}с: сервер не ответил вовремя.`;
+  }
+
+  function gatewayMessage(status, kind) {
+    const code = status || 502;
+    if (kind === 'generate') {
+      return (
+        `Сервер генерации не ответил (HTTP ${code}). Это не про размер PDF. ` +
+        'Выберите меньше источников и повторите «Отклик».'
+      );
+    }
+    if (kind === 'upload') {
+      return (
+        `Шлюз оборвал загрузку (HTTP ${code}). Нажмите «Обновить sources» - файл мог сохраниться. ` +
+        'Если списка нет, загрузите ещё раз.'
+      );
+    }
+    return `Сервер не ответил (HTTP ${code}). Повторите попытку.`;
+  }
+
+  function formatApiError(status, data, raw, url, kind = 'generic') {
     if (
-      status === 524 ||
+      status === 502 ||
       status === 504 ||
+      status === 524 ||
       status === 408 ||
       (status >= 520 && status <= 530) ||
       looksLikeHtml(raw)
     ) {
-      return cloudflareTimeoutMessage(status);
+      return gatewayMessage(status, kind);
     }
     let detail = '';
-    if (data?.detail != null) {
+    if (data?.message && typeof data.message === 'string') detail = data.message;
+    else if (data?.detail != null) {
       if (typeof data.detail === 'string') detail = data.detail;
       else if (Array.isArray(data.detail)) {
         detail = data.detail
@@ -89,9 +140,11 @@ const JR_API = (() => {
         detail = JSON.stringify(data.detail);
       }
     }
+    if (looksLikeHtml(detail)) return gatewayMessage(status, kind);
     if (!detail) {
-      const clipped = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-      detail = clipped || `HTTP ${status}`;
+      const clipped = stripHtmlSnippet(raw) || `HTTP ${status}`;
+      if (looksLikeHtml(raw)) return gatewayMessage(status, kind);
+      detail = clipped;
     }
     if (status === 404 || /^not found$/i.test(detail)) {
       return (
@@ -227,7 +280,8 @@ const JR_API = (() => {
       method: 'POST',
       headers,
       body: form,
-      timeoutMs: 75000,
+      timeoutMs: 50000,
+      errorKind: 'upload',
     });
   }
 
@@ -318,8 +372,12 @@ const JR_API = (() => {
         selectedSourceIds,
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
       }),
-      timeoutMs: 90000,
+      timeoutMs: 70000,
+      errorKind: 'generate',
     });
+    if (data && data.ok === false) {
+      throw new Error(String(data.message || data.error || 'Генерация не удалась'));
+    }
     const text = pickGeneratedText(data);
     return { ...data, text };
   }

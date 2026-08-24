@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import html as html_lib
 import json
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from urllib.error import HTTPError as UrlHTTPError
+from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
@@ -36,10 +45,27 @@ JOB_RESPONDER_TEST_MODE = str(os.environ.get("JOB_RESPONDER_TEST_MODE", "1")).st
 }
 DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID", "1") or "1")
 
+# Stay under nginx/CF ~60–100s: never return HTTP 502 (Cloudflare replaces JSON with HTML).
+FILE_CAPTURE_BUDGET_SEC = 28.0
+GENERATE_BUDGET_SEC = 42.0
+GENERATE_MAX_SOURCES = 6
+GENERATE_BODY_CHARS = 900
+GENERATE_VACANCY_CHARS = 3500
+LINK_PREVIEW_TIMEOUT_SEC = 5.0
+LINK_PREVIEW_MAX = 5
+EMBED_REQUEST_TIMEOUT_SEC = 6.0
+LLM_ATTEMPT_TIMEOUT_SEC = 16.0
+
 _SKILL_SPLIT = re.compile(r"[,;/|•·\n]+")
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9+#.\-]{2,}")
 # http(s) URLs in CV/portfolio/text (trim trailing punctuation separately)
 _URL_RE = re.compile(r"https?://[^\s<>\"'`)\]]+", re.IGNORECASE)
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+_META_DESC_RE = re.compile(
+    r"<meta\b[^>]*?(?:name|property)\s*=\s*[\"'](?:description|og:description)[\"'][^>]*>",
+    re.I | re.S,
+)
+_META_CONTENT_RE = re.compile(r"content\s*=\s*[\"'](.*?)[\"']", re.I | re.S)
 
 _KNOWN_TOOLS = {
     "python",
@@ -364,6 +390,37 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
     elif "hybrid" in lower or "гибрид" in lower:
         geo_remote = "hybrid"
 
+    experience_bullets: List[str] = []
+    for line in (text or "").splitlines():
+        s = re.sub(r"\s+", " ", line).strip(" -•*\t")
+        if 24 <= len(s) <= 220 and re.search(
+            r"(опыт|проект|разработ|автоматиз|внедр|запуск|руковод|built|led|developed|automated)",
+            s,
+            flags=re.I,
+        ):
+            experience_bullets.append(s[:200])
+        if len(experience_bullets) >= 12:
+            break
+
+    education: List[str] = []
+    for m in re.finditer(
+        r"(?:образование|education|университет|university|bachelor|master|магистр|бакалавр)[:\s]+(.{8,180})",
+        blob,
+        flags=re.I,
+    ):
+        education.append(m.group(0).strip()[:180])
+
+    achievements: List[str] = []
+    for m in re.finditer(
+        r"(?:достижен|achievement|наград|award|сертификат|certificate)[:\s]+(.{8,180})",
+        blob,
+        flags=re.I,
+    ):
+        achievements.append(m.group(0).strip()[:180])
+
+    link_urls = extract_urls_from_text(text, limit=12)
+    links = [{"url": u, "title": "", "summary": ""} for u in link_urls]
+
     profile = {
         "skills": _uniq_lower(skills, 50),
         "roles": _uniq_lower(roles, 20),
@@ -374,6 +431,10 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
         "seniority": seniority,
         "geo_remote": geo_remote,
         "category_hint": (category or "")[:64] or None,
+        "experience_bullets": _uniq_lower(experience_bullets, 12),
+        "education": _uniq_lower(education, 6),
+        "achievements": _uniq_lower(achievements, 8),
+        "links": links[:12],
     }
     return profile
 
@@ -396,6 +457,25 @@ def wrap_content_with_profile(text: str, profile: Dict[str, Any]) -> Tuple[str, 
         bits.append(f"seniority: {profile['seniority']}")
     if profile.get("geo_remote"):
         bits.append(f"format: {profile['geo_remote']}")
+    if profile.get("experience_bullets"):
+        bits.append("exp: " + " | ".join(profile["experience_bullets"][:4]))
+    if profile.get("education"):
+        bits.append("edu: " + "; ".join(profile["education"][:2]))
+    if profile.get("achievements"):
+        bits.append("ach: " + "; ".join(profile["achievements"][:2]))
+    described_links = [
+        x
+        for x in (profile.get("links") or [])
+        if isinstance(x, dict) and (x.get("title") or x.get("summary"))
+    ]
+    if described_links:
+        bits.append(
+            "links: "
+            + "; ".join(
+                f"{x.get('title') or x.get('url')}: {x.get('summary') or ''}".strip()[:160]
+                for x in described_links[:5]
+            )
+        )
     summary = "; ".join(bits) if bits else body[:400].replace("\n", " ")
     return content, summary[:4000]
 
@@ -413,6 +493,91 @@ def parse_profile_from_content(text: str) -> Dict[str, Any]:
     except (json.JSONDecodeError, IndexError, TypeError):
         pass
     return extract_resume_profile(raw)
+
+
+def strip_profile_wrapper(text: str) -> str:
+    raw = text or ""
+    if JR_PROFILE_MARKER not in raw:
+        return raw
+    parts = raw.split("\n---\n", 1)
+    return parts[1] if len(parts) > 1 else raw
+
+
+def normalize_for_dedupe(text: str) -> str:
+    body = strip_profile_wrapper(text)
+    return re.sub(r"\s+", " ", body or "").strip().lower()[:4000]
+
+
+def near_duplicate_hash(text: str) -> str:
+    return hashlib.sha256(normalize_for_dedupe(text).encode("utf-8")).hexdigest()
+
+
+def _collapse_ws(s: str) -> str:
+    return re.sub(r"\s+", " ", html_lib.unescape(s or "")).strip()
+
+
+def fetch_link_preview(url: str, timeout_sec: float = LINK_PREVIEW_TIMEOUT_SEC) -> Dict[str, str]:
+    """Lightweight title + meta description. Hard timeout, no Jina."""
+    out = {"url": url, "title": "", "summary": ""}
+    if not url or not url.lower().startswith("http"):
+        return out
+    req = UrlRequest(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; JobResponder/0.5; +https://swoop.autoro.tech)",
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(req, timeout=max(1.0, float(timeout_sec))) as resp:
+            raw = resp.read(80_000)
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+    except (UrlHTTPError, URLError, TimeoutError, OSError, ValueError):
+        return out
+    if "html" not in ctype and not raw[:32].lstrip().lower().startswith((b"<!doctype", b"<html")):
+        return out
+    try:
+        html = raw.decode("utf-8", errors="ignore")
+    except Exception:
+        html = raw.decode("latin-1", errors="ignore")
+    tm = _TITLE_RE.search(html)
+    if tm:
+        out["title"] = _collapse_ws(re.sub(r"<[^>]+>", "", tm.group(1)))[:180]
+    mm = _META_DESC_RE.search(html)
+    if mm:
+        cm = _META_CONTENT_RE.search(mm.group(0))
+        if cm:
+            out["summary"] = _collapse_ws(cm.group(1))[:400]
+    if not out["summary"]:
+        stripped = _collapse_ws(re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>|<[^>]+>", " ", html))
+        out["summary"] = stripped[:280]
+    return out
+
+
+def call_with_timeout(fn, timeout_sec: float, *args, **kwargs):
+    """Run fn with a hard timeout. Do not wait on shutdown if it fired - CF/nginx will 502 otherwise."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(fn, *args, **kwargs)
+    try:
+        result = fut.result(timeout=max(1.0, float(timeout_sec)))
+    except FuturesTimeout:
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            pool.shutdown(wait=False)
+        raise
+    pool.shutdown(wait=True)
+    return result
+
+
+def cap_rag_items(rows: List[Dict[str, Any]], *, max_n: int = GENERATE_MAX_SOURCES) -> Tuple[List[Dict[str, Any]], bool]:
+    ranked = sorted(
+        [dict(r) for r in rows],
+        key=lambda r: (0 if str(r.get("kind") or "") == PRIMARY_CV_KIND else 1, str(r.get("updated_at") or "")),
+    )
+    capped = ranked[: max(1, int(max_n))]
+    return capped, len(ranked) > len(capped)
 
 
 def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> List[str]:
@@ -672,12 +837,28 @@ def build_user_prompt(
         title = str(item.get("title") or f"Source {idx}")
         category = str(item.get("category") or "")
         kind = str(item.get("kind") or "")
-        summary = str(item.get("summary") or item.get("ai_summary") or "")
-        body = str(item.get("content_text") or "")[:2500]
+        summary = str(item.get("summary") or item.get("ai_summary") or "")[:500]
+        body = strip_profile_wrapper(str(item.get("content_text") or ""))[:GENERATE_BODY_CHARS]
+        prof = parse_profile_from_content(str(item.get("content_text") or ""))
+        slots = []
+        if prof.get("skills"):
+            slots.append("skills=" + ", ".join(prof["skills"][:10]))
+        if prof.get("experience_bullets"):
+            slots.append("experience=" + " | ".join(prof["experience_bullets"][:4]))
+        if prof.get("links"):
+            link_bits = []
+            for lk in prof["links"][:5]:
+                if not isinstance(lk, dict):
+                    continue
+                desc = (lk.get("summary") or lk.get("title") or "").strip()
+                link_bits.append(f"{lk.get('url')}: {desc}"[:160] if desc else str(lk.get("url") or ""))
+            if link_bits:
+                slots.append("links=" + "; ".join(link_bits))
         ctx_lines.append(
             f"[source {idx}] title={title!r} kind={kind} category={category}\n"
             f"summary: {summary}\n"
-            f"text: {body}"
+            + ("slots: " + "; ".join(slots) + "\n" if slots else "")
+            + f"text: {body}"
         )
     resume_context = "\n\n".join(ctx_lines) if ctx_lines else "(empty - do not invent facts)"
 
@@ -688,7 +869,7 @@ def build_user_prompt(
             "url": vacancy.url,
             "title": vacancy.title,
             "company": vacancy.company,
-            "description": vacancy.description[:8000],
+            "description": vacancy.description[:GENERATE_VACANCY_CHARS],
             "structured": structured,
         },
         ensure_ascii=False,
@@ -701,7 +882,7 @@ def build_user_prompt(
         f"RESUME CONTEXT:\n{resume_context}",
     ]
     if mode == "cover_letter" and cover_template:
-        parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:12000]}")
+        parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:4000]}")
     if mode == "question_answers":
         qlist = questions or vacancy.questions or []
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
@@ -761,30 +942,31 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         if meta.get("needsVision"):
             if not allow_vision:
-                raise HTTPException(
-                    status_code=422,
-                    detail="vision_required: изображение требует OCR/vision, но vision недоступен",
-                )
+                meta["visionDeferred"] = True
+                return extracted_text, meta, category_override
             try:
                 from hermes_media import vision_analyze_from_settings
             except Exception as exc:  # pragma: no cover
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"vision_unavailable: {exc}",
-                ) from exc
+                meta["vision"] = {"ok": False, "error": str(exc)}
+                return extracted_text, meta, category_override
 
             b64 = base64.b64encode(raw).decode("ascii")
-            vision = vision_analyze_from_settings(
-                "Извлеки весь читаемый текст со скриншота/изображения портфолио для Resume RAG. "
-                "Верни только текст (заголовки, описания проектов, стек). Без комментариев.",
-                image_base64=b64,
-            )
+            try:
+                vision = call_with_timeout(
+                    vision_analyze_from_settings,
+                    10.0,
+                    "Извлеки весь читаемый текст со скриншота/изображения портфолио для Resume RAG. "
+                    "Верни только текст (заголовки, описания проектов, стек). Без комментариев.",
+                    image_base64=b64,
+                )
+            except (FuturesTimeout, Exception) as exc:
+                meta["vision"] = {"ok": False, "error": f"timeout:{exc}"}
+                meta["visionDeferred"] = True
+                return extracted_text, meta, category_override
             meta["vision"] = {"ok": bool(vision.get("ok")), "error": vision.get("error")}
             if not vision.get("ok"):
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"vision_failed: {vision.get('error') or 'unknown'}",
-                )
+                meta["visionDeferred"] = True
+                return extracted_text, meta, category_override
             extracted_text = str(vision.get("text") or vision.get("content") or "").strip()
             meta["method"] = "vision"
             if category_hint in ("experience", "portfolio", "drive", "cv", ""):
@@ -793,7 +975,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         return extracted_text, meta, category_override
 
     def _resume_search_rows(cur, workspace_id: int, query: str, limit: int) -> Tuple[str, List[Dict[str, Any]]]:
-        emb = get_openai_embedding(query)
+        emb = None
+        try:
+            emb = call_with_timeout(get_openai_embedding, EMBED_REQUEST_TIMEOUT_SEC, query)
+        except (FuturesTimeout, Exception):
+            emb = None
         if emb and len(emb) == bookmarks_vector_dim:
             vec = build_vector_literal(emb)
             cur.execute(
@@ -884,11 +1070,57 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             order by
               case when k.kind = %s then 0 else 1 end,
               k.updated_at desc
-            limit 20
+            limit 8
             """,
             (workspace_id, RESUME_SOURCE, list(RESUME_KINDS), ids, PRIMARY_CV_KIND),
         )
         return cur.fetchall()
+
+    def _embed_resume_item(cur, kid: int, title: str, ai_summary: str, text: str) -> bool:
+        if kid <= 0:
+            return False
+        embed_source = "\n".join(p for p in (title, ai_summary, text[:3500]) if p)[:8000]
+        try:
+            vec = call_with_timeout(get_openai_embedding, EMBED_REQUEST_TIMEOUT_SEC, embed_source)
+        except (FuturesTimeout, Exception):
+            _LOG.warning("embed skipped/timeout kid=%s", kid)
+            return False
+        if not vec or len(vec) != bookmarks_vector_dim:
+            return False
+        cur.execute(
+            """
+            insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+            values (%s, %s::vector, %s, now(), now())
+            on conflict (knowledge_item_id)
+            do update set
+              embedding = excluded.embedding,
+              embedding_model = excluded.embedding_model,
+              embedded_at = now(),
+              updated_at = now()
+            """,
+            (kid, build_vector_literal(vec), "job-responder-embed"),
+        )
+        return True
+
+    def _find_near_duplicate_id(cur, workspace_id: int, text: str) -> Optional[int]:
+        target = near_duplicate_hash(text)
+        if not target:
+            return None
+        cur.execute(
+            """
+            select id, content_text
+            from public.knowledge_items
+            where workspace_id = %s and source = %s
+            order by updated_at desc
+            limit 80
+            """,
+            (workspace_id, RESUME_SOURCE),
+        )
+        for row in cur.fetchall() or []:
+            body = str(row.get("content_text") or "")
+            if near_duplicate_hash(body) == target:
+                return int(row["id"]) if row.get("id") is not None else None
+        return None
 
     def _upsert_resume_item_text(
         cur,
@@ -900,10 +1132,32 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         category: str,
         url: Optional[str],
         extra_tags: Optional[List[str]] = None,
+        embed: bool = False,
+        link_preview: Optional[Dict[str, str]] = None,
     ) -> Tuple[int, bool, str, Dict[str, Any]]:
         title = sanitize_extracted_text(title or "")
         text = sanitize_extracted_text(text or "")
         profile = extract_resume_profile(text, title=title, category=category)
+        if link_preview:
+            prev_url = str(link_preview.get("url") or url or "")
+            prev_title = str(link_preview.get("title") or "")[:180]
+            prev_sum = str(link_preview.get("summary") or "")[:400]
+            links = list(profile.get("links") or [])
+            replaced = False
+            for item in links:
+                if isinstance(item, dict) and str(item.get("url") or "") == prev_url:
+                    if prev_title:
+                        item["title"] = prev_title
+                    if prev_sum:
+                        item["summary"] = prev_sum
+                    replaced = True
+            if not replaced and prev_url:
+                links.insert(0, {"url": prev_url, "title": prev_title, "summary": prev_sum})
+            profile["links"] = links[:12]
+            if prev_title and (not title or title.startswith("http")):
+                title = truncate_text(prev_title, 1000)
+            if prev_sum and len(text) < 80:
+                text = f"{prev_title}\n{prev_url}\n{prev_sum}".strip()
         content_text, ai_summary = wrap_content_with_profile(text, profile)
         tags = profile_tags(profile, [category, *(extra_tags or [])])
 
@@ -919,72 +1173,109 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             4000,
         )
 
-        cur.execute(
-            """
-            insert into public.knowledge_items (
-              workspace_id, source, title, url, canonical_url,
-              content_text, ai_summary, category, tags, content_hash, status, note_path, kind
-            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'to_process', %s, %s)
-            on conflict (workspace_id, content_hash)
-            do update set
-              updated_at = now(),
-              last_seen_at = now(),
-              seen_count = public.knowledge_items.seen_count + 1,
-              title = excluded.title,
-              url = excluded.url,
-              canonical_url = excluded.canonical_url,
-              content_text = case
-                when length(coalesce(excluded.content_text, '')) > length(coalesce(public.knowledge_items.content_text, ''))
-                then excluded.content_text
-                else public.knowledge_items.content_text
-              end,
-              ai_summary = coalesce(excluded.ai_summary, public.knowledge_items.ai_summary),
-              category = excluded.category,
-              tags = excluded.tags,
-              note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
-              kind = excluded.kind
-            returning id
-            """,
-            (
-                workspace_id,
-                RESUME_SOURCE,
-                title,
-                url or None,
-                canonical_url or None,
-                content_text,
-                ai_summary,
-                category,
-                psycopg2.extras.Json(tags),
-                content_hash,
-                note_path,
-                kind_norm,
-            ),
-        )
-        row = cur.fetchone() or {}
-        kid = int(row["id"]) if row.get("id") is not None else -1
+        merge_id = None
+        merge_reason = ""
+        if canonical_url or url:
+            merge_id = _find_resume_item_by_url(cur, workspace_id, canonical_url or url or "")
+            if merge_id:
+                merge_reason = "url"
+        if merge_id is None:
+            merge_id = _find_near_duplicate_id(cur, workspace_id, text)
+            if merge_id:
+                merge_reason = "text"
 
-        embed_source = "\n".join(p for p in (title, ai_summary, text[:3500]) if p)[:8000]
-        vec = get_openai_embedding(embed_source)
-        embedded = False
-        if vec and len(vec) == bookmarks_vector_dim and kid != -1:
+        if merge_id:
+            if "merged" not in tags:
+                tags.append("merged")
             cur.execute(
                 """
-                insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
-                values (%s, %s::vector, %s, now(), now())
-                on conflict (knowledge_item_id)
-                do update set
-                  embedding = excluded.embedding,
-                  embedding_model = excluded.embedding_model,
-                  embedded_at = now(),
-                  updated_at = now()
+                update public.knowledge_items set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = coalesce(seen_count, 0) + 1,
+                  title = case
+                    when %s <> '' and (title is null or title = '' or title like 'http%%')
+                    then %s else title end,
+                  url = coalesce(%s, url),
+                  canonical_url = coalesce(%s, canonical_url),
+                  content_text = case
+                    when length(%s) > length(coalesce(content_text, '')) then %s
+                    else content_text end,
+                  ai_summary = coalesce(%s, ai_summary),
+                  category = %s,
+                  tags = %s,
+                  kind = %s
+                where id = %s and workspace_id = %s and source = %s
+                returning id
                 """,
                 (
-                    kid,
-                    build_vector_literal(vec),
-                    "job-responder-embed",
+                    title,
+                    title,
+                    url or None,
+                    canonical_url or None,
+                    content_text,
+                    content_text,
+                    ai_summary,
+                    category,
+                    psycopg2.extras.Json(tags),
+                    kind_norm,
+                    merge_id,
+                    workspace_id,
+                    RESUME_SOURCE,
                 ),
             )
-            embedded = True
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else merge_id
+            profile["_ingest"] = {"merged": True, "reason": merge_reason}
+        else:
+            cur.execute(
+                """
+                insert into public.knowledge_items (
+                  workspace_id, source, title, url, canonical_url,
+                  content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+                ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'to_process', %s, %s)
+                on conflict (workspace_id, content_hash)
+                do update set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = public.knowledge_items.seen_count + 1,
+                  title = excluded.title,
+                  url = excluded.url,
+                  canonical_url = excluded.canonical_url,
+                  content_text = case
+                    when length(coalesce(excluded.content_text, '')) > length(coalesce(public.knowledge_items.content_text, ''))
+                    then excluded.content_text
+                    else public.knowledge_items.content_text
+                  end,
+                  ai_summary = coalesce(excluded.ai_summary, public.knowledge_items.ai_summary),
+                  category = excluded.category,
+                  tags = excluded.tags,
+                  note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+                  kind = excluded.kind
+                returning id
+                """,
+                (
+                    workspace_id,
+                    RESUME_SOURCE,
+                    title,
+                    url or None,
+                    canonical_url or None,
+                    content_text,
+                    ai_summary,
+                    category,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    note_path,
+                    kind_norm,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else -1
+            profile["_ingest"] = {"merged": False, "reason": ""}
+
+        embedded = False
+        if embed:
+            embedded = _embed_resume_item(cur, kid, title, ai_summary, text)
         return kid, embedded, content_hash, profile
 
     def _find_resume_item_by_url(cur, workspace_id: int, url: str) -> Optional[int]:
@@ -1020,65 +1311,62 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         *,
         parent_title: str = "",
         parent_id: Optional[int] = None,
-        max_links: int = 8,
-        fetch_remote: bool = False,
+        max_links: int = LINK_PREVIEW_MAX,
+        fetch_preview: bool = True,
     ) -> List[Dict[str, Any]]:
-        """Extract http(s) URLs from text and upsert selectable link sources (category=link).
+        """Extract http(s) URLs and upsert link sources with title+short summary.
 
-        Remote Jina fetch is off by default so ingest stays under Cloudflare ~100s.
+        Never uses Jina on this path. Preview fetch is capped (5s/link, max N).
         """
         urls = extract_urls_from_text(text, limit=max_links)
         linked: List[Dict[str, Any]] = []
-        for url in urls:
+        for idx, url in enumerate(urls):
             existing = _find_resume_item_by_url(cur, workspace_id, url)
-            if existing is not None:
-                linked.append(
-                    {
-                        "knowledgeItemId": existing,
-                        "url": url,
-                        "deduped": True,
-                        "title": url,
-                    }
-                )
-                continue
+            preview = {"url": url, "title": "", "summary": ""}
+            if fetch_preview and idx < LINK_PREVIEW_MAX:
+                preview = fetch_link_preview(url, timeout_sec=LINK_PREVIEW_TIMEOUT_SEC)
 
-            link_text = ""
-            if fetch_remote:
-                try:
-                    fetched = fetch_content_via_jina(normalize_url(url), timeout_sec=4)
-                    if fetched.get("ok"):
-                        link_text = str(fetched.get("content_text") or "").strip()
-                except Exception:
-                    link_text = ""
-
-            if len(link_text) < 20:
-                parent_bit = f" (from {parent_title})" if parent_title else ""
-                parent_id_bit = f" parent_id={parent_id}" if parent_id else ""
+            title_guess = preview.get("title") or url
+            desc = preview.get("summary") or ""
+            parent_bit = f" (from {parent_title})" if parent_title else ""
+            if desc:
                 link_text = (
-                    f"Link extracted from Job Responder source{parent_bit}{parent_id_bit}.\n"
+                    f"{title_guess}\nURL: {url}\n{desc}\n"
+                    f"Extracted from Job Responder source{parent_bit}."
+                )
+            else:
+                link_text = (
+                    f"Link extracted from Job Responder source{parent_bit}.\n"
                     f"URL: {url}\n"
-                    "Content fetch unavailable; URL indexed for RAG selection."
+                    f"Файл/контекст: {parent_title or 'source'}."
                 )
 
-            item_title = truncate_text(url, 1000)
+            extra = ["link", "extracted-url"]
+            if existing is not None:
+                extra.append("merged")
             kid, embedded, content_hash, profile = _upsert_resume_item_text(
                 cur,
                 workspace_id,
-                title=item_title,
+                title=truncate_text(title_guess, 1000),
                 text=link_text,
                 kind_norm="job_experience",
                 category="link",
                 url=normalize_url(url) or url,
-                extra_tags=["link", "extracted-url"],
+                extra_tags=extra,
+                embed=False,
+                link_preview=preview,
             )
+            ingest_meta = profile.pop("_ingest", {}) if isinstance(profile, dict) else {}
             linked.append(
                 {
                     "knowledgeItemId": kid,
                     "url": url,
-                    "deduped": False,
+                    "deduped": bool(existing is not None or ingest_meta.get("merged")),
+                    "merged": bool(ingest_meta.get("merged")),
                     "embedded": embedded,
                     "contentHash": content_hash,
-                    "title": item_title,
+                    "title": title_guess,
+                    "description": desc[:280],
                     "profile": profile,
                 }
             )
@@ -1098,7 +1386,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             return
         if raw_bytes > 2 * 1024 * 1024:
             return
-        urls = extract_urls_from_text(text, limit=8)
+        urls = extract_urls_from_text(text, limit=LINK_PREVIEW_MAX)
         if not urls:
             return
         snapshot = text
@@ -1113,12 +1401,39 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         snapshot,
                         parent_title=parent_title,
                         parent_id=parent_id,
-                        max_links=8,
-                        fetch_remote=False,
+                        max_links=LINK_PREVIEW_MAX,
+                        fetch_preview=True,
                     )
                 conn.commit()
             except Exception:
                 _LOG.exception("async link index failed parent_id=%s", parent_id)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            finally:
+                conn.close()
+
+        background_tasks.add_task(_job)
+
+    def _queue_embed(
+        background_tasks: Optional[BackgroundTasks],
+        kid: int,
+        title: str,
+        text: str,
+        ai_summary: str = "",
+    ) -> None:
+        if background_tasks is None or kid <= 0:
+            return
+
+        def _job() -> None:
+            conn = pg_connect()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    _embed_resume_item(cur, kid, title, ai_summary, text)
+                conn.commit()
+            except Exception:
+                _LOG.exception("async embed failed kid=%s", kid)
                 try:
                     conn.rollback()
                 except Exception:
@@ -1228,7 +1543,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                       category,
                       tags,
                       updated_at,
-                      left(coalesce(ai_summary, content_text, ''), 280) as preview
+                      coalesce(seen_count, 1)::int as seen_count,
+                      left(coalesce(ai_summary, ''), 220) as preview
                     from public.knowledge_items
                     where workspace_id = %s
                       and source = %s
@@ -1254,6 +1570,17 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         "category": r.get("category"),
                         "tags": r.get("tags") or [],
                         "preview": r.get("preview"),
+                        "description": r.get("preview") if str(r.get("category") or "") == "link" else "",
+                        "merged": int(r.get("seen_count") or 1) > 1
+                        or (
+                            "merged"
+                            in (
+                                r.get("tags")
+                                if isinstance(r.get("tags"), list)
+                                else []
+                            )
+                        ),
+                        "seenCount": int(r.get("seen_count") or 1),
                         "updatedAt": r.get("updated_at").isoformat() if r.get("updated_at") else None,
                     }
                     for r in rows
@@ -1359,8 +1686,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     kind_norm=kind_norm,
                     category=category,
                     url=None,
+                    embed=False,
                 )
             conn.commit()
+            ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
+            _queue_embed(background_tasks, kid, title, text, str((profile or {}).get("ai_summary") or ""))
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -1378,6 +1708,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "profile": profile,
                 "linkedSources": [],
                 "linkIndexQueued": True,
+                "merged": bool(ingest_meta.get("merged")),
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1422,8 +1753,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     category=category,
                     url=None,
                     extra_tags=["pasted-text"],
+                    embed=False,
                 )
             conn.commit()
+            ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
+            _queue_embed(background_tasks, kid, title, text)
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -1441,6 +1775,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "profile": profile,
                 "linkedSources": [],
                 "linkIndexQueued": True,
+                "merged": bool(ingest_meta.get("merged")),
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1483,14 +1818,29 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             )
 
         mime_type = str(file.content_type or "application/octet-stream")
+        started = time.monotonic()
+        deadline = started + FILE_CAPTURE_BUDGET_SEC
+        timings: Dict[str, float] = {}
         try:
+            is_image = mime_type.startswith("image/") or str(safe_name).lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+            )
+            remaining = deadline - time.monotonic()
+            t_extract = time.monotonic()
             extracted_text, meta, category_override = _extract_text_with_vision(
                 safe_name,
                 raw,
                 mime_type,
-                allow_vision=True,
+                allow_vision=bool(is_image and remaining > 8),
                 category_hint=category_norm,
             )
+            timings["extractSec"] = round(time.monotonic() - t_extract, 3)
+            if meta.get("needsVision") and not extracted_text:
+                extracted_text = (
+                    f"Изображение {safe_name}: OCR на запросе пропущен (лимит времени). "
+                    "Текст можно вставить вручную."
+                )
+                meta["visionDeferred"] = True
             if category_override:
                 category_norm = category_override
                 if kind_norm == PRIMARY_CV_KIND and category_norm == "screenshot":
@@ -1527,6 +1877,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             )
             extra_tags = ["screenshot"] if category_norm == "screenshot" else None
 
+            t_upsert = time.monotonic()
             conn = pg_connect()
             try:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -1539,8 +1890,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         category=category_norm,
                         url=None,
                         extra_tags=extra_tags,
+                        embed=False,
                     )
                 conn.commit()
+                timings["upsertSec"] = round(time.monotonic() - t_upsert, 3)
+                ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
+                _queue_embed(background_tasks, kid, item_title, extracted_text)
                 _queue_extracted_link_index(
                     background_tasks,
                     workspace_id,
@@ -1548,6 +1903,18 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     parent_title=item_title,
                     parent_id=kid if kid != -1 else None,
                     raw_bytes=len(raw),
+                )
+                total_sec = round(time.monotonic() - started, 3)
+                timings["totalSec"] = total_sec
+                _LOG.info(
+                    "file-capture ok name=%s bytes=%s extract=%.3fs upsert=%.3fs total=%.3fs kid=%s merged=%s",
+                    safe_name,
+                    len(raw),
+                    timings.get("extractSec") or 0,
+                    timings.get("upsertSec") or 0,
+                    total_sec,
+                    kid,
+                    ingest_meta.get("merged"),
                 )
                 return {
                     "ok": True,
@@ -1560,6 +1927,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     "profile": profile,
                     "linkedSources": [],
                     "linkIndexQueued": True,
+                    "merged": bool(ingest_meta.get("merged")),
+                    "partial": bool(meta.get("pdfTruncated") or meta.get("visionDeferred")),
+                    "timings": timings,
                     "workspaceId": str(workspace_id),
                 }
             except Exception:
@@ -1585,6 +1955,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     async def job_responder_resume_link_capture(
         payload: JobResponderResumeLinkCapturePayload,
         request: Request,
+        background_tasks: BackgroundTasks,
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
@@ -1596,15 +1967,22 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         kind_norm = _resume_kind_norm(payload.kind)
         category_norm = truncate_text(str(payload.category or "experience").strip().lower(), 128) or "experience"
 
-        fetched = fetch_content_via_jina(url_norm, timeout_sec=25)
-        if not fetched.get("ok"):
-            raise HTTPException(status_code=422, detail=f"fetch_failed:{fetched.get('error') or fetched}")
-
-        text = str(fetched.get("content_text") or "").strip()
+        preview = fetch_link_preview(url_norm, timeout_sec=LINK_PREVIEW_TIMEOUT_SEC)
+        text = ""
+        try:
+            fetched = fetch_content_via_jina(url_norm, timeout_sec=8)
+            if fetched.get("ok"):
+                text = str(fetched.get("content_text") or "").strip()
+        except Exception:
+            text = ""
+        if len(text) < 20:
+            title_bit = preview.get("title") or url_norm
+            desc_bit = preview.get("summary") or ""
+            text = f"{title_bit}\nURL: {url_norm}\n{desc_bit}".strip()
         if len(text) < 20:
             raise HTTPException(status_code=422, detail="empty_link_content")
 
-        item_title = truncate_text((payload.title or url_norm or "Link").strip(), 1000)
+        item_title = truncate_text((payload.title or preview.get("title") or url_norm or "Link").strip(), 1000)
         category_for_store = category_norm if category_norm != "experience" else "link"
 
         conn = pg_connect()
@@ -1615,23 +1993,26 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     cur,
                     workspace_id,
                     title=item_title,
-                    text=text,
+                    text=text[:12000],
                     kind_norm=kind_norm,
                     category=category_for_store,
                     url=url_norm,
                     extra_tags=["link"],
+                    embed=False,
+                    link_preview=preview,
                 )
-                # Nested URLs inside fetched page (light: no recursive remote fetch)
+                ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
                 linked = _index_extracted_links(
                     cur,
                     workspace_id,
                     text,
                     parent_title=item_title,
                     parent_id=kid if kid != -1 else None,
-                    max_links=8,
-                    fetch_remote=False,
+                    max_links=LINK_PREVIEW_MAX,
+                    fetch_preview=False,
                 )
             conn.commit()
+            _queue_embed(background_tasks, kid, item_title, text[:3500])
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -1640,7 +2021,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "embedded": embedded,
                 "contentHash": content_hash,
                 "profile": profile,
-                "deduped": existing is not None and existing == kid,
+                "deduped": bool(existing is not None or ingest_meta.get("merged")),
+                "merged": bool(ingest_meta.get("merged")),
+                "description": (preview.get("summary") or "")[:280],
                 "linkedSources": linked,
                 "workspaceId": str(workspace_id),
             }
@@ -1756,7 +2139,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             fname,
                             raw,
                             mime,
-                            allow_vision=True,
+                            allow_vision=False,
                             category_hint=category_norm,
                         )
                         use_category = cat_override or category_norm
@@ -1775,7 +2158,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             category=use_category,
                             url=f"https://drive.google.com/file/d/{fid}/view",
                             extra_tags=["drive", "screenshot"] if use_category == "screenshot" else ["drive"],
+                            embed=False,
                         )
+                        ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
                         imported.append(
                             {
                                 "knowledgeItemId": kid,
@@ -1785,9 +2170,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                                 "embedded": embedded,
                                 "contentHash": content_hash,
                                 "profile": profile,
+                                "merged": bool(ingest_meta.get("merged")),
                                 "linkedSources": [],
                             }
                         )
+                        _queue_embed(background_tasks, kid, fname, text.strip())
                         _queue_extracted_link_index(
                             background_tasks,
                             workspace_id,
@@ -1888,15 +2275,20 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
+        started = time.monotonic()
+        deadline = started + GENERATE_BUDGET_SEC
         auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
         _guard_workspace(auth_ctx, workspace_id)
 
         if not has_any_bookmark_llm_keys():
-            raise HTTPException(
-                status_code=503,
-                detail="LLM keys are not configured in Swoop service_settings.",
-            )
+            return {
+                "ok": False,
+                "error": "llm_not_configured",
+                "message": "LLM-ключи не настроены в Swoop Admin -> Settings.",
+                "text": "",
+                "workspaceId": str(workspace_id),
+            }
 
         conn = pg_connect()
         try:
@@ -1922,11 +2314,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         raise HTTPException(status_code=422, detail="Selected sources were not found in your Resume RAG.")
                 else:
                     search_q = build_resume_search_query(payload.vacancy)
-                    _, rag_rows = _resume_search_rows(cur, workspace_id, search_q, 12)
+                    _, rag_rows = _resume_search_rows(cur, workspace_id, search_q, GENERATE_MAX_SOURCES)
         finally:
             conn.close()
 
-        rag_items = [dict(r) for r in rag_rows]
+        rag_items, truncated = cap_rag_items(list(rag_rows), max_n=GENERATE_MAX_SOURCES)
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items)
         mode = payload.mode
         cover_template = resolve_cover_template(payload.coverTemplate, payload.baseLetter)
@@ -1941,18 +2333,76 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             cover_template=cover_template if has_template else "",
         )
 
-        chat_result = openai_chat_completions_generic(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.35,
-            tier_override="general",
-            max_tokens_override=1800 if mode == "question_answers" else 1200,
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        max_tokens = 900 if mode == "question_answers" else 800
+        attempts = (
+            {"tier_override": "fast", "route_provider_override": "gemini", "route_model_override": "gemini-2.0-flash"},
+            {"tier_override": "fast", "route_provider_override": "groq", "route_model_override": ""},
+            {"tier_override": "fast", "route_provider_override": "openrouter", "route_model_override": "openai/gpt-4o-mini"},
         )
-        raw_text = str(chat_result.content or "").strip()
+        chat_result = None
+        last_err = ""
+        for kwargs in attempts:
+            remaining = deadline - time.monotonic()
+            if remaining < 4:
+                last_err = "timeout"
+                break
+            try:
+                chat_result = call_with_timeout(
+                    openai_chat_completions_generic,
+                    min(LLM_ATTEMPT_TIMEOUT_SEC, remaining - 1),
+                    messages=messages,
+                    temperature=0.35,
+                    max_tokens_override=max_tokens,
+                    **kwargs,
+                )
+            except FuturesTimeout:
+                last_err = "timeout"
+                chat_result = None
+                continue
+            except Exception as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                _LOG.warning("generate LLM attempt failed: %s", last_err)
+                chat_result = None
+                continue
+            if chat_result and str(getattr(chat_result, "content", None) or "").strip():
+                break
+            last_err = last_err or "empty"
+            chat_result = None
+
+        raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
         if not raw_text:
-            raise HTTPException(status_code=502, detail="LLM returned empty response")
+            _LOG.warning("generate empty last_err=%s elapsed=%.2f", last_err, time.monotonic() - started)
+            msg = (
+                "Модель не ответила вовремя. Выберите меньше sources и повторите."
+                if last_err == "timeout"
+                else (
+                    "LLM не вернул текст (ключи OpenRouter/GLM без кредита или модель недоступна). "
+                    "Проверьте Swoop Admin -> Settings -> OpenRouter / Gemini."
+                )
+            )
+            return {
+                "ok": False,
+                "error": "llm_timeout" if last_err == "timeout" else "llm_empty",
+                "message": msg,
+                "text": "",
+                "timedOut": last_err == "timeout",
+                "contextLimited": truncated,
+                "limitMessage": (
+                    f"В промпт взяты {len(rag_items)} из выбранных источников (лимит {GENERATE_MAX_SOURCES})."
+                    if truncated
+                    else ""
+                ),
+                "relevance": relevance,
+                "sources": [
+                    {"knowledgeItemId": int(r.get("id")), "title": r.get("title"), "kind": r.get("kind")}
+                    for r in rag_items
+                ],
+                "workspaceId": str(workspace_id),
+            }
 
         answers = None
         if mode == "question_answers":
@@ -1977,18 +2427,25 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "kind": r.get("kind"),
                 "distance": float(r["distance"]) if r.get("distance") is not None else None,
             }
-            for r in rag_items[:8]
+            for r in rag_items
         ]
-
+        limit_message = (
+            f"В промпт взяты {len(rag_items)} источников (лимит {GENERATE_MAX_SOURCES})."
+            if truncated
+            else ""
+        )
         return {
+            "ok": True,
             "text": raw_text,
             "answers": answers,
             "sources": sources,
             "relevance": relevance,
-            "model": chat_result.model_resolved,
-            "provider": chat_result.provider_used,
+            "model": getattr(chat_result, "model_resolved", None),
+            "provider": getattr(chat_result, "provider_used", None),
             "host": payload.host,
             "mode": mode,
             "usedCoverTemplate": has_template,
+            "contextLimited": truncated,
+            "limitMessage": limit_message,
             "workspaceId": str(workspace_id),
         }
