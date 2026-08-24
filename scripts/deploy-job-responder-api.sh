@@ -27,7 +27,7 @@ set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
-docker exec autoro-agent-api pip install -q --no-cache-dir 'pypdf>=4.0' || true
+docker exec autoro-agent-api python3 -m pip install -q --no-cache-dir 'pypdf>=4.0' || true
 docker restart autoro-agent-api
 sleep 10
 docker ps --filter name=autoro-agent-api --format '{{.Names}} {{.Status}}'
