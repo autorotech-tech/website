@@ -1,8 +1,16 @@
 const JR_API = (() => {
+  // Тестовый режим: без login/JWT. Выключить: jrTestMode=false в chrome.storage.local
   const DEFAULT_API_BASE = 'https://swoop.autoro.tech';
+  const DEFAULT_TEST_WORKSPACE_ID = '1';
 
   function normalizeApiBase(apiBase) {
     return String(apiBase || DEFAULT_API_BASE).trim().replace(/\/$/, '');
+  }
+
+  async function isTestMode() {
+    const saved = await chrome.storage.local.get(['jrTestMode']);
+    if (saved.jrTestMode === false || saved.jrTestMode === '0') return false;
+    return true;
   }
 
   async function fetchJson(url, options = {}) {
@@ -28,7 +36,14 @@ const JR_API = (() => {
     return normalizeApiBase(saved.jrApiBase);
   }
 
-  async function getAuthHeaders() {
+  async function getAuthHeaders(forFormData = false) {
+    const headers = {};
+    if (!forFormData) headers['Content-Type'] = 'application/json';
+
+    if (await isTestMode()) {
+      return headers;
+    }
+
     const saved = await chrome.storage.local.get(['userAccessToken', 'userRefreshToken', 'userTokenExpiresAt']);
     const now = Math.floor(Date.now() / 1000);
     let token = String(saved.userAccessToken || '');
@@ -48,10 +63,17 @@ const JR_API = (() => {
       });
     }
     if (!token) throw new Error('Нужен вход (email/password)');
-    return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    headers.Authorization = `Bearer ${token}`;
+    return headers;
   }
 
   async function ensureWorkspace() {
+    if (await isTestMode()) {
+      const saved = await chrome.storage.local.get(['jrWorkspaceId']);
+      const workspaceId = String(saved.jrWorkspaceId || DEFAULT_TEST_WORKSPACE_ID);
+      await chrome.storage.local.set({ jrWorkspaceId: workspaceId });
+      return workspaceId;
+    }
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const data = await fetchJson(`${apiBase}/api/v1/bookmarks/workspaces/ensure`, {
@@ -105,10 +127,8 @@ const JR_API = (() => {
   async function resumeFileCapture({ file, title, kind = 'job_resume', category = 'cv' }) {
     if (!file) throw new Error('File is required');
     const apiBase = await getApiBase();
-    const headers = await getAuthHeaders();
+    const headers = await getAuthHeaders(true);
     const workspaceId = await getWorkspaceId();
-    // Форм-data сам выставляет Content-Type с boundary
-    delete headers['Content-Type'];
 
     const form = new FormData();
     form.append('workspaceId', workspaceId);
@@ -143,7 +163,14 @@ const JR_API = (() => {
     return fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ workspaceId, mode, host, vacancy, locale: 'ru', selectedSourceIds }),
+      body: JSON.stringify({
+        workspaceId,
+        mode,
+        host: host || 'web',
+        vacancy,
+        locale: 'ru',
+        selectedSourceIds,
+      }),
     });
   }
 
@@ -155,7 +182,7 @@ const JR_API = (() => {
           return;
         }
         if (!resp?.ok) {
-          reject(new Error(resp?.error || 'Не удалось прочитать страницу вакансии'));
+          reject(new Error(resp?.error || 'Не удалось прочитать страницу'));
           return;
         }
         resolve(resp.vacancy);
@@ -169,7 +196,6 @@ const JR_API = (() => {
       'userRefreshToken',
       'userEmail',
       'userTokenExpiresAt',
-      'jrWorkspaceId',
     ]);
   }
 
@@ -179,6 +205,7 @@ const JR_API = (() => {
     fetchVacancyFromTab,
     generateResponse,
     getApiBase,
+    isTestMode,
     listSources,
     logout,
     resumeCapture,

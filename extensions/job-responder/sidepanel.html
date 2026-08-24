@@ -21,13 +21,13 @@
 
       <div class="field">
         <span>CV файл (primary)</span>
-        <input id="resumeFile" type="file" />
+        <input id="resumeFile" type="file" accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json" />
         <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
       </div>
 
       <div class="field">
         <span>Portfolio файлы (references)</span>
-        <input id="portfolioFiles" type="file" multiple />
+        <input id="portfolioFiles" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json" />
         <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
       </div>
 
@@ -41,12 +41,12 @@
 
     <section class="card">
       <h2>Вакансия</h2>
-      <p class="hint" id="vacancyMeta">Откройте вакансию на hh.ru / hh.kz / hh.uz</p>
+      <p class="hint" id="vacancyMeta">Откройте любую страницу вакансии и нажмите «Обновить с страницы»</p>
       <div class="row">
         <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
       </div>
       <label class="field">
-        <span>Описание (fallback)</span>
+        <span>Описание (можно править вручную)</span>
         <textarea id="vacancyDescription" rows="5" placeholder="Если парсер не сработал - вставьте текст вручную"></textarea>
       </label>
     </section>
@@ -68,8 +68,8 @@
     </section>
 
     <footer class="footer">
-      <button type="button" id="loginBtn" class="link">Вход</button>
-      <button type="button" id="logoutBtn" class="link">Выход</button>
+      <button type="button" id="loginBtn" class="link" hidden>Вход</button>
+      <button type="button" id="logoutBtn" class="link" hidden>Выход</button>
     </footer>
 
     <p class="error" id="error"></p>

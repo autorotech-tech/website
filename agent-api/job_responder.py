@@ -11,12 +11,23 @@ from fastapi import Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, Field
 
+import os
+
 RESUME_KINDS = ("job_resume", "job_experience", "job_skills")
 RESUME_SOURCE = "job_responder"
 RESUME_TAGS = ["job-responder", "hh"]
 PRIMARY_CV_KIND = "job_resume"
 
-HOST_LABELS = {"ru": "hh.ru", "kz": "hh.kz", "uz": "hh.uz"}
+HOST_LABELS = {"ru": "hh.ru", "kz": "hh.kz", "uz": "hh.uz", "web": "web"}
+
+# Тестовый режим: без JWT/login. Выключить: JOB_RESPONDER_TEST_MODE=0
+JOB_RESPONDER_TEST_MODE = str(os.environ.get("JOB_RESPONDER_TEST_MODE", "1")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID", "1") or "1")
 
 
 def hh_format_text(text: str) -> str:
@@ -38,6 +49,8 @@ def hh_format_text(text: str) -> str:
 
 
 def require_job_responder_user_auth(auth_ctx: Dict[str, Any]) -> None:
+    if JOB_RESPONDER_TEST_MODE:
+        return
     mode = str(auth_ctx.get("auth_mode") or "")
     if mode in ("dev_bypass", "supabase_user", "bootstrap_token"):
         return
@@ -45,6 +58,25 @@ def require_job_responder_user_auth(auth_ctx: Dict[str, Any]) -> None:
         status_code=403,
         detail="Job Responder requires user login (email/password JWT). Service API keys are not allowed.",
     )
+
+
+def resolve_job_responder_auth(
+    request: Request,
+    x_api_key: Optional[str],
+    authorization: Optional[str],
+    verify_bookmarks_access: Callable[..., Dict[str, Any]],
+) -> Dict[str, Any]:
+    """In test mode skip auth entirely; otherwise require Keept JWT/bootstrap."""
+    if JOB_RESPONDER_TEST_MODE:
+        return {
+            "client_ip": getattr(request.client, "host", None) if request.client else None,
+            "auth_mode": "dev_bypass",
+            "user_id": "job-responder-test",
+            "test_mode": True,
+        }
+    auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+    require_job_responder_user_auth(auth_ctx)
+    return auth_ctx
 
 
 class JobResponderVacancyPayload(BaseModel):
@@ -58,7 +90,7 @@ class JobResponderVacancyPayload(BaseModel):
 class JobResponderGeneratePayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     mode: Literal["cover_letter", "question_answers"] = "cover_letter"
-    host: Literal["ru", "kz", "uz"] = "ru"
+    host: str = Field(default="web", max_length=32)
     vacancy: JobResponderVacancyPayload
     locale: str = Field(default="ru", max_length=16)
     selectedSourceIds: List[int] = Field(default_factory=list)
@@ -133,7 +165,7 @@ def build_user_prompt(
     host: str,
     questions: Optional[List[str]] = None,
 ) -> str:
-    host_label = HOST_LABELS.get(host, "hh.ru")
+    host_label = HOST_LABELS.get(host, host or "web")
     ctx_lines = []
     for idx, item in enumerate(rag_items, start=1):
         title = str(item.get("title") or f"Source {idx}")
@@ -194,6 +226,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             return int(raw)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="workspaceId must be numeric") from exc
+
+    def _auth(request: Request, x_api_key: Optional[str], authorization: Optional[str]) -> Dict[str, Any]:
+        return resolve_job_responder_auth(request, x_api_key, authorization, verify_bookmarks_access)
+
+    def _guard_workspace(auth_ctx: Dict[str, Any], workspace_id: int) -> None:
+        if JOB_RESPONDER_TEST_MODE or auth_ctx.get("auth_mode") == "dev_bypass":
+            return
+        verify_workspace_membership(auth_ctx, workspace_id)
 
     def _resume_kind_norm(kind: str) -> str:
         raw = str(kind or PRIMARY_CV_KIND).strip().lower()
@@ -395,10 +435,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         conn = pg_connect()
         try:
@@ -432,10 +471,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         conn = pg_connect()
         try:
@@ -487,10 +525,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         conn = pg_connect()
         try:
@@ -534,13 +571,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         try:
             workspace_id = int(workspaceId.strip())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="workspaceId must be numeric") from exc
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         kind_norm = _resume_kind_norm(kind)
         category_norm = truncate_text(str(category).strip().lower(), 128) or "cv"
@@ -595,10 +631,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         url_norm = normalize_url(payload.url)
         kind_norm = _resume_kind_norm(payload.kind)
@@ -647,10 +682,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         conn = pg_connect()
         try:
@@ -678,10 +712,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
-        require_job_responder_user_auth(auth_ctx)
+        auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
-        verify_workspace_membership(auth_ctx, workspace_id)
+        _guard_workspace(auth_ctx, workspace_id)
 
         if not has_any_bookmark_llm_keys():
             raise HTTPException(

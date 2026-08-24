@@ -13,13 +13,21 @@ const sourcesListEl = document.getElementById('sourcesList');
 
 function setError(msg) {
   errorEl.textContent = msg || '';
+  if (msg) successEl.textContent = '';
 }
 
 function setSuccess(msg) {
   successEl.textContent = msg || '';
+  if (msg) errorEl.textContent = '';
 }
 
 async function refreshAuthHint() {
+  const testMode = await JR_API.isTestMode();
+  if (testMode) {
+    const ws = await JR_API.ensureWorkspace();
+    authHint.textContent = `Тестовый режим (без login) · workspace ${ws}`;
+    return true;
+  }
   const saved = await chrome.storage.local.get(['userAccessToken', 'userEmail']);
   if (saved.userAccessToken) {
     authHint.textContent = `Вход: ${saved.userEmail || 'OK'}`;
@@ -88,7 +96,7 @@ async function refreshSources() {
 
 function applyVacancy(vacancy) {
   currentVacancy = vacancy;
-  const host = vacancy.host || 'ru';
+  const host = vacancy.host || 'web';
   vacancyMeta.textContent = `${vacancy.title || '—'} | ${vacancy.company || '—'} | ${host}`;
   if (vacancy.description) vacancyDescription.value = vacancy.description;
 }
@@ -98,7 +106,7 @@ async function refreshVacancyFromTab() {
   try {
     const vacancy = await JR_API.fetchVacancyFromTab();
     applyVacancy(vacancy);
-    setSuccess('Вакансия обновлена со страницы');
+    setSuccess('Страница прочитана');
   } catch (err) {
     setError(String(err.message || err));
   }
@@ -130,7 +138,7 @@ async function runGenerate(mode) {
   try {
     const data = await JR_API.generateResponse({
       mode,
-      host: currentVacancy?.host || 'ru',
+      host: currentVacancy?.host || 'web',
       vacancy,
       selectedSourceIds: getSelectedSourceIds(),
     });
@@ -161,91 +169,110 @@ const uploadResumeFileBtn = document.getElementById('uploadResumeFileBtn');
 const uploadPortfolioFilesBtn = document.getElementById('uploadPortfolioFilesBtn');
 const addLinkBtn = document.getElementById('addLinkBtn');
 
-uploadResumeFileBtn.addEventListener('click', async () => {
-  setError('');
-  setSuccess('');
-  const file = resumeFileInput?.files?.[0];
-  if (!file) {
-    setError('Выберите CV файл');
-    return;
-  }
-  uploadResumeFileBtn.disabled = true;
-  try {
-    await JR_API.resumeFileCapture({
-      file,
-      kind: 'job_resume',
-      category: 'cv',
-      title: file.name,
-    });
-    setSuccess('CV добавлен в Resume RAG');
-    await refreshResumeStatus();
-    await refreshSources();
-    resumeFileInput.value = '';
-  } catch (err) {
-    setError(String(err.message || err));
-  } finally {
-    uploadResumeFileBtn.disabled = false;
-  }
-});
-
-uploadPortfolioFilesBtn.addEventListener('click', async () => {
-  setError('');
-  setSuccess('');
-  const files = Array.from(portfolioFilesInput?.files || []);
-  if (!files.length) {
-    setError('Выберите файлы портфолио');
-    return;
-  }
-  uploadPortfolioFilesBtn.disabled = true;
-  try {
-    for (const file of files) {
-      // Сериализуем загрузку, чтобы не перегружать agent-api
+if (uploadResumeFileBtn) {
+  uploadResumeFileBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const file = resumeFileInput?.files?.[0];
+    if (!file) {
+      setError('Сначала выберите CV файл');
+      resumeFileInput?.click();
+      return;
+    }
+    uploadResumeFileBtn.disabled = true;
+    uploadResumeFileBtn.textContent = 'Загрузка…';
+    try {
+      await JR_API.ensureWorkspace();
       await JR_API.resumeFileCapture({
         file,
-        kind: 'job_experience',
-        category: 'experience',
+        kind: 'job_resume',
+        category: 'cv',
         title: file.name,
       });
+      setSuccess(`CV добавлен: ${file.name}`);
+      await refreshResumeStatus();
+      await refreshSources();
+      resumeFileInput.value = '';
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      uploadResumeFileBtn.disabled = false;
+      uploadResumeFileBtn.textContent = 'Добавить CV';
     }
-    setSuccess('Portfolio добавлен в Resume RAG');
-    await refreshResumeStatus();
-    await refreshSources();
-    portfolioFilesInput.value = '';
-  } catch (err) {
-    setError(String(err.message || err));
-  } finally {
-    uploadPortfolioFilesBtn.disabled = false;
-  }
-});
+  });
+}
 
-addLinkBtn.addEventListener('click', async () => {
-  setError('');
-  setSuccess('');
-  const url = String(linkUrlInput?.value || '').trim();
-  const title = String(linkTitleInput?.value || '').trim();
-  if (!url) {
-    setError('Укажите ссылку');
-    return;
-  }
-  addLinkBtn.disabled = true;
-  try {
-    await JR_API.resumeLinkCapture({
-      url,
-      title: title || undefined,
-      kind: 'job_experience',
-      category: 'experience',
-    });
-    setSuccess('Ссылка добавлена в Resume RAG');
-    await refreshResumeStatus();
-    await refreshSources();
-    linkUrlInput.value = '';
-    linkTitleInput.value = '';
-  } catch (err) {
-    setError(String(err.message || err));
-  } finally {
-    addLinkBtn.disabled = false;
-  }
-});
+if (uploadPortfolioFilesBtn) {
+  uploadPortfolioFilesBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const files = Array.from(portfolioFilesInput?.files || []);
+    if (!files.length) {
+      setError('Сначала выберите файлы portfolio');
+      portfolioFilesInput?.click();
+      return;
+    }
+    uploadPortfolioFilesBtn.disabled = true;
+    uploadPortfolioFilesBtn.textContent = `Загрузка 0/${files.length}…`;
+    try {
+      await JR_API.ensureWorkspace();
+      let i = 0;
+      for (const file of files) {
+        i += 1;
+        uploadPortfolioFilesBtn.textContent = `Загрузка ${i}/${files.length}…`;
+        await JR_API.resumeFileCapture({
+          file,
+          kind: 'job_experience',
+          category: 'experience',
+          title: file.name,
+        });
+      }
+      setSuccess(`Portfolio: ${files.length} файл(ов) добавлено`);
+      await refreshResumeStatus();
+      await refreshSources();
+      portfolioFilesInput.value = '';
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      uploadPortfolioFilesBtn.disabled = false;
+      uploadPortfolioFilesBtn.textContent = 'Добавить portfolio';
+    }
+  });
+}
+
+if (addLinkBtn) {
+  addLinkBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const url = String(linkUrlInput?.value || '').trim();
+    const title = String(linkTitleInput?.value || '').trim();
+    if (!url) {
+      setError('Укажите ссылку');
+      return;
+    }
+    addLinkBtn.disabled = true;
+    addLinkBtn.textContent = 'Загрузка…';
+    try {
+      await JR_API.ensureWorkspace();
+      await JR_API.resumeLinkCapture({
+        url,
+        title: title || undefined,
+        kind: 'job_experience',
+        category: 'experience',
+      });
+      setSuccess('Ссылка добавлена в Resume RAG');
+      await refreshResumeStatus();
+      await refreshSources();
+      linkUrlInput.value = '';
+      linkTitleInput.value = '';
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      addLinkBtn.disabled = false;
+      addLinkBtn.textContent = 'Добавить ссылку';
+    }
+  });
+}
 
 refreshVacancyBtn.addEventListener('click', refreshVacancyFromTab);
 refreshSourcesBtn.addEventListener('click', refreshSources);
@@ -270,22 +297,21 @@ logoutBtn.addEventListener('click', async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.userAccessToken) {
+  if (changes.userAccessToken || changes.jrTestMode) {
     refreshAuthHint();
     refreshResumeStatus();
+    refreshSources();
   }
 });
 
 (async function init() {
-  const loggedIn = await refreshAuthHint();
-  if (loggedIn) {
-    try {
-      await JR_API.ensureWorkspace();
-      await refreshResumeStatus();
-      await refreshSources();
-    } catch (err) {
-      setError(String(err.message || err));
-    }
+  try {
+    await refreshAuthHint();
+    await JR_API.ensureWorkspace();
+    await refreshResumeStatus();
+    await refreshSources();
+  } catch (err) {
+    setError(String(err.message || err));
   }
   await refreshVacancyFromTab().catch(() => {});
 })();

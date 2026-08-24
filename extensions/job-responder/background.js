@@ -1,17 +1,10 @@
-const DEFAULT_API_BASE = 'https://swoop.autoro.tech';
+const PAGE_EXTRACT_FILE = 'content/page-extract.js';
 
-const HH_HOSTNAME_RE = /(^|\.)hh\.(ru|kz|uz)$/i;
-
-function isHhVacancyUrl(url) {
+function canInjectIntoUrl(url) {
   if (!url) return false;
-  try {
-    const u = new URL(url);
-    const hostOk = HH_HOSTNAME_RE.test(u.hostname.toLowerCase());
-    const pathOk = (u.pathname || '').includes('/vacancy/');
-    return hostOk && pathOk;
-  } catch {
-    return false;
-  }
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return false;
+  if (url.startsWith('about:') || url.startsWith('devtools://') || url.startsWith('edge://')) return false;
+  return /^https?:\/\//i.test(url);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -23,46 +16,49 @@ chrome.action.onClicked.addListener(async (tab) => {
   await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === 'JR_GET_VACANCY') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
-      if (!tab?.id) {
-        sendResponse({ ok: false, error: 'No active tab' });
-        return;
-      }
-      // Content script exists only on vacancy pages (content/hh-vacancy.js)
-      if (!tab.url || !isHhVacancyUrl(tab.url)) {
-        sendResponse({ ok: false, notHh: true, error: 'Not a HH vacancy page' });
-        return;
-      }
-      chrome.tabs.sendMessage(tab.id, { type: 'JR_EXTRACT_VACANCY' }, (resp) => {
-        if (chrome.runtime.lastError) {
-          // Try injecting the content script first, then retry
-          chrome.scripting.executeScript(
-            { target: { tabId: tab.id }, files: ['content/hh-vacancy.js'] },
-            () => {
+function extractFromTab(tabId, sendResponse) {
+  chrome.tabs.sendMessage(tabId, { type: 'JR_EXTRACT_VACANCY' }, (resp) => {
+    if (chrome.runtime.lastError) {
+      chrome.scripting.executeScript(
+        { target: { tabId }, files: [PAGE_EXTRACT_FILE] },
+        () => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          setTimeout(() => {
+            chrome.tabs.sendMessage(tabId, { type: 'JR_EXTRACT_VACANCY' }, (resp2) => {
               if (chrome.runtime.lastError) {
                 sendResponse({ ok: false, error: chrome.runtime.lastError.message });
                 return;
               }
-              setTimeout(() => {
-                chrome.tabs.sendMessage(tab.id, { type: 'JR_EXTRACT_VACANCY' }, (resp2) => {
-                  if (chrome.runtime.lastError) {
-                    sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-                    return;
-                  }
-                  sendResponse(resp2 || { ok: false, error: 'Empty response' });
-                });
-              }, 200);
-            }
-          );
-          return;
+              sendResponse(resp2 || { ok: false, error: 'Empty response' });
+            });
+          }, 150);
         }
-        sendResponse(resp || { ok: false, error: 'Empty response' });
+      );
+      return;
+    }
+    sendResponse(resp || { ok: false, error: 'Empty response' });
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== 'JR_GET_VACANCY') return false;
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab?.id) {
+      sendResponse({ ok: false, error: 'No active tab' });
+      return;
+    }
+    if (!canInjectIntoUrl(tab.url)) {
+      sendResponse({
+        ok: false,
+        error: 'Откройте обычную http(s) страницу с вакансией (не chrome://)',
       });
-    });
-    return true;
-  }
-  return false;
+      return;
+    }
+    extractFromTab(tab.id, sendResponse);
+  });
+  return true;
 });
