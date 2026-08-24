@@ -23,15 +23,24 @@ set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
 docker restart autoro-agent-api
-sleep 8
+sleep 10
 docker ps --filter name=autoro-agent-api --format '{{.Names}} {{.Status}}'
-echo "--- local routes ---"
-curl -sS -m 15 -o /tmp/jr-st.txt -w 'status:%{http_code}\n' \
-  'http://127.0.0.1:8900/api/v1/job-responder/resume/status?workspaceId=1' || true
-head -c 240 /tmp/jr-st.txt; echo
-curl -sS -m 15 -o /tmp/jr-src.txt -w 'sources:%{http_code}\n' \
-  'http://127.0.0.1:8900/api/v1/job-responder/resume/sources?workspaceId=1' || true
-head -c 240 /tmp/jr-src.txt; echo
+echo "--- internal routes (python) ---"
+docker exec autoro-agent-api python3 - <<'PY'
+import urllib.request
+for path in (
+    "/api/v1/job-responder/resume/status?workspaceId=1",
+    "/api/v1/job-responder/resume/sources?workspaceId=1",
+):
+    url = "http://127.0.0.1:8900" + path
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            print(path, r.status, r.read()[:180])
+    except Exception as e:
+        code = getattr(e, "code", None)
+        body = e.read()[:180] if hasattr(e, "read") else b""
+        print(path, "ERR", code, body or e)
+PY
 REMOTE
 
 echo "=== 4. Public URL ==="
