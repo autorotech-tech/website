@@ -27,7 +27,7 @@ Chrome MV3 extension: персонализированные отклики с R
 - CV file -> `kind=job_resume`
 - Portfolio files / скриншоты (png/jpg/webp) -> `kind=job_experience`, category `screenshot` при vision OCR
 - URL links -> fetch + index
-- Google Drive folder -> MVP import (см. [drive.md](./drive.md))
+- Google Drive folder -> Connect через `chrome.identity` + import (см. [drive.md](./drive.md); нужен OAuth client ID в manifest)
 - Чекбоксы: генерация только по выбранным источникам
 - При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, …) для matching
 

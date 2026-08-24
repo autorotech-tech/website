@@ -46,11 +46,19 @@
       </div>
 
       <div class="field">
-        <span>Google Drive folder (MVP)</span>
+        <span>Google Drive</span>
+        <p class="hint" id="driveStatus">Drive: загрузка…</p>
+        <div class="row tight">
+          <button type="button" id="driveConnectBtn" class="secondary">Подключить Google Drive</button>
+          <button type="button" id="driveDisconnectBtn" class="secondary" hidden>Отключить</button>
+        </div>
         <input id="driveFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/..." />
-        <input id="driveTokenInput" type="password" placeholder="OAuth access token (drive.readonly)" autocomplete="off" />
         <button type="button" id="driveImportBtn" class="secondary">Импорт из Drive</button>
-        <p class="hint">Токен хранится только локально. Полный OAuth в расширении - TODO. См. docs/job-responder/drive.md</p>
+        <details id="driveManualDetails" class="driveManual">
+          <summary>Ручной token (fallback)</summary>
+          <input id="driveTokenInput" type="password" placeholder="OAuth access token (drive.readonly)" autocomplete="off" />
+          <p class="hint">Нужен только если client_id ещё не настроен. См. docs/job-responder/drive.md</p>
+        </details>
       </div>
     </section>
 
@@ -94,6 +102,7 @@
     <p class="success" id="success"></p>
 
     <script src="lib/api.js"></script>
+    <script src="lib/drive-auth.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

@@ -2,15 +2,21 @@
   "manifest_version": 3,
   "name": "Job Responder",
   "description": "Персонализированные отклики: парсинг любой страницы вакансии + Resume RAG (тестовый режим без login)",
-  "version": "0.3.0",
-  "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs"],
+  "version": "0.4.0",
+  "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs", "identity"],
   "host_permissions": [
     "http://*/*",
     "https://*/*",
     "https://swoop.autoro.tech/*",
     "http://127.0.0.1:8900/*",
-    "http://localhost:8900/*"
+    "http://localhost:8900/*",
+    "https://www.googleapis.com/*",
+    "https://accounts.google.com/*"
   ],
+  "oauth2": {
+    "client_id": "YOUR_CHROME_EXTENSION_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.readonly"]
+  },
   "background": {
     "service_worker": "background.js"
   },

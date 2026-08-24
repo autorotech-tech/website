@@ -281,11 +281,39 @@ const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
 const driveFolderInput = document.getElementById('driveFolderInput');
 const driveTokenInput = document.getElementById('driveTokenInput');
+const driveStatusEl = document.getElementById('driveStatus');
+const driveConnectBtn = document.getElementById('driveConnectBtn');
+const driveDisconnectBtn = document.getElementById('driveDisconnectBtn');
+const driveManualDetails = document.getElementById('driveManualDetails');
 
 const uploadResumeFileBtn = document.getElementById('uploadResumeFileBtn');
 const uploadPortfolioFilesBtn = document.getElementById('uploadPortfolioFilesBtn');
 const addLinkBtn = document.getElementById('addLinkBtn');
 const driveImportBtn = document.getElementById('driveImportBtn');
+
+async function refreshDriveStatus() {
+  if (!driveStatusEl || typeof JR_DRIVE_AUTH === 'undefined') return;
+  const st = await JR_DRIVE_AUTH.loadUiState();
+  if (driveFolderInput && !driveFolderInput.value && st.folderUrlOrId) {
+    driveFolderInput.value = st.folderUrlOrId;
+  }
+  if (driveTokenInput && st.manualToken && !driveTokenInput.value) {
+    driveTokenInput.value = st.manualToken;
+  }
+  if (!st.oauthConfigured) {
+    driveStatusEl.textContent =
+      'Drive: OAuth client_id ещё не задан в manifest - используйте ручной token или настройте GCP (drive.md)';
+    if (driveConnectBtn) driveConnectBtn.hidden = true;
+    if (driveDisconnectBtn) driveDisconnectBtn.hidden = true;
+    if (driveManualDetails) driveManualDetails.open = true;
+    return;
+  }
+  if (driveConnectBtn) driveConnectBtn.hidden = Boolean(st.connected);
+  if (driveDisconnectBtn) driveDisconnectBtn.hidden = !st.connected;
+  driveStatusEl.textContent = st.connected
+    ? 'Drive: подключён (chrome.identity). Папку укажите один раз - импорт берёт token сам.'
+    : 'Drive: не подключён. Нажмите «Подключить Google Drive».';
+}
 
 if (saveWorkspaceBtn) {
   saveWorkspaceBtn.addEventListener('click', async () => {
@@ -417,31 +445,85 @@ if (addLinkBtn) {
   });
 }
 
+if (driveConnectBtn) {
+  driveConnectBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    driveConnectBtn.disabled = true;
+    driveConnectBtn.textContent = 'Подключение…';
+    try {
+      await JR_DRIVE_AUTH.connectInteractive();
+      await refreshDriveStatus();
+      setSuccess('Google Drive подключён');
+    } catch (err) {
+      setError(String(err.message || err));
+      await refreshDriveStatus();
+    } finally {
+      driveConnectBtn.disabled = false;
+      driveConnectBtn.textContent = 'Подключить Google Drive';
+    }
+  });
+}
+
+if (driveDisconnectBtn) {
+  driveDisconnectBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    try {
+      await JR_DRIVE_AUTH.disconnect();
+      await refreshDriveStatus();
+      setSuccess('Google Drive отключён');
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  });
+}
+
 if (driveImportBtn) {
   driveImportBtn.addEventListener('click', async () => {
     setError('');
     setSuccess('');
     const folderUrlOrId = String(driveFolderInput?.value || '').trim();
-    const accessToken = String(driveTokenInput?.value || '').trim();
+    const manualToken = String(driveTokenInput?.value || '').trim();
     if (!folderUrlOrId) {
       setError('Укажите URL или ID папки Google Drive');
-      return;
-    }
-    if (!accessToken) {
-      setError('Нужен OAuth access token (drive.readonly). См. docs/job-responder/drive.md');
       return;
     }
     driveImportBtn.disabled = true;
     driveImportBtn.textContent = 'Импорт…';
     try {
-      await chrome.storage.local.set({ jrDriveAccessToken: accessToken });
+      await JR_DRIVE_AUTH.saveFolder(folderUrlOrId);
+      if (manualToken) await JR_DRIVE_AUTH.saveManualToken(manualToken);
+
+      let { accessToken, source } = await JR_DRIVE_AUTH.resolveAccessToken({
+        allowInteractive: true,
+        manualToken,
+      });
+
       await JR_API.ensureWorkspace();
-      const res = await JR_API.driveImport({ folderUrlOrId, accessToken });
+      let res;
+      try {
+        res = await JR_API.driveImport({ folderUrlOrId, accessToken });
+      } catch (err) {
+        const msg = String(err.message || err);
+        if (/401|unauthor/i.test(msg) && source === 'identity') {
+          ({ accessToken, source } = await JR_DRIVE_AUTH.refreshAfterUnauthorized(manualToken));
+          res = await JR_API.driveImport({ folderUrlOrId, accessToken });
+        } else {
+          throw err;
+        }
+      }
+
       const ids = (res.imported || []).map((x) => x.knowledgeItemId).filter(Boolean);
       await refreshResumeStatus();
       await refreshSources({ highlightIds: ids });
+      await refreshDriveStatus();
       const errN = (res.errors || []).length;
-      const summary = `Drive: импортировано ${res.importedCount || 0}` + (errN ? `, ошибок ${errN}` : '');
+      const via = source === 'identity' ? 'oauth' : 'manual token';
+      const summary =
+        `Drive: импортировано ${res.importedCount || 0}` +
+        (errN ? `, ошибок ${errN}` : '') +
+        ` (${via})`;
       if (errN && !(res.importedCount > 0)) {
         setError(`${summary}\n${(res.errors || []).map((e) => `${e.name}: ${e.error}`).join('\n')}`);
       } else if (errN) {
@@ -502,10 +584,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 (async function init() {
   try {
-    const saved = await chrome.storage.local.get(['jrDriveAccessToken']);
-    if (saved.jrDriveAccessToken && driveTokenInput) {
-      driveTokenInput.value = String(saved.jrDriveAccessToken);
-    }
+    await refreshDriveStatus();
     await refreshAuthHint();
     await JR_API.ensureWorkspace();
     await refreshResumeStatus();

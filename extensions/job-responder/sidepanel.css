@@ -78,6 +78,21 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.driveManual {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.driveManual summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.driveManual[open] summary {
+  margin-bottom: 6px;
+}
+
 .row {
   display: flex;
   gap: 8px;
