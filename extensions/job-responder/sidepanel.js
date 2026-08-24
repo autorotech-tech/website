@@ -87,6 +87,9 @@ function renderSources(items) {
       const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
       const isNew = lastAddedSourceIds.has(id) ? ' isNew' : '';
       const meta = [item.kind || '-', item.category || '-', formatUpdatedAt(item.updatedAt)].join(' | ');
+      const urlLine = item.url
+        ? `<div class="sourceItemPreview"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></div>`
+        : '';
       const preview = escapeHtml(item.preview || '');
       const title = escapeHtml(item.title || 'Untitled');
       return `
@@ -96,6 +99,7 @@ function renderSources(items) {
             <div>
               <div class="sourceItemTitle">${title}</div>
               <div class="sourceItemMeta">${escapeHtml(meta)}</div>
+              ${urlLine}
               ${preview ? `<div class="sourceItemPreview">${preview}</div>` : ''}
             </div>
           </div>
@@ -246,17 +250,23 @@ async function runGenerate(mode) {
   btn.disabled = true;
   try {
     await runRelevanceScore().catch(() => {});
+    const coverTemplate = String(coverTemplateEl?.value || '').trim();
+    if (coverTemplateEl) {
+      await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
+    }
     const data = await JR_API.generateResponse({
       mode,
       host: currentVacancy?.host || 'web',
       vacancy,
       selectedSourceIds: getSelectedSourceIds(),
+      coverTemplate: mode === 'cover_letter' ? coverTemplate : undefined,
     });
     resultText.value = data.text || '';
     if (data.relevance) renderRelevance(data.relevance);
+    const tplNote = data.usedCoverTemplate ? ' | template: yes' : '';
     genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
-    }`;
+    }${tplNote}`;
     setSuccess('Готово - проверьте текст и скопируйте');
   } catch (err) {
     setError(String(err.message || err));
@@ -276,7 +286,12 @@ const scoreBtn = document.getElementById('scoreBtn');
 const saveWorkspaceBtn = document.getElementById('saveWorkspaceBtn');
 
 const resumeFileInput = document.getElementById('resumeFile');
+const resumeFileHint = document.getElementById('resumeFileHint');
 const portfolioFilesInput = document.getElementById('portfolioFiles');
+const portfolioFileHint = document.getElementById('portfolioFileHint');
+const ragTextInput = document.getElementById('ragTextInput');
+const ragTextTitle = document.getElementById('ragTextTitle');
+const coverTemplateEl = document.getElementById('coverTemplate');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
 const driveFolderInput = document.getElementById('driveFolderInput');
@@ -288,8 +303,61 @@ const driveManualDetails = document.getElementById('driveManualDetails');
 
 const uploadResumeFileBtn = document.getElementById('uploadResumeFileBtn');
 const uploadPortfolioFilesBtn = document.getElementById('uploadPortfolioFilesBtn');
+const addRagTextBtn = document.getElementById('addRagTextBtn');
 const addLinkBtn = document.getElementById('addLinkBtn');
 const driveImportBtn = document.getElementById('driveImportBtn');
+
+function formatFileHint(input, hintEl) {
+  if (!hintEl) return;
+  const files = Array.from(input?.files || []);
+  if (!files.length) {
+    hintEl.textContent = 'Файлов не выбрано';
+    return;
+  }
+  const names = files.map((f) => f.name).slice(0, 4);
+  const more = files.length > 4 ? ` и ещё ${files.length - 4}` : '';
+  hintEl.textContent = `Выбрано ${files.length}: ${names.join(', ')}${more}`;
+}
+
+function collectLinkedIds(res) {
+  const ids = [];
+  if (res?.knowledgeItemId) ids.push(res.knowledgeItemId);
+  for (const link of res?.linkedSources || []) {
+    if (link?.knowledgeItemId) ids.push(link.knowledgeItemId);
+  }
+  return ids;
+}
+
+function formatLinkedNote(res) {
+  const n = (res?.linkedSources || []).length;
+  if (!n) return '';
+  const fresh = (res.linkedSources || []).filter((x) => !x.deduped).length;
+  return ` · ссылок: ${n}${fresh ? ` (новых ${fresh})` : ''}`;
+}
+
+async function uploadFilesSequentially(files, { kind, category, button, label }) {
+  const added = [];
+  const errors = [];
+  let linkedTotal = 0;
+  let i = 0;
+  for (const file of files) {
+    i += 1;
+    if (button) button.textContent = `Загрузка ${i}/${files.length}…`;
+    try {
+      const res = await JR_API.resumeFileCapture({
+        file,
+        kind,
+        category,
+        title: file.name,
+      });
+      added.push(...collectLinkedIds(res));
+      linkedTotal += (res.linkedSources || []).length;
+    } catch (err) {
+      errors.push(`${file.name}: ${err.message || err}`);
+    }
+  }
+  return { added, errors, linkedTotal };
+}
 
 async function refreshDriveStatus() {
   if (!driveStatusEl || typeof JR_DRIVE_AUTH === 'undefined') return;
@@ -326,31 +394,46 @@ if (saveWorkspaceBtn) {
   });
 }
 
+if (resumeFileInput) {
+  resumeFileInput.addEventListener('change', () => formatFileHint(resumeFileInput, resumeFileHint));
+}
+if (portfolioFilesInput) {
+  portfolioFilesInput.addEventListener('change', () => formatFileHint(portfolioFilesInput, portfolioFileHint));
+}
+
 if (uploadResumeFileBtn) {
   uploadResumeFileBtn.addEventListener('click', async () => {
     setError('');
     setSuccess('');
-    const file = resumeFileInput?.files?.[0];
-    if (!file) {
-      setError('Сначала выберите CV файл');
+    const files = Array.from(resumeFileInput?.files || []);
+    if (!files.length) {
+      setError('Сначала выберите CV файл(ы)');
       resumeFileInput?.click();
       return;
     }
     uploadResumeFileBtn.disabled = true;
-    uploadResumeFileBtn.textContent = 'Загрузка…';
+    uploadResumeFileBtn.textContent = `Загрузка 0/${files.length}…`;
     try {
-      const ws = await JR_API.ensureWorkspace();
-      const res = await JR_API.resumeFileCapture({
-        file,
+      await JR_API.ensureWorkspace();
+      const { added, errors, linkedTotal } = await uploadFilesSequentially(files, {
         kind: 'job_resume',
         category: 'cv',
-        title: file.name,
+        button: uploadResumeFileBtn,
+        label: 'CV',
       });
-      const kid = res.knowledgeItemId;
-      setSuccess(`CV добавлен: ${file.name} (id=${kid}, ws=${res.workspaceId || ws})`);
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: kid ? [kid] : [] });
+      await refreshSources({ highlightIds: added });
       resumeFileInput.value = '';
+      formatFileHint(resumeFileInput, resumeFileHint);
+      if (errors.length) {
+        setError(`Часть CV не загрузилась:\n${errors.join('\n')}`);
+      }
+      if (added.length) {
+        setSuccess(
+          `CV: ${files.length - errors.length}/${files.length} файл(ов)` +
+            (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '')
+        );
+      }
     } catch (err) {
       setError(String(err.message || err));
       await refreshSources().catch(() => {});
@@ -373,40 +456,67 @@ if (uploadPortfolioFilesBtn) {
     }
     uploadPortfolioFilesBtn.disabled = true;
     uploadPortfolioFilesBtn.textContent = `Загрузка 0/${files.length}…`;
-    const added = [];
-    const errors = [];
     try {
       await JR_API.ensureWorkspace();
-      let i = 0;
-      for (const file of files) {
-        i += 1;
-        uploadPortfolioFilesBtn.textContent = `Загрузка ${i}/${files.length}…`;
-        try {
-          const res = await JR_API.resumeFileCapture({
-            file,
-            kind: 'job_experience',
-            category: 'experience',
-            title: file.name,
-          });
-          if (res.knowledgeItemId) added.push(res.knowledgeItemId);
-        } catch (err) {
-          errors.push(`${file.name}: ${err.message || err}`);
-        }
-      }
+      const { added, errors, linkedTotal } = await uploadFilesSequentially(files, {
+        kind: 'job_experience',
+        category: 'experience',
+        button: uploadPortfolioFilesBtn,
+        label: 'Portfolio',
+      });
       await refreshResumeStatus();
       await refreshSources({ highlightIds: added });
       portfolioFilesInput.value = '';
+      formatFileHint(portfolioFilesInput, portfolioFileHint);
       if (errors.length) {
         setError(`Часть файлов не загрузилась:\n${errors.join('\n')}`);
       }
       if (added.length) {
-        setSuccess(`Portfolio: ${added.length} файл(ов) добавлено`);
+        setSuccess(
+          `Portfolio: ${files.length - errors.length}/${files.length} файл(ов)` +
+            (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '')
+        );
       }
     } catch (err) {
       setError(String(err.message || err));
     } finally {
       uploadPortfolioFilesBtn.disabled = false;
       uploadPortfolioFilesBtn.textContent = 'Добавить portfolio';
+    }
+  });
+}
+
+if (addRagTextBtn) {
+  addRagTextBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const text = String(ragTextInput?.value || '').trim();
+    const title = String(ragTextTitle?.value || '').trim();
+    if (text.length < 20) {
+      setError('Вставьте текст (мин. 20 символов)');
+      return;
+    }
+    addRagTextBtn.disabled = true;
+    addRagTextBtn.textContent = 'Добавление…';
+    try {
+      await JR_API.ensureWorkspace();
+      const res = await JR_API.resumeTextCapture({
+        text,
+        title: title || undefined,
+        kind: 'job_experience',
+        category: 'notes',
+      });
+      const ids = collectLinkedIds(res);
+      setSuccess(`Текст в RAG (id=${res.knowledgeItemId})${formatLinkedNote(res)}`);
+      await refreshResumeStatus();
+      await refreshSources({ highlightIds: ids });
+      if (ragTextInput) ragTextInput.value = '';
+      if (ragTextTitle) ragTextTitle.value = '';
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      addRagTextBtn.disabled = false;
+      addRagTextBtn.textContent = 'Добавить в RAG';
     }
   });
 }
@@ -429,11 +539,11 @@ if (addLinkBtn) {
         url,
         title: title || undefined,
         kind: 'job_experience',
-        category: 'experience',
+        category: 'link',
       });
-      setSuccess(`Ссылка добавлена (id=${res.knowledgeItemId})`);
+      setSuccess(`Ссылка добавлена (id=${res.knowledgeItemId})${formatLinkedNote(res)}`);
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: res.knowledgeItemId ? [res.knowledgeItemId] : [] });
+      await refreshSources({ highlightIds: collectLinkedIds(res) });
       linkUrlInput.value = '';
       linkTitleInput.value = '';
     } catch (err) {
@@ -514,14 +624,22 @@ if (driveImportBtn) {
         }
       }
 
-      const ids = (res.imported || []).map((x) => x.knowledgeItemId).filter(Boolean);
+      const ids = [];
+      for (const x of res.imported || []) {
+        if (x.knowledgeItemId) ids.push(x.knowledgeItemId);
+        for (const link of x.linkedSources || []) {
+          if (link?.knowledgeItemId) ids.push(link.knowledgeItemId);
+        }
+      }
       await refreshResumeStatus();
       await refreshSources({ highlightIds: ids });
       await refreshDriveStatus();
       const errN = (res.errors || []).length;
       const via = source === 'identity' ? 'oauth' : 'manual token';
+      const linkedN = ids.length - (res.importedCount || 0);
       const summary =
         `Drive: импортировано ${res.importedCount || 0}` +
+        (linkedN > 0 ? `, ссылок ${linkedN}` : '') +
         (errN ? `, ошибок ${errN}` : '') +
         ` (${via})`;
       if (errN && !(res.importedCount > 0)) {
@@ -580,10 +698,27 @@ chrome.storage.onChanged.addListener((changes, area) => {
     refreshResumeStatus();
     refreshSources().catch(() => {});
   }
+  if (changes.jrCoverTemplate && coverTemplateEl && document.activeElement !== coverTemplateEl) {
+    coverTemplateEl.value = String(changes.jrCoverTemplate.newValue || '');
+  }
 });
+
+let coverTemplateSaveTimer = null;
+if (coverTemplateEl) {
+  coverTemplateEl.addEventListener('input', () => {
+    clearTimeout(coverTemplateSaveTimer);
+    coverTemplateSaveTimer = setTimeout(() => {
+      chrome.storage.local.set({ jrCoverTemplate: String(coverTemplateEl.value || '') });
+    }, 400);
+  });
+}
 
 (async function init() {
   try {
+    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate']);
+    if (coverTemplateEl && savedTpl.jrCoverTemplate) {
+      coverTemplateEl.value = String(savedTpl.jrCoverTemplate);
+    }
     await refreshDriveStatus();
     await refreshAuthHint();
     await JR_API.ensureWorkspace();

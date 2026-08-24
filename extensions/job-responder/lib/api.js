@@ -155,7 +155,27 @@ const JR_API = (() => {
     });
   }
 
-  async function resumeLinkCapture({ url, title, kind = 'job_experience', category = 'experience' }) {
+  async function resumeTextCapture({ text, title, kind = 'job_experience', category = 'notes' }) {
+    if (!text || String(text).trim().length < 20) {
+      throw new Error('Текст слишком короткий (мин. 20 символов)');
+    }
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/text-capture`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        workspaceId,
+        text: String(text).trim(),
+        title: title || undefined,
+        kind,
+        category,
+      }),
+    });
+  }
+
+  async function resumeLinkCapture({ url, title, kind = 'job_experience', category = 'link' }) {
     if (!url) throw new Error('url is required');
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -195,10 +215,18 @@ const JR_API = (() => {
     });
   }
 
-  async function generateResponse({ mode, host, vacancy, selectedSourceIds = [] }) {
+  async function generateResponse({
+    mode,
+    host,
+    vacancy,
+    selectedSourceIds = [],
+    coverTemplate,
+    baseLetter,
+  }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
+    const template = String(coverTemplate || baseLetter || '').trim();
     return fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
       headers,
@@ -209,6 +237,7 @@ const JR_API = (() => {
         vacancy,
         locale: 'ru',
         selectedSourceIds,
+        ...(template ? { coverTemplate: template, baseLetter: template } : {}),
       }),
     });
   }
@@ -253,6 +282,7 @@ const JR_API = (() => {
     resumeCapture,
     resumeStatus,
     resumeFileCapture,
+    resumeTextCapture,
     resumeLinkCapture,
     scoreRelevance,
     setWorkspaceId,

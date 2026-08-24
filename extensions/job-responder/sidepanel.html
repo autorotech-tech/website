@@ -27,15 +27,24 @@
       <div class="sourcesList" id="sourcesList" aria-live="polite"></div>
 
       <div class="field">
-        <span>CV файл (primary)</span>
-        <input id="resumeFile" type="file" accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
+        <span>CV файлы (primary, можно несколько)</span>
+        <input id="resumeFile" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
+        <p class="hint" id="resumeFileHint">Файлов не выбрано</p>
         <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
       </div>
 
       <div class="field">
-        <span>Portfolio файлы / скриншоты</span>
+        <span>Portfolio файлы / скриншоты (несколько)</span>
         <input id="portfolioFiles" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
+        <p class="hint" id="portfolioFileHint">Файлов не выбрано</p>
         <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
+      </div>
+
+      <div class="field">
+        <span>Текст для RAG</span>
+        <textarea id="ragTextInput" rows="4" placeholder="Вставьте свободный текст (опыт, кейсы, заметки) - попадёт в Resume RAG"></textarea>
+        <input id="ragTextTitle" type="text" placeholder="Название (необязательно)" />
+        <button type="button" id="addRagTextBtn" class="secondary">Добавить в RAG</button>
       </div>
 
       <div class="field">
@@ -79,6 +88,15 @@
 
     <section class="card">
       <h2>Генерация</h2>
+      <label class="field">
+        <span>Моё сопроводительное (шаблон)</span>
+        <textarea
+          id="coverTemplate"
+          rows="5"
+          placeholder="Вставьте своё письмо - генерация адаптирует его под вакансию (не пишет с нуля)"
+        ></textarea>
+        <p class="hint">Сохраняется локально (chrome.storage). Пусто = письмо с нуля по источникам.</p>
+      </label>
       <div class="row">
         <button type="button" id="genCoverBtn">Отклик</button>
         <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>

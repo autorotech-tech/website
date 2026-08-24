@@ -33,6 +33,8 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 
 _SKILL_SPLIT = re.compile(r"[,;/|•·\n]+")
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9+#.\-]{2,}")
+# http(s) URLs in CV/portfolio/text (trim trailing punctuation separately)
+_URL_RE = re.compile(r"https?://[^\s<>\"'`)\]]+", re.IGNORECASE)
 
 _KNOWN_TOOLS = {
     "python",
@@ -185,6 +187,9 @@ class JobResponderGeneratePayload(BaseModel):
     vacancy: JobResponderVacancyPayload
     locale: str = Field(default="ru", max_length=16)
     selectedSourceIds: List[int] = Field(default_factory=list)
+    # User's own cover letter to adapt (not write from scratch). Alias: baseLetter.
+    coverTemplate: Optional[str] = Field(default=None, max_length=20000)
+    baseLetter: Optional[str] = Field(default=None, max_length=20000)
 
 
 class JobResponderResumeCapturePayload(BaseModel):
@@ -193,6 +198,16 @@ class JobResponderResumeCapturePayload(BaseModel):
     text: str = Field(..., min_length=20, max_length=200000)
     kind: str = Field(default="job_resume", max_length=64)
     category: str = Field(default="cv", max_length=128)
+
+
+class JobResponderTextCapturePayload(BaseModel):
+    """Paste free-form text into Resume RAG (source=job_responder)."""
+
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    text: str = Field(..., min_length=20, max_length=200000)
+    title: Optional[str] = Field(default=None, max_length=1000)
+    kind: str = Field(default="job_experience", max_length=64)
+    category: str = Field(default="notes", max_length=128)
 
 
 class JobResponderResumeSearchPayload(BaseModel):
@@ -239,6 +254,31 @@ def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def extract_urls_from_text(text: str, limit: int = 20) -> List[str]:
+    """Extract unique http(s) URLs from free text / OCR / CV content."""
+    if not text:
+        return []
+    out: List[str] = []
+    seen = set()
+    for m in _URL_RE.finditer(text):
+        raw = m.group(0).rstrip(".,;:!?)]}>\"'")
+        if not raw or len(raw) < 8:
+            continue
+        key = raw.lower().rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(raw)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def resolve_cover_template(cover_template: Optional[str], base_letter: Optional[str]) -> str:
+    raw = (cover_template or base_letter or "").strip()
+    return raw[:20000] if raw else ""
 
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
@@ -563,7 +603,7 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def build_system_prompt(mode: str) -> str:
+def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
     base = """Ты помощник кандидата при отклике на вакансии.
 
 Правила:
@@ -584,6 +624,19 @@ def build_system_prompt(mode: str) -> str:
 [{"question":"...","answer":"..."}]
 По одному объекту на каждый вопрос из списка QUESTIONS. Ответы 1-4 предложения, конкретно."""
         )
+    if has_cover_template:
+        return (
+            base
+            + """
+Режим: адаптация сопроводительного письма под вакансию.
+Дан блок COVER TEMPLATE - это письмо кандидата. НЕ пиши письмо с нуля.
+Задача: адаптировать шаблон под конкретную вакансию и выбранные источники:
+- сохрани голос, тон и структуру автора;
+- подставь/уточни факты под требования вакансии (только из RESUME CONTEXT);
+- убери нерелевантное, усили совпадения с вакансией;
+- длина ориентировочно как у шаблона (или 800-1400 символов).
+Верни ТОЛЬКО текст письма, без пояснений."""
+        )
     return (
         base
         + """
@@ -600,6 +653,7 @@ def build_user_prompt(
     mode: str,
     host: str,
     questions: Optional[List[str]] = None,
+    cover_template: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
     ctx_lines = []
@@ -635,6 +689,8 @@ def build_user_prompt(
         f"VACANCY:\n{vacancy_block}",
         f"RESUME CONTEXT:\n{resume_context}",
     ]
+    if mode == "cover_letter" and cover_template:
+        parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:12000]}")
     if mode == "question_answers":
         qlist = questions or vacancy.questions or []
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
@@ -918,6 +974,100 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             embedded = True
         return kid, embedded, content_hash, profile
 
+    def _find_resume_item_by_url(cur, workspace_id: int, url: str) -> Optional[int]:
+        canonical = normalize_url(url) if url else ""
+        if not canonical:
+            return None
+        cur.execute(
+            """
+            select id
+            from public.knowledge_items
+            where workspace_id = %s
+              and source = %s
+              and (
+                canonical_url = %s
+                or url = %s
+                or canonical_url = %s
+                or url = %s
+              )
+            order by updated_at desc
+            limit 1
+            """,
+            (workspace_id, RESUME_SOURCE, canonical, canonical, url, url),
+        )
+        row = cur.fetchone()
+        if not row or row.get("id") is None:
+            return None
+        return int(row["id"])
+
+    def _index_extracted_links(
+        cur,
+        workspace_id: int,
+        text: str,
+        *,
+        parent_title: str = "",
+        parent_id: Optional[int] = None,
+        max_links: int = 12,
+        fetch_remote: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Extract http(s) URLs from text and upsert selectable link sources (category=link)."""
+        urls = extract_urls_from_text(text, limit=max_links)
+        linked: List[Dict[str, Any]] = []
+        for url in urls:
+            existing = _find_resume_item_by_url(cur, workspace_id, url)
+            if existing is not None:
+                linked.append(
+                    {
+                        "knowledgeItemId": existing,
+                        "url": url,
+                        "deduped": True,
+                        "title": url,
+                    }
+                )
+                continue
+
+            link_text = ""
+            if fetch_remote:
+                try:
+                    fetched = fetch_content_via_jina(normalize_url(url), timeout_sec=12)
+                    if fetched.get("ok"):
+                        link_text = str(fetched.get("content_text") or "").strip()
+                except Exception:
+                    link_text = ""
+
+            if len(link_text) < 20:
+                parent_bit = f" (from {parent_title})" if parent_title else ""
+                parent_id_bit = f" parent_id={parent_id}" if parent_id else ""
+                link_text = (
+                    f"Link extracted from Job Responder source{parent_bit}{parent_id_bit}.\n"
+                    f"URL: {url}\n"
+                    "Content fetch unavailable; URL indexed for RAG selection."
+                )
+
+            item_title = truncate_text(url, 1000)
+            kid, embedded, content_hash, profile = _upsert_resume_item_text(
+                cur,
+                workspace_id,
+                title=item_title,
+                text=link_text,
+                kind_norm="job_experience",
+                category="link",
+                url=normalize_url(url) or url,
+                extra_tags=["link", "extracted-url"],
+            )
+            linked.append(
+                {
+                    "knowledgeItemId": kid,
+                    "url": url,
+                    "deduped": False,
+                    "embedded": embedded,
+                    "contentHash": content_hash,
+                    "title": item_title,
+                    "profile": profile,
+                }
+            )
+        return linked
+
     @app.get("/api/v1/job-responder/resume/status")
     async def job_responder_resume_status(
         workspaceId: str,
@@ -1041,6 +1191,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     category=category,
                     url=None,
                 )
+                linked = _index_extracted_links(
+                    cur,
+                    workspace_id,
+                    text,
+                    parent_title=title,
+                    parent_id=kid if kid != -1 else None,
+                )
             conn.commit()
             return {
                 "ok": True,
@@ -1050,6 +1207,68 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "embedded": embedded,
                 "contentHash": _content_hash,
                 "profile": profile,
+                "linkedSources": linked,
+                "workspaceId": str(workspace_id),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @app.post("/api/v1/job-responder/resume/text-capture")
+    async def job_responder_resume_text_capture(
+        payload: JobResponderTextCapturePayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """Ingest free-form pasted text into Resume RAG (source=job_responder)."""
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+
+        text = str(payload.text or "").strip()
+        if len(text) < 20:
+            raise HTTPException(status_code=422, detail="text too short (min 20 chars)")
+
+        kind_norm = _resume_kind_norm(payload.kind)
+        category = truncate_text(str(payload.category or "notes").strip().lower(), 128) or "notes"
+        title = truncate_text(
+            (payload.title or "").strip() or f"Notes {text[:48].replace(chr(10), ' ')}",
+            1000,
+        )
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                kid, embedded, content_hash, profile = _upsert_resume_item_text(
+                    cur,
+                    workspace_id,
+                    title=title,
+                    text=text,
+                    kind_norm=kind_norm,
+                    category=category,
+                    url=None,
+                    extra_tags=["pasted-text"],
+                )
+                linked = _index_extracted_links(
+                    cur,
+                    workspace_id,
+                    text,
+                    parent_title=title,
+                    parent_id=kid if kid != -1 else None,
+                )
+            conn.commit()
+            return {
+                "ok": True,
+                "knowledgeItemId": kid,
+                "kind": kind_norm,
+                "category": category,
+                "embedded": embedded,
+                "contentHash": content_hash,
+                "profile": profile,
+                "linkedSources": linked,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1127,6 +1346,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     url=None,
                     extra_tags=extra_tags,
                 )
+                linked = _index_extracted_links(
+                    cur,
+                    workspace_id,
+                    extracted_text,
+                    parent_title=item_title,
+                    parent_id=kid if kid != -1 else None,
+                )
             conn.commit()
             return {
                 "ok": True,
@@ -1137,6 +1363,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "contentHash": content_hash,
                 "extract": meta,
                 "profile": profile,
+                "linkedSources": linked,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1169,28 +1396,43 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             raise HTTPException(status_code=422, detail="empty_link_content")
 
         item_title = truncate_text((payload.title or url_norm or "Link").strip(), 1000)
+        category_for_store = category_norm if category_norm != "experience" else "link"
 
         conn = pg_connect()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                existing = _find_resume_item_by_url(cur, workspace_id, url_norm)
                 kid, embedded, content_hash, profile = _upsert_resume_item_text(
                     cur,
                     workspace_id,
                     title=item_title,
                     text=text,
                     kind_norm=kind_norm,
-                    category=category_norm,
+                    category=category_for_store,
                     url=url_norm,
+                    extra_tags=["link"],
+                )
+                # Nested URLs inside fetched page (light: no recursive remote fetch)
+                linked = _index_extracted_links(
+                    cur,
+                    workspace_id,
+                    text,
+                    parent_title=item_title,
+                    parent_id=kid if kid != -1 else None,
+                    max_links=8,
+                    fetch_remote=False,
                 )
             conn.commit()
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
                 "kind": kind_norm,
-                "category": category_norm,
+                "category": category_for_store,
                 "embedded": embedded,
                 "contentHash": content_hash,
                 "profile": profile,
+                "deduped": existing is not None and existing == kid,
+                "linkedSources": linked,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1324,6 +1566,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             url=f"https://drive.google.com/file/d/{fid}/view",
                             extra_tags=["drive", "screenshot"] if use_category == "screenshot" else ["drive"],
                         )
+                        linked = _index_extracted_links(
+                            cur,
+                            workspace_id,
+                            text.strip(),
+                            parent_title=fname,
+                            parent_id=kid if kid != -1 else None,
+                            max_links=8,
+                        )
                         imported.append(
                             {
                                 "knowledgeItemId": kid,
@@ -1333,6 +1583,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                                 "embedded": embedded,
                                 "contentHash": content_hash,
                                 "profile": profile,
+                                "linkedSources": linked,
                             }
                         )
                     except HTTPException as exc:
@@ -1468,13 +1719,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         rag_items = [dict(r) for r in rag_rows]
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items)
         mode = payload.mode
-        system_prompt = build_system_prompt(mode)
+        cover_template = resolve_cover_template(payload.coverTemplate, payload.baseLetter)
+        has_template = bool(cover_template) and mode == "cover_letter"
+        system_prompt = build_system_prompt(mode, has_cover_template=has_template)
         user_prompt = build_user_prompt(
             payload.vacancy,
             rag_items,
             mode,
             payload.host,
             payload.vacancy.questions,
+            cover_template=cover_template if has_template else "",
         )
 
         chat_result = openai_chat_completions_generic(
@@ -1525,5 +1779,6 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "provider": chat_result.provider_used,
             "host": payload.host,
             "mode": mode,
+            "usedCoverTemplate": has_template,
             "workspaceId": str(workspace_id),
         }
