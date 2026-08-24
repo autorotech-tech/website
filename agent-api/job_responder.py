@@ -76,6 +76,7 @@ _KNOWN_TOOLS = {
     "node",
     "nodejs",
     "n8n",
+    "comfyui",
     "docker",
     "kubernetes",
     "aws",
@@ -89,6 +90,11 @@ _KNOWN_TOOLS = {
     "redis",
     "llm",
     "openai",
+    "chatgpt",
+    "gpt",
+    "claude",
+    "anthropic",
+    "gemini",
     "langchain",
     "fastapi",
     "django",
@@ -102,6 +108,7 @@ _KNOWN_TOOLS = {
     "midjourney",
     "stable diffusion",
     "runway",
+    "kling",
     "elevenlabs",
     "selenium",
     "playwright",
@@ -643,10 +650,26 @@ def vacancy_to_match_blob(vacancy: JobResponderVacancyPayload) -> Dict[str, Any]
     return profile
 
 
+def _parse_experience_years(text: str) -> Optional[float]:
+    raw = (text or "").lower()
+    if not raw:
+        return None
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*\+?\s*(?:лет|года|год|years?|yrs?)", raw)
+    if m:
+        try:
+            return float(m.group(1).replace(",", "."))
+        except ValueError:
+            return None
+    if "без опыта" in raw or "no experience" in raw:
+        return 0.0
+    return None
+
+
 def score_resume_vs_vacancy(
     vacancy: JobResponderVacancyPayload,
     resume_rows: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
+    """Deterministic 0–100 score with explainable matched/missing bullets."""
     vac_profile = vacancy_to_match_blob(vacancy)
     vac_skills = {s.lower() for s in (vac_profile.get("skills") or [])}
     vac_tools = {s.lower() for s in (vac_profile.get("tools") or [])}
@@ -654,6 +677,21 @@ def score_resume_vs_vacancy(
     vac_domains = {s.lower() for s in (vac_profile.get("domains") or [])}
     vac_prefs = {s.lower() for s in (vac_profile.get("employment_preferences") or [])}
     vac_format = (vac_profile.get("geo_remote") or "").lower()
+    vac_seniority = str(vac_profile.get("seniority") or "").lower() or None
+    vac_exp_years = _parse_experience_years(str(vac_profile.get("experience_raw") or ""))
+
+    # Tools mentioned in vacancy title/description even if not in structured skills
+    vac_blob = " ".join(
+        p
+        for p in (
+            vacancy.title,
+            vacancy.company or "",
+            vacancy.description[:4000],
+            " ".join(vac_skills),
+        )
+        if p
+    ).lower()
+    vac_tools |= {t for t in _KNOWN_TOOLS if t in vac_blob}
 
     merged_skills: set = set()
     merged_tools: set = set()
@@ -662,10 +700,27 @@ def score_resume_vs_vacancy(
     merged_prefs: set = set()
     resume_formats: set = set()
     resume_seniority: Optional[str] = None
+    resume_titles: List[str] = []
+    resume_exp_years: List[float] = []
+    resume_text_blob = ""
 
     for row in resume_rows:
         body = str(row.get("content_text") or row.get("ai_summary") or "")
+        title = str(row.get("title") or "")
+        if title:
+            resume_titles.append(title.lower())
+        resume_text_blob += " " + title + " " + body[:5000]
         prof = parse_profile_from_content(body)
+        if not prof.get("tools"):
+            # fall back to raw extract when profile JSON missing tools
+            soft = extract_resume_profile(body, title=title)
+            for k in ("skills", "tools", "roles", "domains", "employment_preferences"):
+                if not prof.get(k) and soft.get(k):
+                    prof[k] = soft[k]
+            if not prof.get("geo_remote") and soft.get("geo_remote"):
+                prof["geo_remote"] = soft["geo_remote"]
+            if not prof.get("seniority") and soft.get("seniority"):
+                prof["seniority"] = soft["seniority"]
         merged_skills.update(s.lower() for s in (prof.get("skills") or []))
         merged_tools.update(s.lower() for s in (prof.get("tools") or []))
         merged_roles.update(s.lower() for s in (prof.get("roles") or []))
@@ -674,70 +729,171 @@ def score_resume_vs_vacancy(
         if prof.get("geo_remote"):
             resume_formats.add(str(prof["geo_remote"]).lower())
         if prof.get("seniority") and not resume_seniority:
-            resume_seniority = str(prof["seniority"])
+            resume_seniority = str(prof["seniority"]).lower()
+        ey = _parse_experience_years(body[:1500])
+        if ey is not None:
+            resume_exp_years.append(ey)
 
+    resume_lower = resume_text_blob.lower()
+    merged_tools |= {t for t in _KNOWN_TOOLS if t in resume_lower}
+
+    if not resume_rows:
+        return {
+            "score": 0,
+            "rationale": ["Нет выбранных/найденных источников Resume RAG"],
+            "matched": [],
+            "missing": ["Загрузите CV / portfolio в Resume RAG"],
+            "vacancyProfile": vac_profile,
+            "matchedSkills": [],
+            "matchedTools": [],
+            "missingSkills": sorted(vac_skills)[:12],
+            "missingTools": sorted(vac_tools)[:12],
+        }
+
+    score = 0
     rationale: List[str] = []
-    score = 35  # baseline if any resume context exists
+    matched: List[str] = []
+    missing: List[str] = []
+    skill_hits: List[str] = []
+    skill_miss: List[str] = []
+    tool_hits: List[str] = []
+    tool_miss: List[str] = []
 
-    skill_hits = sorted(vac_skills & (merged_skills | merged_tools))
-    if vac_skills:
-        ratio = len(skill_hits) / max(len(vac_skills), 1)
-        score += int(35 * min(1.0, ratio))
-        if skill_hits:
-            rationale.append(f"Совпадение навыков: {', '.join(skill_hits[:8])}")
-        else:
-            rationale.append("Прямых совпадений ключевых навыков мало - опирайтесь на смежный опыт")
-            score -= 8
+    # --- Tools (0–28) ---
+    tool_hits = sorted(vac_tools & merged_tools)
+    tool_miss = sorted(vac_tools - merged_tools)
+    if vac_tools:
+        ratio = len(tool_hits) / max(len(vac_tools), 1)
+        pts = int(28 * min(1.0, ratio))
+        score += pts
+        if tool_hits:
+            matched.append(f"Инструменты: {', '.join(tool_hits[:10])}")
+            rationale.append(f"Инструменты +{pts}: {', '.join(tool_hits[:8])}")
+        if tool_miss:
+            missing.append(f"Инструменты: {', '.join(tool_miss[:8])}")
     else:
-        # soft token overlap on title keywords
-        title_tokens = {t.lower() for t in _TOKEN_RE.findall(vacancy.title or "") if len(t) > 2}
+        score += 6
+        rationale.append("В вакансии мало явных tool-keywords - мягкий бонус")
+
+    # --- Skills (0–30), excluding pure tools already counted ---
+    skill_pool = vac_skills - vac_tools
+    resume_skill_pool = merged_skills | merged_tools
+    skill_hits = sorted(skill_pool & resume_skill_pool) if skill_pool else sorted(vac_skills & resume_skill_pool)
+    skill_miss = sorted(skill_pool - resume_skill_pool) if skill_pool else sorted(vac_skills - resume_skill_pool)
+    if vac_skills or skill_pool:
+        denom = max(len(skill_pool or vac_skills), 1)
+        ratio = len(skill_hits) / denom
+        pts = int(30 * min(1.0, ratio))
+        score += pts
+        if skill_hits:
+            matched.append(f"Навыки: {', '.join(skill_hits[:10])}")
+            rationale.append(f"Навыки +{pts}: {', '.join(skill_hits[:8])}")
+        else:
+            rationale.append("Прямых совпадений навыков мало")
+            score = max(0, score - 4)
+        if skill_miss:
+            missing.append(f"Навыки: {', '.join(skill_miss[:8])}")
+    else:
+        # soft title token overlap
+        title_tokens = {
+            t.lower()
+            for t in _TOKEN_RE.findall(vacancy.title or "")
+            if len(t) > 2 and t.lower() not in {"для", "and", "the", "with"}
+        }
         soft = sorted(title_tokens & (merged_skills | merged_tools | merged_roles | merged_domains))
         if soft:
-            score += min(20, 4 * len(soft))
-            rationale.append(f"Совпадения по заголовку: {', '.join(soft[:6])}")
+            pts = min(18, 4 * len(soft))
+            score += pts
+            matched.append(f"По заголовку: {', '.join(soft[:6])}")
+            rationale.append(f"Совпадения по заголовку +{pts}: {', '.join(soft[:6])}")
+        else:
+            rationale.append("Мало пересечений по навыкам/заголовку")
 
+    # --- Role / title (0–18) ---
     role_hits = sorted(vac_roles & merged_roles)
+    title_l = (vacancy.title or "").lower()
+    title_in_resume = any(
+        len(tok) > 3 and tok in resume_lower
+        for tok in _TOKEN_RE.findall(title_l)
+    ) or any(any(tok in rt for tok in title_l.split() if len(tok) > 3) for rt in resume_titles)
+    role_pts = 0
     if role_hits:
-        score += 8
-        rationale.append(f"Роли: {', '.join(role_hits[:4])}")
+        role_pts += 10
+        matched.append(f"Роли: {', '.join(role_hits[:4])}")
+    if title_in_resume:
+        role_pts += 8
+        matched.append(f"Заголовок вакансии отражён в Resume RAG")
+    elif vac_roles and not role_hits:
+        missing.append(f"Роли: {', '.join(sorted(vac_roles)[:4])}")
+    score += min(18, role_pts)
+    if role_pts:
+        rationale.append(f"Роль/title +{min(18, role_pts)}")
 
+    # --- Domains (0–8) ---
     domain_hits = sorted(vac_domains & merged_domains)
     if domain_hits:
-        score += 7
+        score += min(8, 4 * len(domain_hits))
+        matched.append(f"Домены: {', '.join(domain_hits[:4])}")
         rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
+    elif vac_domains:
+        missing.append(f"Домены: {', '.join(sorted(vac_domains)[:4])}")
 
+    # --- Work format (0–10) ---
     if vac_format:
         if vac_format in resume_formats or (vac_format == "remote" and "remote" in merged_prefs):
             score += 10
+            matched.append(f"Формат: {vac_format}")
             rationale.append(f"Формат работы совпадает: {vac_format}")
         else:
-            score -= 5
-            rationale.append(f"Формат вакансии ({vac_format}) не явно подтверждён в Resume RAG")
+            score -= 4
+            missing.append(f"Формат вакансии: {vac_format}")
+            rationale.append(f"Формат ({vac_format}) не подтверждён в Resume RAG")
 
+    # --- Employment prefs (0–5) ---
     pref_hits = sorted(vac_prefs & merged_prefs)
     if pref_hits:
         score += 5
+        matched.append(f"Занятость: {', '.join(pref_hits)}")
         rationale.append(f"Занятость: {', '.join(pref_hits)}")
 
-    if vac_profile.get("experience_raw"):
+    # --- Experience / seniority (0–12) ---
+    exp_pts = 0
+    if vac_seniority and resume_seniority:
+        if vac_seniority == resume_seniority:
+            exp_pts += 6
+            matched.append(f"Seniority: {resume_seniority}")
+        elif {vac_seniority, resume_seniority} <= {"middle", "senior"}:
+            exp_pts += 3
+            matched.append(f"Seniority близко: resume={resume_seniority}, vacancy={vac_seniority}")
+        else:
+            missing.append(f"Seniority: нужно {vac_seniority}, в RAG {resume_seniority}")
+    elif vac_profile.get("experience_raw"):
         rationale.append(f"Требуемый опыт: {vac_profile['experience_raw']}")
-        if resume_seniority:
-            rationale.append(f"В резюме seniority: {resume_seniority}")
-            score += 3
+    if vac_exp_years is not None and resume_exp_years:
+        best = max(resume_exp_years)
+        if best + 0.5 >= vac_exp_years:
+            exp_pts += 6
+            matched.append(f"Опыт: ~{best:g}+ лет (нужно {vac_exp_years:g})")
+        else:
+            missing.append(f"Опыт: в RAG ~{best:g} лет, нужно {vac_exp_years:g}+")
+    score += min(12, exp_pts)
+    if exp_pts:
+        rationale.append(f"Опыт/seniority +{min(12, exp_pts)}")
 
-    if not resume_rows:
-        score = 0
-        rationale = ["Нет выбранных/найденных источников Resume RAG"]
-
-    score = max(0, min(100, score))
+    score = max(0, min(100, int(score)))
     if not rationale:
-        rationale.append("Базовая оценка по общему контексту резюме")
+        rationale.append("Оценка по пересечению профиля Resume RAG и вакансии")
 
     return {
         "score": score,
-        "rationale": rationale[:8],
+        "rationale": rationale[:10],
+        "matched": matched[:12],
+        "missing": missing[:12],
         "vacancyProfile": vac_profile,
         "matchedSkills": skill_hits[:12],
+        "matchedTools": tool_hits[:12],
+        "missingSkills": skill_miss[:12],
+        "missingTools": tool_miss[:12],
     }
 
 
@@ -1544,7 +1700,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                       tags,
                       updated_at,
                       coalesce(seen_count, 1)::int as seen_count,
-                      left(coalesce(ai_summary, ''), 220) as preview
+                      left(coalesce(ai_summary, ''), 220) as preview,
+                      left(coalesce(content_text, ''), 16000) as content_snippet
                     from public.knowledge_items
                     where workspace_id = %s
                       and source = %s
@@ -1564,12 +1721,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "items": [
                     {
                         "knowledgeItemId": int(r["id"]),
-                        "title": r.get("title"),
+                        "title": (r.get("title") or "").strip() or f"Источник #{int(r['id'])}",
+                        "name": (r.get("title") or "").strip() or f"Источник #{int(r['id'])}",
                         "url": r.get("url"),
                         "kind": r.get("kind"),
                         "category": r.get("category"),
                         "tags": r.get("tags") or [],
                         "preview": r.get("preview"),
+                        "contentText": strip_profile_wrapper(str(r.get("content_snippet") or ""))[:12000],
+                        "contentPreview": strip_profile_wrapper(str(r.get("content_snippet") or ""))[:12000],
                         "description": r.get("preview") if str(r.get("category") or "") == "link" else "",
                         "merged": int(r.get("seen_count") or 1) > 1
                         or (
@@ -2338,10 +2498,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             {"role": "user", "content": user_prompt},
         ]
         max_tokens = 900 if mode == "question_answers" else 800
+        # Job Responder: GLM → Gemini → openmodel. OpenRouter intentionally skipped.
         attempts = (
+            {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
             {"tier_override": "fast", "route_provider_override": "gemini", "route_model_override": "gemini-2.0-flash"},
-            {"tier_override": "fast", "route_provider_override": "groq", "route_model_override": ""},
-            {"tier_override": "fast", "route_provider_override": "openrouter", "route_model_override": "openai/gpt-4o-mini"},
+            {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
         )
         chat_result = None
         last_err = ""
@@ -2380,8 +2541,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "Модель не ответила вовремя. Выберите меньше sources и повторите."
                 if last_err == "timeout"
                 else (
-                    "LLM не вернул текст (ключи OpenRouter/GLM без кредита или модель недоступна). "
-                    "Проверьте Swoop Admin -> Settings -> OpenRouter / Gemini."
+                    "LLM не вернул текст (GLM / Gemini / openmodel без ключа, без кредита или модель недоступна). "
+                    "Проверьте Swoop Admin -> Settings -> GLM, Gemini, openmodel."
                 )
             )
             return {

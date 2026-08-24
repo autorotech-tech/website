@@ -98,7 +98,13 @@
           rows="5"
           placeholder="Вставьте своё письмо - генерация адаптирует его под вакансию (не пишет с нуля)"
         ></textarea>
-        <p class="hint">Сохраняется локально (chrome.storage). Пусто = письмо с нуля по источникам.</p>
+        <div class="row tight">
+          <button type="button" id="coverFromRagBtn" class="secondary">Взять из RAG</button>
+        </div>
+        <p class="hint">
+          Сохраняется локально (chrome.storage). Пусто = письмо с нуля по источникам. Если в Resume RAG есть
+          сопроводительное - подставится само (при пустом поле).
+        </p>
       </label>
       <div class="row">
         <button type="button" id="genCoverBtn">Отклик</button>

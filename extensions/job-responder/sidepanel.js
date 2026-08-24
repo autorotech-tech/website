@@ -87,6 +87,82 @@ function kindLabel(kind) {
   return kind || '';
 }
 
+function sourceId(item) {
+  return Number(item.knowledgeItemId || item.knowledge_item_id || item.id || 0);
+}
+
+function sourceTitleRaw(item) {
+  const raw = String(
+    item.title || item.name || item.filename || item.fileName || item.file_name || ''
+  ).trim();
+  if (raw) return raw;
+  const id = sourceId(item);
+  return id > 0 ? `Источник #${id}` : 'Без названия';
+}
+
+function sourceUpdatedAt(item) {
+  return item.updatedAt || item.updated_at || '';
+}
+
+function coverLetterHaystack(item) {
+  const tags = Array.isArray(item.tags) ? item.tags.join(' ') : String(item.tags || '');
+  return [
+    item.title,
+    item.name,
+    item.category,
+    item.kind,
+    tags,
+    item.preview,
+    item.description,
+    item.contentText,
+    item.contentPreview,
+  ]
+    .map((x) => String(x || '').toLowerCase())
+    .join(' ');
+}
+
+function isCoverLetterSource(item) {
+  const hay = coverLetterHaystack(item);
+  if (!hay.trim()) return false;
+  if (/\b(cv|resume|резюме|portfolio|портфолио)\b/i.test(hay) && !/сопровод|cover\s*letter|coverletter/.test(hay)) {
+    return false;
+  }
+  return /сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|motivational\s*letter|шаблон\s*отклик/.test(
+    hay
+  );
+}
+
+function coverLetterBody(item) {
+  return String(item.contentText || item.contentPreview || item.preview || '')
+    .replace(/^---jr_profile---[\s\S]*?\n---\n/, '')
+    .trim();
+}
+
+function pickCoverLetterSource(items) {
+  const matches = (Array.isArray(items) ? items : []).filter(isCoverLetterSource);
+  if (!matches.length) return null;
+  matches.sort((a, b) => {
+    const ta = Date.parse(sourceUpdatedAt(a) || '') || 0;
+    const tb = Date.parse(sourceUpdatedAt(b) || '') || 0;
+    return tb - ta;
+  });
+  return matches[0];
+}
+
+async function maybePrefillCoverTemplate(items, { force = false } = {}) {
+  if (!coverTemplateEl) return false;
+  const current = String(coverTemplateEl.value || '').trim();
+  if (!force && current) return false;
+  const picked = pickCoverLetterSource(items);
+  if (!picked) return false;
+  const body = coverLetterBody(picked);
+  if (!body || body.length < 40) return false;
+  coverTemplateEl.value = body;
+  await chrome.storage.local.set({ jrCoverTemplate: body });
+  setSuccess(`Шаблон сопроводительного взят из RAG: ${sourceTitleRaw(picked)}`);
+  return true;
+}
+
 function renderSources(items) {
   currentSources = Array.isArray(items) ? items : [];
   if (!sourcesListEl) return;
@@ -97,24 +173,28 @@ function renderSources(items) {
   }
   sourcesListEl.innerHTML = currentSources
     .map((item) => {
-      const id = Number(item.knowledgeItemId || 0);
+      const id = sourceId(item);
       const checked = item.kind === 'job_resume' ? 'checked disabled' : 'checked';
       const isNew = lastAddedSourceIds.has(id) ? ' isNew' : '';
       const cat = item.category || '';
-      const metaParts = [kindLabel(item.kind), cat, formatUpdatedAt(item.updatedAt)].filter(Boolean);
-      const title = escapeHtml(item.title || 'Untitled');
+      const metaParts = [kindLabel(item.kind), cat, formatUpdatedAt(sourceUpdatedAt(item))].filter(Boolean);
+      const titleRaw = sourceTitleRaw(item);
+      const title = escapeHtml(titleRaw);
       const isLink = cat === 'link' || Boolean(item.url);
       const descRaw = String(item.description || (isLink ? item.preview : '') || '').trim();
       const desc = descRaw && isLink ? escapeHtml(descRaw) : '';
       const merged = item.merged
         ? '<span class="sourceBadge" title="Дубликат слит с существующим">слит</span>'
         : '';
+      const coverBadge = isCoverLetterSource(item)
+        ? '<span class="sourceBadge" title="Похоже на сопроводительное">письмо</span>'
+        : '';
       return `
         <div class="sourceItem${isNew}">
           <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
           <div class="sourceItemBody">
-            <div class="sourceItemTitle" title="${title}">${title}${merged}</div>
-            <div class="sourceItemMeta">${escapeHtml(metaParts.join(' · '))}</div>
+            <div class="sourceItemTitle" title="${title}">${title}${merged}${coverBadge}</div>
+            <div class="sourceItemMeta">${escapeHtml(metaParts.join(' · ') || 'без метаданных')}</div>
             ${desc ? `<div class="sourceItemDesc" title="${desc}">${desc}</div>` : ''}
           </div>
           <button type="button" class="sourceDeleteBtn" data-id="${id}" data-title="${title}">×</button>
@@ -179,6 +259,7 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
         ? `Новые источники подсвечены зелёным (${ids.length})`
         : lastIngestSummary,
     });
+    const prefilled = await maybePrefillCoverTemplate(items).catch(() => false);
     if (!items.length) {
       if (!quiet) {
         setSuccess(
@@ -186,7 +267,7 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
             `Test default = ${JR_API.DEFAULT_TEST_WORKSPACE_ID}. Если грузили в другой workspace - смените ID и «Сохранить».`
         );
       }
-    } else if (!quiet && !ids.length) {
+    } else if (!quiet && !ids.length && !prefilled) {
       setSuccess(`Список обновлён: ${items.length} источник(ов)`);
     }
     if (ids.length) {
@@ -242,11 +323,15 @@ function renderRelevance(data) {
     return;
   }
   const bullets = (data.rationale || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
+  const matched = (data.matched || []).map((r) => `<li class="relevanceMatched">${escapeHtml(r)}</li>`).join('');
+  const missing = (data.missing || []).map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
   relevanceBox.hidden = false;
   relevanceBox.innerHTML = `
     <div class="relevanceScore">${Number(data.score)} / 100</div>
     <div>Релевантность Resume ↔ вакансия</div>
-    <ul>${bullets}</ul>
+    ${bullets ? `<ul>${bullets}</ul>` : ''}
+    ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
+    ${missing ? `<div><b>Не хватает в RAG</b><ul>${missing}</ul></div>` : ''}
   `;
 }
 
@@ -370,6 +455,7 @@ const portfolioFileHint = document.getElementById('portfolioFileHint');
 const ragTextInput = document.getElementById('ragTextInput');
 const ragTextTitle = document.getElementById('ragTextTitle');
 const coverTemplateEl = document.getElementById('coverTemplate');
+const coverFromRagBtn = document.getElementById('coverFromRagBtn');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
 const driveFolderInput = document.getElementById('driveFolderInput');
@@ -829,6 +915,29 @@ if (coverTemplateEl) {
     coverTemplateSaveTimer = setTimeout(() => {
       chrome.storage.local.set({ jrCoverTemplate: String(coverTemplateEl.value || '') });
     }, 400);
+  });
+}
+
+if (coverFromRagBtn) {
+  coverFromRagBtn.addEventListener('click', async () => {
+    setError('');
+    setButtonBusy(coverFromRagBtn, true, 'Взять из RAG', 'Ищу…');
+    try {
+      let items = currentSources;
+      if (!items.length) {
+        items = (await refreshSources({ quiet: true })) || [];
+      }
+      const ok = await maybePrefillCoverTemplate(items, { force: true });
+      if (!ok) {
+        setError(
+          'В Resume RAG не найдено сопроводительное (ищите в названии/категории: "сопроводительн", cover letter).'
+        );
+      }
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setButtonBusy(coverFromRagBtn, false, 'Взять из RAG');
+    }
   });
 }
 

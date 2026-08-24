@@ -49,13 +49,22 @@ button {
   font: inherit;
 }
 
-input,
+input:not([type='checkbox']):not([type='radio']),
 textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   padding: 8px;
   box-sizing: border-box;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  max-width: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
 }
 
 button {
@@ -144,6 +153,7 @@ button:disabled {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
+  color: #0f172a;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -158,8 +168,10 @@ button:disabled {
 }
 
 .sourceItemBody {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
+  color: #0f172a;
 }
 
 .sourceDeleteBtn {
@@ -199,7 +211,20 @@ button:disabled {
 
 .sourceCheckbox {
   margin-top: 3px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  accent-color: #4f46e5;
+}
+
+.relevanceMatched {
+  color: #166534;
+}
+
+.relevanceMissing {
+  color: #9a3412;
 }
 
 .structuredBox,

@@ -39,15 +39,30 @@ Chrome MV3 extension: персонализированные отклики с R
 - Generate: лимит 6 источников, JSON-ошибки без HTTP 502 (Cloudflare иначе подменяет HTML)
 - После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
 
-## Сопроводительное (шаблон)
+## Релевантность
+
+`POST /api/v1/job-responder/relevance` и кнопка «Оценка релевантности» в panel:
+
+- score 0–100, детерминированный (tools / skills / role / format / experience)
+- rationale + списки matched / missing в side panel
+
+## LLM (generate)
+
+Порядок провайдеров: **GLM → Gemini → openmodel**. OpenRouter для Job Responder не используется.
+Ключи: Swoop Admin -> Settings (GLM / Gemini / openmodel).
 
 ## Сопроводительное (шаблон)
 
-- Поле **«Моё сопроводительное (шаблон)»** в side panel
+- Поле **«Моё сопроводительное (шаблон)»** + кнопка **Взять из RAG**
+- Автоподстановка из Resume RAG, если storage пуст и найден source с "сопроводительн" / cover letter
 - Хранится в `chrome.storage.local` (`jrCoverTemplate`)
 - При генерации отклика передаётся как `coverTemplate` / `baseLetter`
 - Если шаблон не пустой - LLM **адаптирует** его под вакансию (голос автора), а не пишет с нуля
 - Формат HH: `-`, `->`, ASCII `"`
+
+## Sources list (v0.5.5+)
+
+Строка: checkbox | title | meta | delete. Чекбоксы не должны раздуваться на 100% ширины (`input[type=checkbox] { width: auto }`).
 
 ## Парсинг вакансии
 
@@ -56,13 +71,6 @@ Chrome MV3 extension: персонализированные отклики с R
 - HH: спец. селекторы
 - Job boards: remote.co, getmatch.ru, finder.work, relocate.me, cryptojobslist.com, web3.career, workingnomads.com, aijobs.net, simplyhired.com, jobgether.com, flexjobs.com, powertofly.com, crossover.com, justremote.co, foorilla.com, instahyre.com
 - Structured fields: title, salary, experience, employmentType, schedule, workingHours, workFormat, keySkills, seniority, location
-
-## Релевантность
-
-`POST /api/v1/job-responder/relevance` и кнопка «Оценка релевантности» в panel:
-
-- score 0–100
-- короткие rationale bullets (навыки / формат / роли)
 
 ## API
 
