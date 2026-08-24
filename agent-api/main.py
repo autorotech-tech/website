@@ -2810,6 +2810,9 @@ def get_tags_schema() -> dict:
             "prompt",
             "contact",
             "link",
+            "job_resume",
+            "job_experience",
+            "job_skills",
         ],
         "kind_aliases": {
             "bookmarks": "bookmark",
@@ -2998,6 +3001,9 @@ _KIND_FOLDER = {
     "prompt": "Prompts",
     "contact": "Contacts",
     "link": "Links",
+    "job_resume": "Job Responder",
+    "job_experience": "Job Responder",
+    "job_skills": "Job Responder",
 }
 
 
@@ -12681,3 +12687,25 @@ async def knowledge_export(
             }
     finally:
         conn.close()
+
+
+import job_responder as _job_responder_module
+
+_job_responder_module.register_job_responder_routes(
+    app,
+    {
+        "verify_bookmarks_access": verify_bookmarks_access,
+        "verify_workspace_membership": verify_workspace_membership,
+        "pg_connect": pg_connect,
+        "get_openai_embedding": get_openai_embedding,
+        "build_vector_literal": build_vector_literal,
+        "bookmarks_vector_dim": BOOKMARKS_VECTOR_DIM,
+        "has_any_bookmark_llm_keys": has_any_bookmark_llm_keys,
+        "openai_chat_completions_generic": openai_chat_completions_generic,
+        "build_knowledge_content_hash": build_knowledge_content_hash,
+        "resolve_knowledge_obsidian_note_path": resolve_knowledge_obsidian_note_path,
+        "normalize_kind": normalize_kind,
+        "truncate_text": _truncate_text,
+        "psycopg2": psycopg2,
+    },
+)

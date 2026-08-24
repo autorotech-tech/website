@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Job Responder",
+  "description": "Персонализированные отклики на hh.ru / hh.kz / hh.uz через Resume RAG (autoro-api)",
+  "version": "0.1.0",
+  "permissions": ["storage", "sidePanel", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://hh.ru/*",
+    "https://*.hh.ru/*",
+    "https://hh.kz/*",
+    "https://*.hh.kz/*",
+    "https://hh.uz/*",
+    "https://*.hh.uz/*",
+    "https://swoop.autoro.tech/*",
+    "http://127.0.0.1:8900/*",
+    "http://localhost:8900/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Job Responder"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://hh.ru/vacancy/*",
+        "https://*.hh.ru/vacancy/*",
+        "https://hh.kz/vacancy/*",
+        "https://*.hh.kz/vacancy/*",
+        "https://hh.uz/vacancy/*",
+        "https://*.hh.uz/vacancy/*"
+      ],
+      "js": ["content/hh-vacancy.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "job-responder@autoro.tech"
+    }
+  }
+}

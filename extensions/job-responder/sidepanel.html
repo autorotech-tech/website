@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Job Responder</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Job Responder</h1>
+      <p class="hint" id="authHint">Загрузка…</p>
+    </header>
+
+    <section class="card">
+      <h2>Resume RAG</h2>
+      <p class="hint" id="resumeStatus">—</p>
+      <label class="field">
+        <span>Заголовок</span>
+        <input id="resumeTitle" type="text" placeholder="Резюме - Forward Deployed Engineer" />
+      </label>
+      <label class="field">
+        <span>Текст резюме / опыт</span>
+        <textarea id="resumeText" rows="6" placeholder="Вставьте резюме или ключевые кейсы…"></textarea>
+      </label>
+      <button type="button" id="saveResumeBtn" class="secondary">Сохранить в Resume RAG</button>
+    </section>
+
+    <section class="card">
+      <h2>Вакансия</h2>
+      <p class="hint" id="vacancyMeta">Откройте вакансию на hh.ru / hh.kz / hh.uz</p>
+      <div class="row">
+        <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
+      </div>
+      <label class="field">
+        <span>Описание (fallback)</span>
+        <textarea id="vacancyDescription" rows="5" placeholder="Если парсер не сработал - вставьте текст вручную"></textarea>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Генерация</h2>
+      <div class="row">
+        <button type="button" id="genCoverBtn">Отклик</button>
+        <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>
+      </div>
+      <label class="field">
+        <span>Результат (можно править)</span>
+        <textarea id="resultText" rows="12"></textarea>
+      </label>
+      <div class="row">
+        <button type="button" id="copyBtn" class="secondary">Копировать</button>
+      </div>
+      <p class="hint" id="genMeta"></p>
+    </section>
+
+    <footer class="footer">
+      <button type="button" id="loginBtn" class="link">Вход</button>
+      <button type="button" id="logoutBtn" class="link">Выход</button>
+    </footer>
+
+    <p class="error" id="error"></p>
+    <p class="success" id="success"></p>
+
+    <script src="lib/api.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
