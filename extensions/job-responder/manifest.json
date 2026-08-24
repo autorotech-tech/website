@@ -3,7 +3,7 @@
   "name": "Job Responder",
   "description": "Персонализированные отклики на hh.ru / hh.kz / hh.uz через Resume RAG (autoro-api)",
   "version": "0.1.0",
-  "permissions": ["storage", "sidePanel", "activeTab", "scripting"],
+  "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs"],
   "host_permissions": [
     "https://hh.ru/*",
     "https://*.hh.ru/*",

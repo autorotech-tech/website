@@ -95,7 +95,6 @@ async function runGenerate(mode) {
   }
 }
 
-const saveResumeBtn = document.getElementById('saveResumeBtn');
 const refreshVacancyBtn = document.getElementById('refreshVacancyBtn');
 const genCoverBtn = document.getElementById('genCoverBtn');
 const genAnswersBtn = document.getElementById('genAnswersBtn');
@@ -103,24 +102,95 @@ const copyBtn = document.getElementById('copyBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 
-saveResumeBtn.addEventListener('click', async () => {
+const resumeFileInput = document.getElementById('resumeFile');
+const portfolioFilesInput = document.getElementById('portfolioFiles');
+const linkUrlInput = document.getElementById('linkUrl');
+const linkTitleInput = document.getElementById('linkTitle');
+
+const uploadResumeFileBtn = document.getElementById('uploadResumeFileBtn');
+const uploadPortfolioFilesBtn = document.getElementById('uploadPortfolioFilesBtn');
+const addLinkBtn = document.getElementById('addLinkBtn');
+
+uploadResumeFileBtn.addEventListener('click', async () => {
   setError('');
   setSuccess('');
-  const title = String(document.getElementById('resumeTitle').value || 'Резюме').trim();
-  const text = String(document.getElementById('resumeText').value || '').trim();
-  if (text.length < 20) {
-    setError('Минимум 20 символов для резюме');
+  const file = resumeFileInput?.files?.[0];
+  if (!file) {
+    setError('Выберите CV файл');
     return;
   }
-  saveResumeBtn.disabled = true;
+  uploadResumeFileBtn.disabled = true;
   try {
-    await JR_API.resumeCapture({ title, text, kind: 'job_resume', category: 'cv' });
-    setSuccess('Резюме сохранено в Resume RAG');
+    await JR_API.resumeFileCapture({
+      file,
+      kind: 'job_resume',
+      category: 'cv',
+      title: file.name,
+    });
+    setSuccess('CV добавлен в Resume RAG');
     await refreshResumeStatus();
+    resumeFileInput.value = '';
   } catch (err) {
     setError(String(err.message || err));
   } finally {
-    saveResumeBtn.disabled = false;
+    uploadResumeFileBtn.disabled = false;
+  }
+});
+
+uploadPortfolioFilesBtn.addEventListener('click', async () => {
+  setError('');
+  setSuccess('');
+  const files = Array.from(portfolioFilesInput?.files || []);
+  if (!files.length) {
+    setError('Выберите файлы портфолио');
+    return;
+  }
+  uploadPortfolioFilesBtn.disabled = true;
+  try {
+    for (const file of files) {
+      // Сериализуем загрузку, чтобы не перегружать agent-api
+      await JR_API.resumeFileCapture({
+        file,
+        kind: 'job_experience',
+        category: 'experience',
+        title: file.name,
+      });
+    }
+    setSuccess('Portfolio добавлен в Resume RAG');
+    await refreshResumeStatus();
+    portfolioFilesInput.value = '';
+  } catch (err) {
+    setError(String(err.message || err));
+  } finally {
+    uploadPortfolioFilesBtn.disabled = false;
+  }
+});
+
+addLinkBtn.addEventListener('click', async () => {
+  setError('');
+  setSuccess('');
+  const url = String(linkUrlInput?.value || '').trim();
+  const title = String(linkTitleInput?.value || '').trim();
+  if (!url) {
+    setError('Укажите ссылку');
+    return;
+  }
+  addLinkBtn.disabled = true;
+  try {
+    await JR_API.resumeLinkCapture({
+      url,
+      title: title || undefined,
+      kind: 'job_experience',
+      category: 'experience',
+    });
+    setSuccess('Ссылка добавлена в Resume RAG');
+    await refreshResumeStatus();
+    linkUrlInput.value = '';
+    linkTitleInput.value = '';
+  } catch (err) {
+    setError(String(err.message || err));
+  } finally {
+    addLinkBtn.disabled = false;
   }
 });
 

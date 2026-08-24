@@ -12,17 +12,27 @@
     </header>
 
     <section class="card">
-      <h2>Resume RAG</h2>
+      <h2>Sources (Resume RAG)</h2>
       <p class="hint" id="resumeStatus">—</p>
-      <label class="field">
-        <span>Заголовок</span>
-        <input id="resumeTitle" type="text" placeholder="Резюме - Forward Deployed Engineer" />
-      </label>
-      <label class="field">
-        <span>Текст резюме / опыт</span>
-        <textarea id="resumeText" rows="6" placeholder="Вставьте резюме или ключевые кейсы…"></textarea>
-      </label>
-      <button type="button" id="saveResumeBtn" class="secondary">Сохранить в Resume RAG</button>
+
+      <div class="field">
+        <span>CV файл (primary)</span>
+        <input id="resumeFile" type="file" />
+        <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
+      </div>
+
+      <div class="field">
+        <span>Portfolio файлы (references)</span>
+        <input id="portfolioFiles" type="file" multiple />
+        <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
+      </div>
+
+      <div class="field">
+        <span>Ссылка (URL)</span>
+        <input id="linkUrl" type="url" placeholder="https://..." />
+        <input id="linkTitle" type="text" placeholder="Название (необязательно)" />
+        <button type="button" id="addLinkBtn" class="secondary">Добавить ссылку</button>
+      </div>
     </section>
 
     <section class="card">

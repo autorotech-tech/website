@@ -92,6 +92,40 @@ const JR_API = (() => {
     });
   }
 
+  async function resumeFileCapture({ file, title, kind = 'job_resume', category = 'cv' }) {
+    if (!file) throw new Error('File is required');
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    // Форм-data сам выставляет Content-Type с boundary
+    delete headers['Content-Type'];
+
+    const form = new FormData();
+    form.append('workspaceId', workspaceId);
+    form.append('kind', kind);
+    form.append('category', category);
+    if (title) form.append('title', title);
+    form.append('file', file, file.name || 'upload.bin');
+
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/file-capture`, {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+  }
+
+  async function resumeLinkCapture({ url, title, kind = 'job_experience', category = 'experience' }) {
+    if (!url) throw new Error('url is required');
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/link-capture`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, url, title, kind, category }),
+    });
+  }
+
   async function generateResponse({ mode, host, vacancy }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -138,5 +172,7 @@ const JR_API = (() => {
     logout,
     resumeCapture,
     resumeStatus,
+    resumeFileCapture,
+    resumeLinkCapture,
   };
 })();

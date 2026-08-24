@@ -12697,6 +12697,7 @@ _job_responder_module.register_job_responder_routes(
         "verify_bookmarks_access": verify_bookmarks_access,
         "verify_workspace_membership": verify_workspace_membership,
         "pg_connect": pg_connect,
+        "extract_text_from_bytes": extract_text_from_bytes,
         "get_openai_embedding": get_openai_embedding,
         "build_vector_literal": build_vector_literal,
         "bookmarks_vector_dim": BOOKMARKS_VECTOR_DIM,
@@ -12705,7 +12706,9 @@ _job_responder_module.register_job_responder_routes(
         "build_knowledge_content_hash": build_knowledge_content_hash,
         "resolve_knowledge_obsidian_note_path": resolve_knowledge_obsidian_note_path,
         "normalize_kind": normalize_kind,
+        "normalize_url": normalize_url,
         "truncate_text": _truncate_text,
         "psycopg2": psycopg2,
+        "fetch_content_via_jina": fetch_content_via_jina,
     },
 )

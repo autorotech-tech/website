@@ -8,6 +8,7 @@ import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from fastapi import Header, HTTPException, Request
+from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, Field
 
 RESUME_KINDS = ("job_resume", "job_experience", "job_skills")
@@ -74,6 +75,14 @@ class JobResponderResumeSearchPayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     query: str = Field(..., min_length=1, max_length=4000)
     limit: int = Field(default=12, ge=1, le=50)
+
+
+class JobResponderResumeLinkCapturePayload(BaseModel):
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    url: str = Field(..., min_length=8, max_length=4000)
+    title: Optional[str] = Field(default=None, max_length=1000)
+    kind: str = Field(default="job_experience", max_length=64)
+    category: str = Field(default="experience", max_length=128)
 
 
 def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
@@ -165,6 +174,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     verify_bookmarks_access = deps["verify_bookmarks_access"]
     verify_workspace_membership = deps["verify_workspace_membership"]
     pg_connect = deps["pg_connect"]
+    extract_text_from_bytes = deps["extract_text_from_bytes"]
     get_openai_embedding = deps["get_openai_embedding"]
     build_vector_literal = deps["build_vector_literal"]
     bookmarks_vector_dim = deps["bookmarks_vector_dim"]
@@ -174,7 +184,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     resolve_knowledge_obsidian_note_path = deps["resolve_knowledge_obsidian_note_path"]
     normalize_kind = deps["normalize_kind"]
     truncate_text = deps["truncate_text"]
+    normalize_url = deps["normalize_url"]
     psycopg2 = deps["psycopg2"]
+    fetch_content_via_jina = deps["fetch_content_via_jina"]
 
     def _parse_workspace_id(raw: str) -> int:
         try:
@@ -253,6 +265,95 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         )
         return "keyword", cur.fetchall()
 
+    def _upsert_resume_item_text(
+        cur,
+        workspace_id: int,
+        *,
+        title: str,
+        text: str,
+        kind_norm: str,
+        category: str,
+        url: Optional[str],
+    ) -> Tuple[int, bool, str]:
+        canonical_url = normalize_url(url) if url else ""
+        content_hash = build_knowledge_content_hash(RESUME_SOURCE, canonical_url, text)
+        note_path = truncate_text(
+            resolve_knowledge_obsidian_note_path(
+                workspace_id,
+                content_hash,
+                None,
+                kind=kind_norm,
+            ),
+            4000,
+        )
+        tags = list(dict.fromkeys([*RESUME_TAGS, category]))[:12]
+
+        cur.execute(
+            """
+            insert into public.knowledge_items (
+              workspace_id, source, title, url, canonical_url,
+              content_text, category, tags, content_hash, status, note_path, kind
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'to_process', %s, %s)
+            on conflict (workspace_id, content_hash)
+            do update set
+              updated_at = now(),
+              last_seen_at = now(),
+              seen_count = public.knowledge_items.seen_count + 1,
+              title = excluded.title,
+              url = excluded.url,
+              canonical_url = excluded.canonical_url,
+              content_text = case
+                when length(coalesce(excluded.content_text, '')) > length(coalesce(public.knowledge_items.content_text, ''))
+                then excluded.content_text
+                else public.knowledge_items.content_text
+              end,
+              category = excluded.category,
+              tags = excluded.tags,
+              note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+              kind = excluded.kind
+            returning id
+            """,
+            (
+                workspace_id,
+                RESUME_SOURCE,
+                title,
+                url or None,
+                canonical_url or None,
+                text,
+                category,
+                psycopg2.extras.Json(tags),
+                content_hash,
+                note_path,
+                kind_norm,
+            ),
+        )
+        row = cur.fetchone() or {}
+        kid = int(row["id"]) if row.get("id") is not None else -1
+
+        embed_source = "\n".join(p for p in (title, text[:4000]) if p)[:8000]
+        vec = get_openai_embedding(embed_source)
+        embedded = False
+        if vec and len(vec) == bookmarks_vector_dim and kid != -1:
+            cur.execute(
+                """
+                insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
+                values (%s, %s::vector, %s, now(), now())
+                on conflict (knowledge_item_id)
+                do update set
+                  embedding = excluded.embedding,
+                  embedding_model = excluded.embedding_model,
+                  embedded_at = now(),
+                  updated_at = now()
+                """,
+                (
+                    kid,
+                    build_vector_literal(vec),
+                    "job-responder-embed",
+                ),
+            )
+            embedded = True
+        return kid, embedded, content_hash
+
     @app.get("/api/v1/job-responder/resume/status")
     async def job_responder_resume_status(
         workspaceId: str,
@@ -302,81 +403,140 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         workspace_id = _parse_workspace_id(payload.workspaceId)
         verify_workspace_membership(auth_ctx, workspace_id)
 
-        kind_norm = _resume_kind_norm(payload.kind)
-        category = truncate_text(str(payload.category or "cv").strip().lower(), 128) or "cv"
-        title = truncate_text(payload.title.strip(), 1000)
-        text = str(payload.text or "").strip()
-        tags = list(dict.fromkeys([*RESUME_TAGS, category]))[:12]
-        content_hash = build_knowledge_content_hash(RESUME_SOURCE, "", text)
-        note_path = truncate_text(
-            resolve_knowledge_obsidian_note_path(
-                workspace_id,
-                content_hash,
-                None,
-                kind=kind_norm,
-            ),
-            4000,
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                kind_norm = _resume_kind_norm(payload.kind)
+                category = truncate_text(str(payload.category or "cv").strip().lower(), 128) or "cv"
+                title = truncate_text(payload.title.strip(), 1000)
+                text = str(payload.text or "").strip()
+                kid, embedded, _content_hash = _upsert_resume_item_text(
+                    cur,
+                    workspace_id,
+                    title=title,
+                    text=text,
+                    kind_norm=kind_norm,
+                    category=category,
+                    url=None,
+                )
+            conn.commit()
+            return {
+                "ok": True,
+                "knowledgeItemId": kid,
+                "kind": kind_norm,
+                "embedded": embedded,
+                "contentHash": _content_hash,
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @app.post("/api/v1/job-responder/resume/file-capture")
+    async def job_responder_resume_file_capture(
+        request: Request,
+        workspaceId: str = Form(...),
+        kind: str = Form("job_resume"),
+        category: str = Form("cv"),
+        title: Optional[str] = Form(default=None, max_length=1000),
+        caption: Optional[str] = Form(default=None, max_length=4000),
+        file: UploadFile = File(...),
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+        require_job_responder_user_auth(auth_ctx)
+        try:
+            workspace_id = int(workspaceId.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="workspaceId must be numeric") from exc
+        verify_workspace_membership(auth_ctx, workspace_id)
+
+        kind_norm = _resume_kind_norm(kind)
+        category_norm = truncate_text(str(category).strip().lower(), 128) or "cv"
+        safe_name = str(file.filename or "upload.bin")
+
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="empty_file")
+
+        mime_type = str(file.content_type or "application/octet-stream")
+        extracted_text, meta = extract_text_from_bytes(safe_name, raw, mime_type)
+        extracted_text = (extracted_text or "").strip()
+        if len(extracted_text) < 20:
+            raise HTTPException(status_code=422, detail=f"no_text_extracted: {meta}")
+
+        item_title = truncate_text(
+            (title or str(meta.get("filename") or safe_name) or "Resume").strip(),
+            1000,
         )
 
         conn = pg_connect()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    insert into public.knowledge_items (
-                      workspace_id, source, title, url, canonical_url,
-                      content_text, category, tags, content_hash, status, note_path, kind
-                    ) values (%s, %s, %s, null, null, %s, %s, %s, %s, 'to_process', %s, %s)
-                    on conflict (workspace_id, content_hash)
-                    do update set
-                      updated_at = now(),
-                      last_seen_at = now(),
-                      seen_count = public.knowledge_items.seen_count + 1,
-                      title = excluded.title,
-                      content_text = case
-                        when length(coalesce(excluded.content_text, '')) > length(coalesce(public.knowledge_items.content_text, ''))
-                        then excluded.content_text
-                        else public.knowledge_items.content_text
-                      end,
-                      category = excluded.category,
-                      tags = excluded.tags,
-                      kind = excluded.kind,
-                      note_path = coalesce(excluded.note_path, public.knowledge_items.note_path)
-                    returning id, seen_count
-                    """,
-                    (
-                        workspace_id,
-                        RESUME_SOURCE,
-                        title,
-                        text,
-                        category,
-                        psycopg2.extras.Json(tags),
-                        content_hash,
-                        note_path,
-                        kind_norm,
-                    ),
+                kid, embedded, content_hash = _upsert_resume_item_text(
+                    cur,
+                    workspace_id,
+                    title=item_title,
+                    text=extracted_text,
+                    kind_norm=kind_norm,
+                    category=category_norm,
+                    url=None,
                 )
-                row = cur.fetchone() or {}
-                kid = int(row["id"]) if row.get("id") is not None else None
+            conn.commit()
+            return {
+                "ok": True,
+                "knowledgeItemId": kid,
+                "kind": kind_norm,
+                "embedded": embedded,
+                "contentHash": content_hash,
+                "extract": meta,
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-                embed_source = "\n".join(p for p in (title, text[:4000]) if p)[:8000]
-                vec = get_openai_embedding(embed_source)
-                embedded = False
-                if vec and len(vec) == bookmarks_vector_dim and kid:
-                    cur.execute(
-                        """
-                        insert into public.knowledge_vectors (knowledge_item_id, embedding, embedding_model, embedded_at, updated_at)
-                        values (%s, %s::vector, %s, now(), now())
-                        on conflict (knowledge_item_id)
-                        do update set
-                          embedding = excluded.embedding,
-                          embedding_model = excluded.embedding_model,
-                          embedded_at = now(),
-                          updated_at = now()
-                        """,
-                        (kid, build_vector_literal(vec), "job-responder-embed"),
-                    )
-                    embedded = True
+    @app.post("/api/v1/job-responder/resume/link-capture")
+    async def job_responder_resume_link_capture(
+        payload: JobResponderResumeLinkCapturePayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = verify_bookmarks_access(request, x_api_key, authorization)
+        require_job_responder_user_auth(auth_ctx)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        verify_workspace_membership(auth_ctx, workspace_id)
+
+        url_norm = normalize_url(payload.url)
+        kind_norm = _resume_kind_norm(payload.kind)
+        category_norm = truncate_text(str(payload.category or "experience").strip().lower(), 128) or "experience"
+
+        fetched = fetch_content_via_jina(url_norm, timeout_sec=25)
+        if not fetched.get("ok"):
+            raise HTTPException(status_code=422, detail=f"fetch_failed:{fetched.get('error') or fetched}")
+
+        text = str(fetched.get("content_text") or "").strip()
+        if len(text) < 20:
+            raise HTTPException(status_code=422, detail="empty_link_content")
+
+        item_title = truncate_text((payload.title or url_norm or "Link").strip(), 1000)
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                kid, embedded, content_hash = _upsert_resume_item_text(
+                    cur,
+                    workspace_id,
+                    title=item_title,
+                    text=text,
+                    kind_norm=kind_norm,
+                    category=category_norm,
+                    url=url_norm,
+                )
             conn.commit()
             return {
                 "ok": True,
