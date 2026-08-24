@@ -1997,7 +1997,7 @@ def gemini_grounded_web_search(api_key: str, query: str, limit: int = 8) -> List
     q = (query or "").strip()
     if not q:
         return []
-    model = (os.environ.get("BOOKMARKS_GEMINI_SEARCH_MODEL") or os.environ.get("BOOKMARKS_GEMINI_CHAT_MODEL") or "gemini-2.0-flash").strip()
+    model = (os.environ.get("BOOKMARKS_GEMINI_SEARCH_MODEL") or os.environ.get("BOOKMARKS_GEMINI_CHAT_MODEL") or "gemini-2.5-flash").strip()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = {
         "contents": [
@@ -3679,6 +3679,38 @@ def _flatten_api_key_groups(groups: Any) -> List[str]:
     return out
 
 
+def _infer_api_key_group_provider(name: str, explicit_provider: str = "") -> str:
+    """
+    Resolve group provider for pool merge.
+
+    Explicit `provider` wins. If empty, infer from the group name so Admin groups
+    like \"OpenRouter Fast\" still join openrouter_pool (needed for key rotation).
+    Untagged names that do not match a known provider stay empty and are excluded
+    when a concrete desired_provider filter is applied.
+    """
+    explicit = str(explicit_provider or "").strip().lower()
+    if explicit:
+        return explicit
+    n = str(name or "").strip().lower()
+    if not n:
+        return ""
+    # Longer / more specific tokens first.
+    for token in (
+        "openrouter",
+        "openmodel",
+        "lmarena",
+        "gemini",
+        "openai",
+        "groq",
+        "glm",
+        "mimo",
+        "kimi",
+    ):
+        if token in n:
+            return token
+    return ""
+
+
 def _select_api_key_group_keys(
     groups: Any,
     desired_provider: str = "",
@@ -3689,8 +3721,10 @@ def _select_api_key_group_keys(
     """
     Выбирает ключи из service_settings.api_key_groups по назначению (provider/tier/model/email).
 
-    Backward-compatible: старые группы без метаданных просто считаются "общими".
-    Если фильтры ничего не нашли — возвращает flatten как fallback.
+    Backward-compatible: группы без `provider` получают provider из имени
+    (\"OpenRouter Fast\" → openrouter). Имена без известного провайдера не
+    попадают в фильтр по desired_provider (чтобы не мешать Gemini-ключи в OR pool).
+    Если фильтры ничего не нашли и desired_provider пуст — возвращает flatten.
 
     Ожидаемая форма группы (JSON object):
       {
@@ -3723,8 +3757,11 @@ def _select_api_key_group_keys(
             continue
         any_keys.extend(keys)
 
-        # provider filter: tagged groups must match; untagged groups are not provider-specific.
-        item_provider = str(item.get("provider") or "").strip().lower()
+        # provider filter: explicit tag or name-inferred provider must match.
+        item_provider = _infer_api_key_group_provider(
+            str(item.get("name") or ""),
+            str(item.get("provider") or ""),
+        )
         if prov_norm:
             if not item_provider:
                 continue
@@ -4577,7 +4614,7 @@ def _gemini_generate_json(
     api_key: str,
     model_override: Optional[str] = None,
 ) -> Tuple[Optional[Dict[str, Any]], int, str]:
-    model = (model_override or "").strip() or os.environ.get("BOOKMARKS_GEMINI_CHAT_MODEL", "gemini-2.0-flash")
+    model = (model_override or "").strip() or os.environ.get("BOOKMARKS_GEMINI_CHAT_MODEL", "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {

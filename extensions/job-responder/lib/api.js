@@ -360,16 +360,20 @@ const JR_API = (() => {
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
     const template = String(coverTemplate || baseLetter || '').trim();
+    const normalizedMode = mode === 'qa' || mode === 'question_answers' ? 'qa' : 'cover_letter';
     const data = await fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         workspaceId,
-        mode,
+        mode: normalizedMode,
         host: host || 'web',
         vacancy,
         locale: 'ru',
         selectedSourceIds,
+        ...(Array.isArray(vacancy?.questions) && vacancy.questions.length
+          ? { questions: vacancy.questions }
+          : {}),
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
       }),
       timeoutMs: 70000,

@@ -47,19 +47,23 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 
 # Stay under nginx/CF ~60–100s: never return HTTP 502 (Cloudflare replaces JSON with HTML).
 FILE_CAPTURE_BUDGET_SEC = 28.0
-GENERATE_BUDGET_SEC = 42.0
+# Wall-clock target ~25–35s so CF/nginx do not kill the request.
+GENERATE_BUDGET_SEC = 34.0
 # Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
+# First attempt is already aggressive - do not start at 6k and only shrink on retry.
 SELECTED_SOURCES_MAX = 40
-COMPACT_PROFILE_CHARS = 6000
-COMPACT_PROFILE_CHARS_RETRY = 3200
+COMPACT_PROFILE_CHARS = 2800
+COMPACT_PROFILE_CHARS_RETRY = 1600
 COMPACT_PROFILE_KIND = "job_profile_compact"
-GENERATE_VACANCY_CHARS = 2800
-COVER_TEMPLATE_CHARS = 2500
-COVER_TEMPLATE_CHARS_RETRY = 1200
+GENERATE_VACANCY_CHARS = 1600
+COVER_TEMPLATE_CHARS = 1200
+COVER_TEMPLATE_CHARS_RETRY = 600
 LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
-LLM_ATTEMPT_TIMEOUT_SEC = 16.0
+LLM_ATTEMPT_TIMEOUT_SEC = 11.0
+# gemini-2.0-flash is retired (404). Prefer flash from current Gemini catalog.
+JR_GEMINI_MODEL = "gemini-3.6-flash"
 _COVER_SNIPPET_RE = re.compile(
     r"сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|шаблон\s*отклик",
     re.I,
@@ -174,6 +178,98 @@ def hh_format_text(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
+_FORM_QUESTION_TYPE_MAP = {
+    0: "short_text",
+    1: "paragraph",
+    2: "multiple_choice",
+    3: "dropdown",
+    4: "checkboxes",
+    5: "linear_scale",
+    7: "grid",
+    9: "date",
+    10: "time",
+}
+
+
+def normalize_questions(raw: Optional[List[Any]]) -> List[Dict[str, Any]]:
+    """Normalize legacy string questions and structured Forms/table items."""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for i, item in enumerate(raw or []):
+        if isinstance(item, str):
+            text = re.sub(r"\s+", " ", item).strip()
+            qtype = "text"
+            opts: List[str] = []
+            qid = str(i + 1)
+        elif isinstance(item, dict):
+            text = re.sub(
+                r"\s+",
+                " ",
+                str(item.get("text") or item.get("question") or item.get("q") or ""),
+            ).strip()
+            qtype = str(item.get("type") or "text").strip()[:64] or "text"
+            raw_opts = item.get("options") or []
+            opts = []
+            if isinstance(raw_opts, list):
+                for o in raw_opts:
+                    s = re.sub(r"\s+", " ", str(o or "")).strip()
+                    if s and s not in opts:
+                        opts.append(s[:500])
+            qid = str(item.get("id") or i + 1)[:128]
+        else:
+            continue
+        if not text or len(text) < 2:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "id": qid,
+                "text": text[:4000],
+                "type": qtype,
+                "options": opts[:40],
+            }
+        )
+        if len(out) >= 40:
+            break
+    return out
+
+
+def parse_answers_json(raw: str) -> Optional[List[Dict[str, str]]]:
+    """Parse LLM Q&A JSON; tolerate markdown fences and leading prose."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```$", "", text)
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\[[\s\S]*\]", text)
+        if not m:
+            return None
+        try:
+            parsed = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, list):
+        return None
+    out: List[Dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        q = str(item.get("question") or item.get("q") or item.get("text") or "").strip()
+        a = hh_format_text(str(item.get("answer") or item.get("a") or "").strip())
+        if not q and not a:
+            continue
+        out.append({"question": q, "answer": a})
+    return out or None
+
+
 def require_job_responder_user_auth(auth_ctx: Dict[str, Any]) -> None:
     if JOB_RESPONDER_TEST_MODE:
         return
@@ -218,22 +314,34 @@ class JobResponderVacancyStructured(BaseModel):
     location: Optional[str] = Field(default=None, max_length=300)
 
 
+class JobResponderQuestionItem(BaseModel):
+    id: Optional[str] = Field(default=None, max_length=128)
+    text: str = Field(..., min_length=1, max_length=4000)
+    type: str = Field(default="text", max_length=64)
+    options: List[str] = Field(default_factory=list)
+
+
 class JobResponderVacancyPayload(BaseModel):
     url: Optional[str] = Field(default=None, max_length=4000)
     title: str = Field(..., min_length=1, max_length=1000)
     company: Optional[str] = Field(default=None, max_length=500)
     description: str = Field(..., min_length=1, max_length=50000)
-    questions: List[str] = Field(default_factory=list)
+    # str (legacy) or {id,text,type,options[]} for Google Forms / table Q&A
+    questions: List[Any] = Field(default_factory=list)
     structured: Optional[JobResponderVacancyStructured] = None
+    source: Optional[str] = Field(default=None, max_length=64)
 
 
 class JobResponderGeneratePayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
-    mode: Literal["cover_letter", "question_answers"] = "cover_letter"
+    # "qa" is an alias for question_answers
+    mode: Literal["cover_letter", "question_answers", "qa"] = "cover_letter"
     host: str = Field(default="web", max_length=32)
     vacancy: JobResponderVacancyPayload
     locale: str = Field(default="ru", max_length=16)
     selectedSourceIds: List[int] = Field(default_factory=list)
+    # Optional top-level questions (Forms / table); merges into vacancy.questions
+    questions: Optional[List[Any]] = None
     # User's own cover letter to adapt (not write from scratch). Alias: baseLetter.
     coverTemplate: Optional[str] = Field(default=None, max_length=20000)
     baseLetter: Optional[str] = Field(default=None, max_length=20000)
@@ -1160,10 +1268,12 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
         return (
             base
             + """
-Режим: ответы на вопросы работодателя.
+Режим: ответы на вопросы работодателя / Google Form / таблица Q&A.
 Верни ТОЛЬКО валидный JSON-массив:
 [{"question":"...","answer":"..."}]
-По одному объекту на каждый вопрос из списка QUESTIONS. Ответы 1-4 предложения, конкретно."""
+По одному объекту на каждый вопрос из списка QUESTIONS.
+Если у вопроса есть options - выбери подходящий вариант или кратко обоснуй выбор.
+Ответы 1-4 предложения, конкретно по RESUME CONTEXT."""
         )
     if has_cover_template:
         return (
@@ -1193,7 +1303,7 @@ def build_user_prompt(
     compact_profile_text: str,
     mode: str,
     host: str,
-    questions: Optional[List[str]] = None,
+    questions: Optional[List[Any]] = None,
     cover_template: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
@@ -1206,6 +1316,7 @@ def build_user_prompt(
             "url": vacancy.url,
             "title": vacancy.title,
             "company": vacancy.company,
+            "source": vacancy.source,
             "description": vacancy.description[:GENERATE_VACANCY_CHARS],
             "structured": structured,
         },
@@ -1221,7 +1332,7 @@ def build_user_prompt(
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template}")
     if mode == "question_answers":
-        qlist = questions or vacancy.questions or []
+        qlist = normalize_questions(questions if questions is not None else vacancy.questions)
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
     return "\n\n".join(parts)
 
@@ -2701,12 +2812,18 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         rag_items, truncated = cap_rag_items(list(rag_rows), max_n=SELECTED_SOURCES_MAX)
         merged = merge_profiles_from_rows(rag_items)
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
-        mode = payload.mode
+        mode = "question_answers" if payload.mode in ("qa", "question_answers") else "cover_letter"
+        merged_questions = list(payload.vacancy.questions or [])
+        if payload.questions:
+            merged_questions = list(payload.questions) + merged_questions
+        normalized_questions = normalize_questions(merged_questions)
+        # Aggressive compact on first try (not only on retry).
         profile_cap = COMPACT_PROFILE_CHARS
         cover_cap = COVER_TEMPLATE_CHARS
         profile_compressed = False
+        provider_errors: List[str] = []
 
-        def _run_llm(profile_max: int, cover_max: int):
+        def _run_llm(profile_max: int, cover_max: int, attempt_timeout: float):
             cover_template = resolve_cover_template(
                 payload.coverTemplate, payload.baseLetter, max_chars=cover_max
             )
@@ -2718,31 +2835,43 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 compact_text,
                 mode,
                 payload.host,
-                payload.vacancy.questions,
+                normalized_questions,
                 cover_template=cover_template if has_template else "",
             )
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-            max_tokens = 900 if mode == "question_answers" else 800
-            # Job Responder: GLM → Gemini → openmodel. OpenRouter intentionally skipped.
+            max_tokens = 1200 if mode == "question_answers" else 700
+            # Fast providers first. OpenRouter intentionally skipped.
+            # gemini-2.0-flash is retired (404 on prod); use JR_GEMINI_MODEL.
             attempts = (
-                {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
-                {"tier_override": "fast", "route_provider_override": "gemini", "route_model_override": "gemini-2.0-flash"},
+                {
+                    "tier_override": "fast",
+                    "route_provider_override": "gemini",
+                    "route_model_override": JR_GEMINI_MODEL,
+                },
                 {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
+                {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
             )
             chat_result = None
             last_err = ""
             for kwargs in attempts:
                 remaining = deadline - time.monotonic()
-                if remaining < 4:
+                if remaining < 3.5:
                     last_err = "timeout"
+                    provider_errors.append("budget_exhausted")
+                    break
+                provider = str(kwargs.get("route_provider_override") or "?")
+                t_cap = min(float(attempt_timeout), remaining - 0.8, 12.0)
+                if t_cap < 3.0:
+                    last_err = "timeout"
+                    provider_errors.append(f"{provider}:no_time")
                     break
                 try:
                     chat_result = call_with_timeout(
                         openai_chat_completions_generic,
-                        min(LLM_ATTEMPT_TIMEOUT_SEC, remaining - 1),
+                        t_cap,
                         messages=messages,
                         temperature=0.35,
                         max_tokens_override=max_tokens,
@@ -2750,51 +2879,88 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     )
                 except FuturesTimeout:
                     last_err = "timeout"
+                    provider_errors.append(f"{provider}:timeout>{t_cap:.0f}s")
+                    _LOG.warning(
+                        "generate provider timeout provider=%s timeout=%.1f profile=%d",
+                        provider,
+                        t_cap,
+                        profile_max,
+                    )
                     chat_result = None
                     continue
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
-                    _LOG.warning("generate LLM attempt failed: %s", last_err)
+                    provider_errors.append(f"{provider}:{type(exc).__name__}")
+                    _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
                     chat_result = None
                     continue
                 if chat_result and str(getattr(chat_result, "content", None) or "").strip():
-                    break
-                last_err = last_err or "empty"
+                    return chat_result, "", compact_text, has_template
+                empty_detail = "empty"
+                if chat_result is not None:
+                    empty_detail = "empty_content"
+                last_err = last_err or empty_detail
+                provider_errors.append(f"{provider}:{empty_detail}")
                 chat_result = None
             return chat_result, last_err, compact_text, has_template
 
-        chat_result, last_err, compact_text, has_template = _run_llm(profile_cap, cover_cap)
-        if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and last_err == "timeout":
+        chat_result, last_err, compact_text, has_template = _run_llm(
+            profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
+        )
+        if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and (
+            last_err == "timeout" or last_err.startswith("timeout") or "timeout" in (last_err or "")
+        ):
             remaining = deadline - time.monotonic()
-            if remaining >= 8:
+            if remaining >= 6:
                 profile_compressed = True
                 profile_cap = COMPACT_PROFILE_CHARS_RETRY
                 cover_cap = COVER_TEMPLATE_CHARS_RETRY
-                _LOG.warning("generate retry with smaller compact profile remaining=%.1f", remaining)
-                chat_result, last_err, compact_text, has_template = _run_llm(profile_cap, cover_cap)
+                _LOG.warning(
+                    "generate mini-profile retry remaining=%.1f errs=%s",
+                    remaining,
+                    ";".join(provider_errors[-6:]),
+                )
+                chat_result, last_err, compact_text, has_template = _run_llm(
+                    profile_cap, cover_cap, min(9.0, remaining - 1.0)
+                )
 
         raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
         if not raw_text:
-            _LOG.warning("generate empty last_err=%s elapsed=%.2f", last_err, time.monotonic() - started)
-            msg = (
-                "Модель не ответила вовремя. Профиль уже сжат; повторите - сервер сожмёт его ещё сильнее."
-                if last_err == "timeout"
-                else (
-                    "LLM не вернул текст (GLM / Gemini / openmodel без ключа, без кредита или модель недоступна). "
-                    "Проверьте Swoop Admin -> Settings -> GLM, Gemini, openmodel."
-                )
+            elapsed = time.monotonic() - started
+            err_tail = "; ".join(provider_errors[-8:]) if provider_errors else last_err or "unknown"
+            _LOG.warning(
+                "generate empty last_err=%s elapsed=%.2f providers=%s profile=%d",
+                last_err,
+                elapsed,
+                err_tail,
+                len(compact_text or ""),
             )
+            timed_out = "timeout" in str(last_err or "") or any("timeout" in e for e in provider_errors)
+            if timed_out:
+                msg = (
+                    f"Модель не успела за {elapsed:.0f}с (бюджет {GENERATE_BUDGET_SEC:.0f}с). "
+                    f"Провайдеры: {err_tail}. "
+                    f"Профиль {len(compact_text or '')} симв. / {len(rag_items)} sources. "
+                    "Повторите «Отклик» - сервер уже использует сжатый unified profile."
+                )
+            else:
+                msg = (
+                    f"LLM не вернул текст. Провайдеры: {err_tail}. "
+                    "Проверьте Swoop Admin -> Settings -> Gemini / openmodel / GLM (без OpenRouter)."
+                )
             return {
                 "ok": False,
-                "error": "llm_timeout" if last_err == "timeout" else "llm_empty",
+                "error": "llm_timeout" if timed_out else "llm_empty",
                 "message": msg,
                 "text": "",
-                "timedOut": last_err == "timeout",
+                "timedOut": timed_out,
+                "providerErrors": provider_errors,
                 "contextLimited": truncated,
-                "profileCompressed": profile_compressed or last_err == "timeout",
+                "profileCompressed": profile_compressed or timed_out,
                 "compactProfileChars": len(compact_text or ""),
                 "sourcesMerged": len(rag_items),
                 "usedUnifiedProfile": True,
+                "elapsedSec": round(elapsed, 2),
                 "limitMessage": (
                     f"В unified profile слиты {len(rag_items)} источников (лимит merge {SELECTED_SOURCES_MAX})."
                     if truncated
@@ -2810,16 +2976,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         answers = None
         if mode == "question_answers":
-            try:
-                parsed = json.loads(raw_text)
-                if isinstance(parsed, list):
-                    answers = parsed
-                    raw_text = "\n\n".join(
-                        f"Q: {a.get('question', '')}\nA: {hh_format_text(str(a.get('answer') or ''))}"
-                        for a in parsed
-                        if isinstance(a, dict)
-                    )
-            except json.JSONDecodeError:
+            parsed = parse_answers_json(raw_text)
+            if parsed:
+                answers = parsed
+                raw_text = "\n\n".join(
+                    f"Q: {a.get('question', '')}\nA: {a.get('answer', '')}" for a in parsed
+                )
+            else:
                 raw_text = hh_format_text(raw_text)
         else:
             raw_text = hh_format_text(raw_text)
@@ -2833,10 +2996,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             }
             for r in rag_items
         ]
+        elapsed_ok = time.monotonic() - started
         limit_message = (
             f"Unified profile: {len(rag_items)} sources -> {len(compact_text)} chars"
-            + (" (compressed retry)" if profile_compressed else "")
+            + (" (mini retry)" if profile_compressed else "")
             + (f"; merge capped at {SELECTED_SOURCES_MAX}" if truncated else "")
+            + f"; {elapsed_ok:.1f}s"
         )
         return {
             "ok": True,
@@ -2855,5 +3020,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "sourcesMerged": len(rag_items),
             "contextLimited": truncated,
             "limitMessage": limit_message,
+            "elapsedSec": round(elapsed_ok, 2),
+            "questionsCount": len(normalized_questions),
             "workspaceId": str(workspace_id),
         }

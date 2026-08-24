@@ -48,10 +48,23 @@ Chrome MV3 extension: персонализированные отклики с R
 
 ## LLM (generate)
 
-Порядок провайдеров: **GLM → Gemini → openmodel**. OpenRouter для Job Responder не используется.
-Ключи: Swoop Admin -> Settings (GLM / Gemini / openmodel).
+Порядок провайдеров: **Gemini flash → openmodel → GLM** (быстрые первыми). OpenRouter не используется.
+Ключи: Swoop Admin -> Settings (Gemini / openmodel / GLM).
+Модель Gemini: `gemini-3.6-flash` (старая `gemini-2.0-flash` на проде давала 404 и сжигала бюджет).
 
-Промпт: `VACANCY` (cap ~2.8k) + `RESUME CONTEXT` = unified profile (cap 6k, retry 3.2k) + optional cover template (2.5k / retry 1.2k).
+Первый запрос уже с **агрессивным** unified profile (≤2800 символов), vacancy ≤1600, cover template ≤1200.
+Бюджет wall-clock ~34с; при timeout - сразу mini-retry (1600/600), в ошибке указаны провайдеры.
+
+Промпт: `VACANCY` + `RESUME CONTEXT` = unified profile + optional cover template.
+
+## Google Forms + таблицы Q&A
+
+1. Откройте форму `https://docs.google.com/forms/.../viewform` (или страницу с таблицей Вопрос|Ответ).
+2. Side panel -> **Обновить с страницы** - вопросы попадут в блок **«Вопросы формы»**.
+3. **Ответы на вопросы** (`mode: qa`) - LLM вернёт `{ answers: [{question, answer}] }`.
+4. Копируйте ответ по строке или **Копировать все**.
+
+Парсер: `FB_PUBLIC_LOAD_DATA_` + DOM (`.Qr7Oae`, `role=listitem`, legacy freebird) + HTML `table` heuristics.
 
 ## Сопроводительное (шаблон)
 
@@ -67,13 +80,21 @@ Chrome MV3 extension: персонализированные отклики с R
 Строка: checkbox | title | meta | delete. Чекбоксы не должны раздуваться на 100% ширины (`input[type=checkbox] { width: auto }`).
 Отклик по умолчанию идёт через unified compact profile (много sources OK).
 
+## v0.5.7
+
+- Generate latency: Gemini→openmodel→GLM, compact ≤2800 first, `gemini-3.6-flash`
+- Google Forms + table Q&A в side panel («Вопросы формы»)
+
 ## Парсинг вакансии
 
 `content/page-extract.js` на любой http(s) странице:
 
 - HH: спец. селекторы
+- **Google Forms**: `docs.google.com/forms/.../viewform` (FB_PUBLIC_LOAD_DATA_ + DOM)
+- **Таблицы** вопрос/ответ на любых страницах
 - Job boards: remote.co, getmatch.ru, finder.work, relocate.me, cryptojobslist.com, web3.career, workingnomads.com, aijobs.net, simplyhired.com, jobgether.com, flexjobs.com, powertofly.com, crossover.com, justremote.co, foorilla.com, instahyre.com
 - Structured fields: title, salary, experience, employmentType, schedule, workingHours, workFormat, keySkills, seniority, location
+- Questions: `[{id, text, type, options[]}]` (Forms / table / HH)
 
 ## API
 
@@ -89,7 +110,7 @@ Chrome MV3 extension: персонализированные отклики с R
 | POST | `/api/v1/job-responder/resume/link-capture` |
 | POST | `/api/v1/job-responder/resume/drive-import` |
 | POST | `/api/v1/job-responder/relevance` |
-| POST | `/api/v1/job-responder/generate` (`coverTemplate` / `baseLetter` optional) |
+| POST | `/api/v1/job-responder/generate` (`mode`: `cover_letter` \| `qa` \| `question_answers`; `questions` optional; `coverTemplate` / `baseLetter` optional) |
 
 ## Redeploy API
 

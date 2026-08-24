@@ -12,6 +12,8 @@ from job_responder import (
     extract_resume_profile,
     extract_urls_from_text,
     near_duplicate_hash,
+    normalize_questions,
+    parse_answers_json,
     score_resume_vs_vacancy,
     strip_profile_wrapper,
     wrap_content_with_profile,
@@ -103,3 +105,26 @@ def test_score_empty_resume():
     out = score_resume_vs_vacancy(vacancy, [])
     assert out["score"] == 0
     assert out["missing"]
+
+
+def test_normalize_questions_mixed():
+    qs = normalize_questions(
+        [
+            "Ваше имя",
+            {"id": "42", "text": "Опыт AI?", "type": "paragraph", "options": []},
+            {"text": "Ваше имя"},  # dup
+            {"text": "Стек", "type": "multiple_choice", "options": ["n8n", "Python"]},
+        ]
+    )
+    assert len(qs) == 3
+    assert qs[0]["text"] == "Ваше имя"
+    assert qs[1]["id"] == "42"
+    assert qs[2]["options"] == ["n8n", "Python"]
+
+
+def test_parse_answers_json_fence_and_hh():
+    raw = '```json\n[{"question":"Q1","answer":"A — test → «ok»"}]\n```'
+    ans = parse_answers_json(raw)
+    assert ans is not None
+    assert ans[0]["question"] == "Q1"
+    assert ans[0]["answer"] == 'A - test -> "ok"'

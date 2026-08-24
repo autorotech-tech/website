@@ -69,7 +69,7 @@
 | `BOOKMARKS_MIMO_API_BASE` | `https://api.xiaomimimo.com/v1` | [Xiaomi MiMo API](https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call); Token Plan: `https://token-plan-cn.xiaomimimo.com/v1` |
 | `BOOKMARKS_KIMI_API_BASE` | `https://api.moonshot.ai/v1` | [Kimi Open Platform](https://platform.kimi.ai/docs/api/overview) |
 | `BOOKMARKS_GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | REST Gemini |
-| `BOOKMARKS_GEMINI_CHAT_MODEL` | `gemini-2.0-flash` | `generateContent` |
+| `BOOKMARKS_GEMINI_CHAT_MODEL` | `gemini-2.5-flash` | `generateContent` |
 
 ## Прочее
 

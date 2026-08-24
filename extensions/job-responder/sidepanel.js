@@ -339,10 +339,18 @@ function applyVacancy(vacancy) {
   currentVacancy = vacancy;
   const host = vacancy.host || 'web';
   const site = vacancy.siteHost ? ` · ${vacancy.siteHost}` : '';
-  vacancyMeta.textContent = `${vacancy.title || '-'} | ${vacancy.company || '-'} | ${host}${site}`;
+  const kind =
+    vacancy.source === 'google_form' || vacancy.pageKind === 'google_form'
+      ? ' · Google Form'
+      : vacancy.source === 'table_qa'
+        ? ' · таблица Q&A'
+        : '';
+  vacancyMeta.textContent = `${vacancy.title || '-'} | ${vacancy.company || '-'} | ${host}${site}${kind}`;
   if (vacancy.description) vacancyDescription.value = vacancy.description;
   renderStructured(vacancy.structured);
   renderRelevance(null);
+  const qs = normalizeQuestionList(vacancy.questions);
+  renderQaTable(qs.map((q) => ({ question: q.text, answer: '' })));
 }
 
 async function refreshVacancyFromTab() {
@@ -350,11 +358,92 @@ async function refreshVacancyFromTab() {
   try {
     const vacancy = await JR_API.fetchVacancyFromTab();
     applyVacancy(vacancy);
-    setSuccess('Страница прочитана');
+    const qn = normalizeQuestionList(vacancy.questions).length;
+    setSuccess(
+      vacancy.source === 'google_form'
+        ? `Google Form прочитана (${qn} вопросов)`
+        : qn
+          ? `Страница прочитана (${qn} вопросов)`
+          : 'Страница прочитана'
+    );
     await runRelevanceScore().catch(() => {});
   } catch (err) {
     setError(String(err.message || err));
   }
+}
+
+function normalizeQuestionList(raw) {
+  const out = [];
+  const seen = new Set();
+  (Array.isArray(raw) ? raw : []).forEach((item, i) => {
+    let text = '';
+    let type = 'text';
+    let options = [];
+    let id = String(i + 1);
+    if (typeof item === 'string') {
+      text = item.trim();
+    } else if (item && typeof item === 'object') {
+      text = String(item.text || item.question || '').trim();
+      type = String(item.type || 'text');
+      options = Array.isArray(item.options) ? item.options.map(String) : [];
+      id = String(item.id || i + 1);
+    }
+    if (!text || text.length < 2) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ id, text, type, options });
+  });
+  return out;
+}
+
+function renderQaTable(rows) {
+  const section = document.getElementById('qaSection');
+  const table = document.getElementById('qaTable');
+  const meta = document.getElementById('qaMeta');
+  if (!section || !table) return;
+  const list = Array.isArray(rows) ? rows.filter((r) => r && (r.question || r.answer)) : [];
+  if (!list.length) {
+    section.hidden = true;
+    table.innerHTML = '';
+    return;
+  }
+  section.hidden = false;
+  if (meta) {
+    const answered = list.filter((r) => String(r.answer || '').trim()).length;
+    meta.textContent =
+      answered > 0
+        ? `Вопрос | Ответ · ${answered}/${list.length} с ответом. Копируйте по строкам или «Копировать все».`
+        : `Найдено вопросов: ${list.length}. Нажмите «Ответы на вопросы» - появятся ответы для копирования.`;
+  }
+  table.innerHTML = list
+    .map((row, idx) => {
+      const q = escapeHtml(row.question || '');
+      const a = escapeHtml(row.answer || '—');
+      return `
+        <div class="qaRow" data-idx="${idx}">
+          <div class="qaQuestion"><b>Вопрос:</b> ${q}</div>
+          <div class="qaAnswer"><b>Ответ:</b> ${a}</div>
+          <div class="qaRowActions">
+            <button type="button" class="qaCopyBtn" data-copy-idx="${idx}">Копировать ответ</button>
+          </div>
+        </div>`;
+    })
+    .join('');
+  table.querySelectorAll('.qaCopyBtn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const idx = Number(btn.getAttribute('data-copy-idx'));
+      const row = list[idx];
+      const text = String(row?.answer || '').trim() || String(row?.question || '');
+      try {
+        await navigator.clipboard.writeText(text);
+        setSuccess('Ответ скопирован');
+      } catch (err) {
+        setError(String(err.message || err));
+      }
+    });
+  });
+  window.__jrQaRows = list;
 }
 
 function buildVacancyPayload() {
@@ -362,13 +451,19 @@ function buildVacancyPayload() {
   const description = String(vacancyDescription.value || base.description || '').trim();
   const title = String(base.title || 'Вакансия').trim();
   const structured = base.structured && typeof base.structured === 'object' ? base.structured : undefined;
+  const questions = normalizeQuestionList(base.questions);
   return {
     url: base.url || '',
     title,
     company: base.company || '',
-    description,
-    questions: Array.isArray(base.questions) ? base.questions : [],
+    description:
+      description ||
+      (questions.length
+        ? questions.map((q, i) => `${i + 1}. ${q.text}`).join('\n')
+        : ''),
+    questions,
     structured: structured || undefined,
+    source: base.source || undefined,
   };
 }
 
@@ -394,12 +489,17 @@ async function runGenerate(mode) {
   setError('');
   setSuccess('');
   const vacancy = buildVacancyPayload();
+  const isQa = mode === 'question_answers' || mode === 'qa';
   if (!vacancy.description || vacancy.description.length < 20) {
     setError('Нужно описание вакансии (обновите со страницы или вставьте вручную)');
     return;
   }
-  const btn = mode === 'question_answers' ? genAnswersBtn : genCoverBtn;
-  const idle = mode === 'question_answers' ? 'Ответы на вопросы' : 'Отклик';
+  if (isQa && (!vacancy.questions || !vacancy.questions.length)) {
+    setError('На странице нет вопросов. Откройте Google Form / таблицу или HH с вопросами, затем «Обновить с страницы».');
+    return;
+  }
+  const btn = isQa ? genAnswersBtn : genCoverBtn;
+  const idle = isQa ? 'Ответы на вопросы' : 'Отклик';
   setButtonBusy(btn, true, idle, 'Генерация…');
   genMeta.textContent = 'Генерация…';
   try {
@@ -409,14 +509,25 @@ async function runGenerate(mode) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
     const data = await JR_API.generateResponse({
-      mode,
+      mode: isQa ? 'qa' : 'cover_letter',
       host: currentVacancy?.host || 'web',
       vacancy,
       selectedSourceIds: getSelectedSourceIds(),
-      coverTemplate: mode === 'cover_letter' ? coverTemplate : undefined,
+      coverTemplate: !isQa ? coverTemplate : undefined,
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
+    if (Array.isArray(data.answers) && data.answers.length) {
+      renderQaTable(
+        data.answers.map((a) => ({
+          question: a.question || a.text || '',
+          answer: a.answer || '',
+        }))
+      );
+    } else if (isQa && vacancy.questions.length) {
+      // Fallback: keep questions visible even if JSON parse failed
+      renderQaTable(vacancy.questions.map((q) => ({ question: q.text, answer: letter || '' })));
+    }
     if (data.relevance) renderRelevance(data.relevance);
     const tplNote = data.usedCoverTemplate ? ' | template: yes' : '';
     const profileNote =
@@ -424,9 +535,11 @@ async function runGenerate(mode) {
         ? ` | profile: ${data.compactProfileChars}c / ${data.sourcesMerged ?? (data.sources || []).length} src`
         : '';
     const compressNote = data.profileCompressed ? ' | compressed' : '';
-    genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
+    const elapsedNote = data.elapsedSec != null ? ` | ${data.elapsedSec}s` : '';
+    const provNote = data.provider ? ` | ${data.provider}` : '';
+    genMeta.textContent = `model: ${data.model || '-'}${provNote} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
-    }${tplNote}${profileNote}${compressNote}`;
+    }${tplNote}${profileNote}${compressNote}${elapsedNote}`;
     if (data.limitMessage) {
       genMeta.textContent += ` | ${data.limitMessage}`;
     }
@@ -434,11 +547,11 @@ async function runGenerate(mode) {
       setError(String(data.message));
       return;
     }
-    if (!letter) {
-      setError(data.message || 'API ответил без текста письма. Повторите «Отклик» - профиль сожмётся сильнее.');
+    if (!letter && !(Array.isArray(data.answers) && data.answers.length)) {
+      setError(data.message || 'API ответил без текста. Повторите - профиль уже сжатый.');
       return;
     }
-    setSuccess('Готово - проверьте текст и скопируйте');
+    setSuccess(isQa ? 'Ответы готовы - копируйте из таблицы «Вопросы формы»' : 'Готово - проверьте текст и скопируйте');
   } catch (err) {
     genMeta.textContent = '';
     setError(String(err.message || err));
@@ -451,6 +564,7 @@ const refreshVacancyBtn = document.getElementById('refreshVacancyBtn');
 const genCoverBtn = document.getElementById('genCoverBtn');
 const genAnswersBtn = document.getElementById('genAnswersBtn');
 const copyBtn = document.getElementById('copyBtn');
+const copyAllQaBtn = document.getElementById('copyAllQaBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
@@ -894,6 +1008,27 @@ copyBtn.addEventListener('click', async () => {
   await navigator.clipboard.writeText(text);
   setSuccess('Скопировано в буфер');
 });
+
+if (copyAllQaBtn) {
+  copyAllQaBtn.addEventListener('click', async () => {
+    const rows = Array.isArray(window.__jrQaRows) ? window.__jrQaRows : [];
+    const text = rows
+      .map((r) => {
+        const q = String(r.question || '').trim();
+        const a = String(r.answer || '').trim();
+        if (!q && !a) return '';
+        return `Вопрос: ${q}\nОтвет: ${a || '—'}`;
+      })
+      .filter(Boolean)
+      .join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text || String(resultText.value || '').trim());
+      setSuccess('Все ответы скопированы');
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  });
+}
 
 loginBtn.addEventListener('click', () => {
   chrome.windows.create({ url: chrome.runtime.getURL('login.html'), type: 'popup', width: 420, height: 520 });
