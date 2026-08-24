@@ -48,13 +48,22 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 # Stay under nginx/CF ~60–100s: never return HTTP 502 (Cloudflare replaces JSON with HTML).
 FILE_CAPTURE_BUDGET_SEC = 28.0
 GENERATE_BUDGET_SEC = 42.0
-GENERATE_MAX_SOURCES = 6
-GENERATE_BODY_CHARS = 900
-GENERATE_VACANCY_CHARS = 3500
+# Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
+SELECTED_SOURCES_MAX = 40
+COMPACT_PROFILE_CHARS = 6000
+COMPACT_PROFILE_CHARS_RETRY = 3200
+COMPACT_PROFILE_KIND = "job_profile_compact"
+GENERATE_VACANCY_CHARS = 2800
+COVER_TEMPLATE_CHARS = 2500
+COVER_TEMPLATE_CHARS_RETRY = 1200
 LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
 LLM_ATTEMPT_TIMEOUT_SEC = 16.0
+_COVER_SNIPPET_RE = re.compile(
+    r"сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|шаблон\s*отклик",
+    re.I,
+)
 
 _SKILL_SPLIT = re.compile(r"[,;/|•·\n]+")
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9+#.\-]{2,}")
@@ -320,9 +329,9 @@ def extract_urls_from_text(text: str, limit: int = 20) -> List[str]:
     return out
 
 
-def resolve_cover_template(cover_template: Optional[str], base_letter: Optional[str]) -> str:
+def resolve_cover_template(cover_template: Optional[str], base_letter: Optional[str], *, max_chars: int = COVER_TEMPLATE_CHARS) -> str:
     raw = (cover_template or base_letter or "").strip()
-    return raw[:20000] if raw else ""
+    return raw[: max(500, int(max_chars))] if raw else ""
 
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
@@ -578,13 +587,212 @@ def call_with_timeout(fn, timeout_sec: float, *args, **kwargs):
     return result
 
 
-def cap_rag_items(rows: List[Dict[str, Any]], *, max_n: int = GENERATE_MAX_SOURCES) -> Tuple[List[Dict[str, Any]], bool]:
+def cap_rag_items(rows: List[Dict[str, Any]], *, max_n: int = SELECTED_SOURCES_MAX) -> Tuple[List[Dict[str, Any]], bool]:
     ranked = sorted(
         [dict(r) for r in rows],
         key=lambda r: (0 if str(r.get("kind") or "") == PRIMARY_CV_KIND else 1, str(r.get("updated_at") or "")),
     )
+    # Skip cached compact profile rows if any slipped into the set.
+    ranked = [r for r in ranked if str(r.get("kind") or "") != COMPACT_PROFILE_KIND]
     capped = ranked[: max(1, int(max_n))]
     return capped, len(ranked) > len(capped)
+
+
+def _row_profile(row: Dict[str, Any]) -> Dict[str, Any]:
+    body = str(row.get("content_text") or row.get("ai_summary") or "")
+    title = str(row.get("title") or "")
+    prof = parse_profile_from_content(body)
+    if not prof.get("tools") or not prof.get("skills"):
+        soft = extract_resume_profile(body, title=title, category=str(row.get("category") or ""))
+        for k in ("skills", "tools", "roles", "domains", "employment_preferences", "languages", "education", "achievements"):
+            if not prof.get(k) and soft.get(k):
+                prof[k] = soft[k]
+        if not prof.get("experience_bullets") and soft.get("experience_bullets"):
+            prof["experience_bullets"] = soft["experience_bullets"]
+        if not prof.get("geo_remote") and soft.get("geo_remote"):
+            prof["geo_remote"] = soft["geo_remote"]
+        if not prof.get("seniority") and soft.get("seniority"):
+            prof["seniority"] = soft["seniority"]
+        if not prof.get("links") and soft.get("links"):
+            prof["links"] = soft["links"]
+    return prof
+
+
+def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge many Resume RAG sources into one workspace-level compact profile."""
+    skills: List[str] = []
+    tools: List[str] = []
+    roles: List[str] = []
+    domains: List[str] = []
+    languages: List[str] = []
+    prefs: List[str] = []
+    experience_bullets: List[str] = []
+    education: List[str] = []
+    achievements: List[str] = []
+    links: List[Dict[str, str]] = []
+    cover_snippets: List[str] = []
+    source_titles: List[str] = []
+    formats: List[str] = []
+    seniority: Optional[str] = None
+    text_bits: List[str] = []
+    seen_link: set = set()
+    seen_cover: set = set()
+
+    for row in resume_rows:
+        if str(row.get("kind") or "") == COMPACT_PROFILE_KIND:
+            continue
+        title = str(row.get("title") or "").strip()
+        if title:
+            source_titles.append(title[:120])
+        body = str(row.get("content_text") or row.get("ai_summary") or "")
+        plain = strip_profile_wrapper(body)
+        text_bits.append(f"{title} {plain[:2500]}")
+        prof = _row_profile(row)
+        skills.extend(prof.get("skills") or [])
+        tools.extend(prof.get("tools") or [])
+        roles.extend(prof.get("roles") or [])
+        domains.extend(prof.get("domains") or [])
+        languages.extend(prof.get("languages") or [])
+        prefs.extend(prof.get("employment_preferences") or [])
+        experience_bullets.extend(prof.get("experience_bullets") or [])
+        education.extend(prof.get("education") or [])
+        achievements.extend(prof.get("achievements") or [])
+        if prof.get("geo_remote"):
+            formats.append(str(prof["geo_remote"]))
+        if prof.get("seniority") and not seniority:
+            seniority = str(prof["seniority"])
+        for lk in prof.get("links") or []:
+            if not isinstance(lk, dict):
+                continue
+            url = str(lk.get("url") or "").strip()
+            key = url.lower().rstrip("/")
+            if not key or key in seen_link:
+                continue
+            seen_link.add(key)
+            links.append(
+                {
+                    "url": url[:400],
+                    "title": str(lk.get("title") or "")[:120],
+                    "summary": str(lk.get("summary") or "")[:220],
+                }
+            )
+        hay = f"{title}\n{plain[:800]}"
+        if _COVER_SNIPPET_RE.search(hay):
+            snip = re.sub(r"\s+", " ", plain).strip()[:420]
+            key = snip.lower()[:160]
+            if snip and key not in seen_cover:
+                seen_cover.add(key)
+                cover_snippets.append(snip)
+
+    blob = " ".join(text_bits).lower()
+    tools = _uniq_lower([*tools, *[t for t in _KNOWN_TOOLS if t in blob]], 40)
+
+    return {
+        "skills": _uniq_lower(skills, 40),
+        "tools": tools,
+        "roles": _uniq_lower(roles, 16),
+        "domains": _uniq_lower(domains, 16),
+        "languages": _uniq_lower(languages, 10),
+        "employment_preferences": _uniq_lower(prefs, 10),
+        "seniority": seniority,
+        "geo_remote": (formats[0] if formats else None),
+        "experience_bullets": _uniq_lower(experience_bullets, 14),
+        "education": _uniq_lower(education, 6),
+        "achievements": _uniq_lower(achievements, 8),
+        "links": links[:12],
+        "cover_snippets": cover_snippets[:3],
+        "source_titles": list(dict.fromkeys(source_titles))[:24],
+        "source_count": len(resume_rows),
+        "_text_blob": blob[:12000],
+    }
+
+
+def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_PROFILE_CHARS) -> str:
+    """Render merged profile as a single lean RESUME CONTEXT block."""
+    max_chars = max(1200, int(max_chars))
+
+    def render(
+        *,
+        skill_n: int,
+        tool_n: int,
+        bullet_n: int,
+        link_n: int,
+        title_n: int,
+        with_snippets: bool,
+        with_ach: bool,
+    ) -> str:
+        lines: List[str] = [
+            "UNIFIED RESUME PROFILE (compact, deduped)",
+            f"sources_merged: {int(profile.get('source_count') or 0)}",
+        ]
+        titles = list(profile.get("source_titles") or [])[:title_n]
+        if titles:
+            lines.append("source_titles: " + "; ".join(str(t)[:80] for t in titles))
+
+        def add_csv(label: str, values: Any, n: int) -> None:
+            items = [str(x) for x in (values or []) if str(x).strip()][:n]
+            if items:
+                lines.append(f"{label}: " + ", ".join(items))
+
+        add_csv("skills", profile.get("skills"), skill_n)
+        add_csv("tools", profile.get("tools"), tool_n)
+        add_csv("roles", profile.get("roles"), 10)
+        add_csv("domains", profile.get("domains"), 10)
+        add_csv("languages", profile.get("languages"), 8)
+        add_csv("employment", profile.get("employment_preferences"), 8)
+        if profile.get("seniority"):
+            lines.append(f"seniority: {profile['seniority']}")
+        if profile.get("geo_remote"):
+            lines.append(f"format: {profile['geo_remote']}")
+
+        bullets = [str(x) for x in (profile.get("experience_bullets") or []) if str(x).strip()][:bullet_n]
+        if bullets:
+            lines.append("experience:")
+            for b in bullets:
+                lines.append(f"- {b[:180]}")
+
+        edu = [str(x) for x in (profile.get("education") or []) if str(x).strip()][:4]
+        if edu:
+            lines.append("education: " + "; ".join(e[:140] for e in edu))
+        if with_ach:
+            ach = [str(x) for x in (profile.get("achievements") or []) if str(x).strip()][:4]
+            if ach:
+                lines.append("achievements: " + "; ".join(a[:140] for a in ach))
+
+        link_lines = []
+        for lk in list(profile.get("links") or [])[:link_n]:
+            if not isinstance(lk, dict):
+                continue
+            desc = (lk.get("summary") or lk.get("title") or "").strip()
+            bit = f"{lk.get('url')}"
+            if desc:
+                bit += f" - {desc[:140]}"
+            link_lines.append(bit[:200])
+        if link_lines:
+            lines.append("links:")
+            for bit in link_lines:
+                lines.append(f"- {bit}")
+
+        if with_snippets:
+            snippets = [str(x) for x in (profile.get("cover_snippets") or []) if str(x).strip()][:2]
+            if snippets:
+                lines.append("cover_snippets:")
+                for s in snippets:
+                    lines.append(f"- {s[:280]}")
+
+        return "\n".join(lines)
+
+    tiers = (
+        dict(skill_n=28, tool_n=24, bullet_n=10, link_n=8, title_n=12, with_snippets=True, with_ach=True),
+        dict(skill_n=20, tool_n=16, bullet_n=6, link_n=4, title_n=6, with_snippets=False, with_ach=True),
+        dict(skill_n=14, tool_n=12, bullet_n=4, link_n=2, title_n=4, with_snippets=False, with_ach=False),
+    )
+    text = ""
+    for opts in tiers:
+        text = render(**opts)
+        if len(text) <= max_chars:
+            return text
+    return text[: max_chars - 20].rstrip() + "\n…(truncated)"
 
 
 def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> List[str]:
@@ -668,6 +876,8 @@ def _parse_experience_years(text: str) -> Optional[float]:
 def score_resume_vs_vacancy(
     vacancy: JobResponderVacancyPayload,
     resume_rows: List[Dict[str, Any]],
+    *,
+    merged_profile: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Deterministic 0–100 score with explainable matched/missing bullets."""
     vac_profile = vacancy_to_match_blob(vacancy)
@@ -693,51 +903,38 @@ def score_resume_vs_vacancy(
     ).lower()
     vac_tools |= {t for t in _KNOWN_TOOLS if t in vac_blob}
 
-    merged_skills: set = set()
-    merged_tools: set = set()
-    merged_roles: set = set()
-    merged_domains: set = set()
-    merged_prefs: set = set()
-    resume_formats: set = set()
-    resume_seniority: Optional[str] = None
-    resume_titles: List[str] = []
+    profile = merged_profile or merge_profiles_from_rows(resume_rows)
+    merged_skills = {s.lower() for s in (profile.get("skills") or [])}
+    merged_tools = {s.lower() for s in (profile.get("tools") or [])}
+    merged_roles = {s.lower() for s in (profile.get("roles") or [])}
+    merged_domains = {s.lower() for s in (profile.get("domains") or [])}
+    merged_prefs = {s.lower() for s in (profile.get("employment_preferences") or [])}
+    resume_formats = {str(profile.get("geo_remote") or "").lower()} - {""}
+    resume_seniority = str(profile.get("seniority") or "").lower() or None
+    resume_titles = [str(t).lower() for t in (profile.get("source_titles") or [])]
+    resume_text_blob = str(profile.get("_text_blob") or "")
+    if not resume_text_blob:
+        resume_text_blob = " ".join(
+            [
+                " ".join(profile.get("skills") or []),
+                " ".join(profile.get("tools") or []),
+                " ".join(profile.get("experience_bullets") or []),
+                " ".join(resume_titles),
+            ]
+        ).lower()
     resume_exp_years: List[float] = []
-    resume_text_blob = ""
-
-    for row in resume_rows:
-        body = str(row.get("content_text") or row.get("ai_summary") or "")
-        title = str(row.get("title") or "")
-        if title:
-            resume_titles.append(title.lower())
-        resume_text_blob += " " + title + " " + body[:5000]
-        prof = parse_profile_from_content(body)
-        if not prof.get("tools"):
-            # fall back to raw extract when profile JSON missing tools
-            soft = extract_resume_profile(body, title=title)
-            for k in ("skills", "tools", "roles", "domains", "employment_preferences"):
-                if not prof.get(k) and soft.get(k):
-                    prof[k] = soft[k]
-            if not prof.get("geo_remote") and soft.get("geo_remote"):
-                prof["geo_remote"] = soft["geo_remote"]
-            if not prof.get("seniority") and soft.get("seniority"):
-                prof["seniority"] = soft["seniority"]
-        merged_skills.update(s.lower() for s in (prof.get("skills") or []))
-        merged_tools.update(s.lower() for s in (prof.get("tools") or []))
-        merged_roles.update(s.lower() for s in (prof.get("roles") or []))
-        merged_domains.update(s.lower() for s in (prof.get("domains") or []))
-        merged_prefs.update(s.lower() for s in (prof.get("employment_preferences") or []))
-        if prof.get("geo_remote"):
-            resume_formats.add(str(prof["geo_remote"]).lower())
-        if prof.get("seniority") and not resume_seniority:
-            resume_seniority = str(prof["seniority"]).lower()
-        ey = _parse_experience_years(body[:1500])
+    for bit in list(profile.get("experience_bullets") or [])[:8]:
+        ey = _parse_experience_years(str(bit))
+        if ey is not None:
+            resume_exp_years.append(ey)
+    for row in resume_rows[:6]:
+        ey = _parse_experience_years(strip_profile_wrapper(str(row.get("content_text") or ""))[:1500])
         if ey is not None:
             resume_exp_years.append(ey)
 
-    resume_lower = resume_text_blob.lower()
-    merged_tools |= {t for t in _KNOWN_TOOLS if t in resume_lower}
+    merged_tools |= {t for t in _KNOWN_TOOLS if t in resume_text_blob}
 
-    if not resume_rows:
+    if not resume_rows and not (merged_skills or merged_tools):
         return {
             "score": 0,
             "rationale": ["Нет выбранных/найденных источников Resume RAG"],
@@ -748,6 +945,11 @@ def score_resume_vs_vacancy(
             "matchedTools": [],
             "missingSkills": sorted(vac_skills)[:12],
             "missingTools": sorted(vac_tools)[:12],
+            "compactProfile": {
+                "sourceCount": int(profile.get("source_count") or 0),
+                "skills": list(profile.get("skills") or [])[:12],
+                "tools": list(profile.get("tools") or [])[:12],
+            },
         }
 
     score = 0
@@ -812,6 +1014,7 @@ def score_resume_vs_vacancy(
     # --- Role / title (0–18) ---
     role_hits = sorted(vac_roles & merged_roles)
     title_l = (vacancy.title or "").lower()
+    resume_lower = resume_text_blob
     title_in_resume = any(
         len(tok) > 3 and tok in resume_lower
         for tok in _TOKEN_RE.findall(title_l)
@@ -822,7 +1025,7 @@ def score_resume_vs_vacancy(
         matched.append(f"Роли: {', '.join(role_hits[:4])}")
     if title_in_resume:
         role_pts += 8
-        matched.append(f"Заголовок вакансии отражён в Resume RAG")
+        matched.append("Заголовок вакансии отражён в compact profile")
     elif vac_roles and not role_hits:
         missing.append(f"Роли: {', '.join(sorted(vac_roles)[:4])}")
     score += min(18, role_pts)
@@ -882,7 +1085,7 @@ def score_resume_vs_vacancy(
 
     score = max(0, min(100, int(score)))
     if not rationale:
-        rationale.append("Оценка по пересечению профиля Resume RAG и вакансии")
+        rationale.append("Оценка по пересечению compact profile и вакансии")
 
     return {
         "score": score,
@@ -894,6 +1097,12 @@ def score_resume_vs_vacancy(
         "matchedTools": tool_hits[:12],
         "missingSkills": skill_miss[:12],
         "missingTools": tool_miss[:12],
+        "compactProfile": {
+            "sourceCount": int(profile.get("source_count") or 0),
+            "skills": list(profile.get("skills") or [])[:16],
+            "tools": list(profile.get("tools") or [])[:16],
+            "roles": list(profile.get("roles") or [])[:8],
+        },
     }
 
 
@@ -962,7 +1171,7 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
             + """
 Режим: адаптация сопроводительного письма под вакансию.
 Дан блок COVER TEMPLATE - это письмо кандидата. НЕ пиши письмо с нуля.
-Задача: адаптировать шаблон под конкретную вакансию и выбранные источники:
+Задача: адаптировать шаблон под конкретную вакансию и unified compact profile:
 - сохрани голос, тон и структуру автора;
 - подставь/уточни факты под требования вакансии (только из RESUME CONTEXT);
 - убери нерелевантное, усили совпадения с вакансией;
@@ -981,42 +1190,14 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
 
 def build_user_prompt(
     vacancy: JobResponderVacancyPayload,
-    rag_items: List[Dict[str, Any]],
+    compact_profile_text: str,
     mode: str,
     host: str,
     questions: Optional[List[str]] = None,
     cover_template: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
-    ctx_lines = []
-    for idx, item in enumerate(rag_items, start=1):
-        title = str(item.get("title") or f"Source {idx}")
-        category = str(item.get("category") or "")
-        kind = str(item.get("kind") or "")
-        summary = str(item.get("summary") or item.get("ai_summary") or "")[:500]
-        body = strip_profile_wrapper(str(item.get("content_text") or ""))[:GENERATE_BODY_CHARS]
-        prof = parse_profile_from_content(str(item.get("content_text") or ""))
-        slots = []
-        if prof.get("skills"):
-            slots.append("skills=" + ", ".join(prof["skills"][:10]))
-        if prof.get("experience_bullets"):
-            slots.append("experience=" + " | ".join(prof["experience_bullets"][:4]))
-        if prof.get("links"):
-            link_bits = []
-            for lk in prof["links"][:5]:
-                if not isinstance(lk, dict):
-                    continue
-                desc = (lk.get("summary") or lk.get("title") or "").strip()
-                link_bits.append(f"{lk.get('url')}: {desc}"[:160] if desc else str(lk.get("url") or ""))
-            if link_bits:
-                slots.append("links=" + "; ".join(link_bits))
-        ctx_lines.append(
-            f"[source {idx}] title={title!r} kind={kind} category={category}\n"
-            f"summary: {summary}\n"
-            + ("slots: " + "; ".join(slots) + "\n" if slots else "")
-            + f"text: {body}"
-        )
-    resume_context = "\n\n".join(ctx_lines) if ctx_lines else "(empty - do not invent facts)"
+    resume_context = (compact_profile_text or "").strip() or "(empty - do not invent facts)"
 
     structured = vacancy.structured.model_dump(exclude_none=True) if vacancy.structured else None
     vacancy_block = json.dumps(
@@ -1038,7 +1219,7 @@ def build_user_prompt(
         f"RESUME CONTEXT:\n{resume_context}",
     ]
     if mode == "cover_letter" and cover_template:
-        parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:4000]}")
+        parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template}")
     if mode == "question_answers":
         qlist = questions or vacancy.questions or []
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
@@ -1217,7 +1398,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
               k.note_path,
               k.kind,
               k.content_text,
-              null::float8 as distance
+              null::float8 as distance,
+              k.updated_at
             from public.knowledge_items k
             where k.workspace_id = %s
               and k.source = %s
@@ -1226,9 +1408,46 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             order by
               case when k.kind = %s then 0 else 1 end,
               k.updated_at desc
-            limit 8
+            limit %s
             """,
-            (workspace_id, RESUME_SOURCE, list(RESUME_KINDS), ids, PRIMARY_CV_KIND),
+            (
+                workspace_id,
+                RESUME_SOURCE,
+                list(RESUME_KINDS),
+                ids,
+                PRIMARY_CV_KIND,
+                SELECTED_SOURCES_MAX,
+            ),
+        )
+        return cur.fetchall()
+
+    def _resume_workspace_rows(cur, workspace_id: int, limit: int = SELECTED_SOURCES_MAX) -> List[Dict[str, Any]]:
+        cur.execute(
+            """
+            select
+              k.id,
+              k.source,
+              k.title,
+              k.url,
+              k.ai_summary,
+              k.category,
+              k.tags,
+              k.status,
+              k.note_path,
+              k.kind,
+              k.content_text,
+              null::float8 as distance,
+              k.updated_at
+            from public.knowledge_items k
+            where k.workspace_id = %s
+              and k.source = %s
+              and k.kind = any(%s)
+            order by
+              case when k.kind = %s then 0 else 1 end,
+              k.updated_at desc
+            limit %s
+            """,
+            (workspace_id, RESUME_SOURCE, list(RESUME_KINDS), PRIMARY_CV_KIND, max(1, int(limit))),
         )
         return cur.fetchall()
 
@@ -2411,12 +2630,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 if payload.selectedSourceIds:
                     rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
                 else:
-                    search_q = build_resume_search_query(payload.vacancy)
-                    _, rows = _resume_search_rows(cur, workspace_id, search_q, 12)
+                    rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
         finally:
             conn.close()
 
-        result = score_resume_vs_vacancy(payload.vacancy, [dict(r) for r in rows])
+        rag_items, _truncated = cap_rag_items(list(rows), max_n=SELECTED_SOURCES_MAX)
+        merged = merge_profiles_from_rows(rag_items)
+        result = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
         result["workspaceId"] = str(workspace_id)
         result["sourcesUsed"] = [
             {
@@ -2424,8 +2644,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "title": r.get("title"),
                 "kind": r.get("kind"),
             }
-            for r in rows[:8]
+            for r in rag_items[:12]
         ]
+        result["usedUnifiedProfile"] = True
         return result
 
     @app.post("/api/v1/job-responder/generate")
@@ -2473,72 +2694,90 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     if not rag_rows:
                         raise HTTPException(status_code=422, detail="Selected sources were not found in your Resume RAG.")
                 else:
-                    search_q = build_resume_search_query(payload.vacancy)
-                    _, rag_rows = _resume_search_rows(cur, workspace_id, search_q, GENERATE_MAX_SOURCES)
+                    rag_rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
         finally:
             conn.close()
 
-        rag_items, truncated = cap_rag_items(list(rag_rows), max_n=GENERATE_MAX_SOURCES)
-        relevance = score_resume_vs_vacancy(payload.vacancy, rag_items)
+        rag_items, truncated = cap_rag_items(list(rag_rows), max_n=SELECTED_SOURCES_MAX)
+        merged = merge_profiles_from_rows(rag_items)
+        relevance = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
         mode = payload.mode
-        cover_template = resolve_cover_template(payload.coverTemplate, payload.baseLetter)
-        has_template = bool(cover_template) and mode == "cover_letter"
-        system_prompt = build_system_prompt(mode, has_cover_template=has_template)
-        user_prompt = build_user_prompt(
-            payload.vacancy,
-            rag_items,
-            mode,
-            payload.host,
-            payload.vacancy.questions,
-            cover_template=cover_template if has_template else "",
-        )
+        profile_cap = COMPACT_PROFILE_CHARS
+        cover_cap = COVER_TEMPLATE_CHARS
+        profile_compressed = False
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        max_tokens = 900 if mode == "question_answers" else 800
-        # Job Responder: GLM → Gemini → openmodel. OpenRouter intentionally skipped.
-        attempts = (
-            {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
-            {"tier_override": "fast", "route_provider_override": "gemini", "route_model_override": "gemini-2.0-flash"},
-            {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
-        )
-        chat_result = None
-        last_err = ""
-        for kwargs in attempts:
-            remaining = deadline - time.monotonic()
-            if remaining < 4:
-                last_err = "timeout"
-                break
-            try:
-                chat_result = call_with_timeout(
-                    openai_chat_completions_generic,
-                    min(LLM_ATTEMPT_TIMEOUT_SEC, remaining - 1),
-                    messages=messages,
-                    temperature=0.35,
-                    max_tokens_override=max_tokens,
-                    **kwargs,
-                )
-            except FuturesTimeout:
-                last_err = "timeout"
-                chat_result = None
-                continue
-            except Exception as exc:
-                last_err = f"{type(exc).__name__}: {exc}"
-                _LOG.warning("generate LLM attempt failed: %s", last_err)
-                chat_result = None
-                continue
-            if chat_result and str(getattr(chat_result, "content", None) or "").strip():
-                break
-            last_err = last_err or "empty"
+        def _run_llm(profile_max: int, cover_max: int):
+            cover_template = resolve_cover_template(
+                payload.coverTemplate, payload.baseLetter, max_chars=cover_max
+            )
+            has_template = bool(cover_template) and mode == "cover_letter"
+            compact_text = format_compact_profile(merged, max_chars=profile_max)
+            system_prompt = build_system_prompt(mode, has_cover_template=has_template)
+            user_prompt = build_user_prompt(
+                payload.vacancy,
+                compact_text,
+                mode,
+                payload.host,
+                payload.vacancy.questions,
+                cover_template=cover_template if has_template else "",
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            max_tokens = 900 if mode == "question_answers" else 800
+            # Job Responder: GLM → Gemini → openmodel. OpenRouter intentionally skipped.
+            attempts = (
+                {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
+                {"tier_override": "fast", "route_provider_override": "gemini", "route_model_override": "gemini-2.0-flash"},
+                {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
+            )
             chat_result = None
+            last_err = ""
+            for kwargs in attempts:
+                remaining = deadline - time.monotonic()
+                if remaining < 4:
+                    last_err = "timeout"
+                    break
+                try:
+                    chat_result = call_with_timeout(
+                        openai_chat_completions_generic,
+                        min(LLM_ATTEMPT_TIMEOUT_SEC, remaining - 1),
+                        messages=messages,
+                        temperature=0.35,
+                        max_tokens_override=max_tokens,
+                        **kwargs,
+                    )
+                except FuturesTimeout:
+                    last_err = "timeout"
+                    chat_result = None
+                    continue
+                except Exception as exc:
+                    last_err = f"{type(exc).__name__}: {exc}"
+                    _LOG.warning("generate LLM attempt failed: %s", last_err)
+                    chat_result = None
+                    continue
+                if chat_result and str(getattr(chat_result, "content", None) or "").strip():
+                    break
+                last_err = last_err or "empty"
+                chat_result = None
+            return chat_result, last_err, compact_text, has_template
+
+        chat_result, last_err, compact_text, has_template = _run_llm(profile_cap, cover_cap)
+        if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and last_err == "timeout":
+            remaining = deadline - time.monotonic()
+            if remaining >= 8:
+                profile_compressed = True
+                profile_cap = COMPACT_PROFILE_CHARS_RETRY
+                cover_cap = COVER_TEMPLATE_CHARS_RETRY
+                _LOG.warning("generate retry with smaller compact profile remaining=%.1f", remaining)
+                chat_result, last_err, compact_text, has_template = _run_llm(profile_cap, cover_cap)
 
         raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
         if not raw_text:
             _LOG.warning("generate empty last_err=%s elapsed=%.2f", last_err, time.monotonic() - started)
             msg = (
-                "Модель не ответила вовремя. Выберите меньше sources и повторите."
+                "Модель не ответила вовремя. Профиль уже сжат; повторите - сервер сожмёт его ещё сильнее."
                 if last_err == "timeout"
                 else (
                     "LLM не вернул текст (GLM / Gemini / openmodel без ключа, без кредита или модель недоступна). "
@@ -2552,10 +2791,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "text": "",
                 "timedOut": last_err == "timeout",
                 "contextLimited": truncated,
+                "profileCompressed": profile_compressed or last_err == "timeout",
+                "compactProfileChars": len(compact_text or ""),
+                "sourcesMerged": len(rag_items),
+                "usedUnifiedProfile": True,
                 "limitMessage": (
-                    f"В промпт взяты {len(rag_items)} из выбранных источников (лимит {GENERATE_MAX_SOURCES})."
+                    f"В unified profile слиты {len(rag_items)} источников (лимит merge {SELECTED_SOURCES_MAX})."
                     if truncated
-                    else ""
+                    else f"Unified compact profile: {len(rag_items)} sources, {len(compact_text or '')} chars."
                 ),
                 "relevance": relevance,
                 "sources": [
@@ -2591,9 +2834,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             for r in rag_items
         ]
         limit_message = (
-            f"В промпт взяты {len(rag_items)} источников (лимит {GENERATE_MAX_SOURCES})."
-            if truncated
-            else ""
+            f"Unified profile: {len(rag_items)} sources -> {len(compact_text)} chars"
+            + (" (compressed retry)" if profile_compressed else "")
+            + (f"; merge capped at {SELECTED_SOURCES_MAX}" if truncated else "")
         )
         return {
             "ok": True,
@@ -2606,6 +2849,10 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "host": payload.host,
             "mode": mode,
             "usedCoverTemplate": has_template,
+            "usedUnifiedProfile": True,
+            "profileCompressed": profile_compressed,
+            "compactProfileChars": len(compact_text),
+            "sourcesMerged": len(rag_items),
             "contextLimited": truncated,
             "limitMessage": limit_message,
             "workspaceId": str(workspace_id),

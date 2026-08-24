@@ -419,14 +419,23 @@ async function runGenerate(mode) {
     resultText.value = letter;
     if (data.relevance) renderRelevance(data.relevance);
     const tplNote = data.usedCoverTemplate ? ' | template: yes' : '';
+    const profileNote =
+      data.compactProfileChars != null
+        ? ` | profile: ${data.compactProfileChars}c / ${data.sourcesMerged ?? (data.sources || []).length} src`
+        : '';
+    const compressNote = data.profileCompressed ? ' | compressed' : '';
     genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
-    }${tplNote}`;
+    }${tplNote}${profileNote}${compressNote}`;
     if (data.limitMessage) {
       genMeta.textContent += ` | ${data.limitMessage}`;
     }
+    if (data.ok === false && data.message) {
+      setError(String(data.message));
+      return;
+    }
     if (!letter) {
-      setError('API ответил без текста письма. Проверьте sources и попробуйте ещё раз.');
+      setError(data.message || 'API ответил без текста письма. Повторите «Отклик» - профиль сожмётся сильнее.');
       return;
     }
     setSuccess('Готово - проверьте текст и скопируйте');

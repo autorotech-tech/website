@@ -49,11 +49,21 @@ for path in (
 PY
 REMOTE
 
-echo "=== 4b. Smoke file-capture + generate (then purge) ==="
+echo "=== 4b. Smoke file-capture + multi-source generate (then purge) ==="
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker exec autoro-agent-api python3 - <<'PY'
 import json, time, uuid, urllib.request
+
+def post_json(path, obj, timeout=50):
+    req = urllib.request.Request(
+        "http://127.0.0.1:8900" + path,
+        data=json.dumps(obj).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, json.loads(r.read().decode())
 
 pdf = (
     b"%PDF-1.4\n"
@@ -98,16 +108,37 @@ except Exception as e:
     code = getattr(e, "code", None)
     payload = e.read()[:500] if hasattr(e, "read") else b""
     print("file-capture ERR", code, f"{elapsed:.2f}s", payload or e)
-    data = {}
     raise SystemExit(1)
 
 kid = data.get("knowledgeItemId")
+extra_ids = []
+for i in range(3):
+    title = f"jr-smoke-note-{i}.txt"
+    st, td = post_json(
+        "/api/v1/job-responder/resume/text-capture",
+        {
+            "workspaceId": "1",
+            "title": title,
+            "text": (
+                f"Portfolio note {i}. Tools: python, n8n, playwright, docker. "
+                f"Built automation pipelines and HH cover letters. Case {i}: reduced manual outreach."
+            ),
+            "kind": "job_experience",
+            "category": "notes",
+        },
+        timeout=30,
+    )
+    print("text-capture", i, st, td.get("knowledgeItemId"))
+    if td.get("knowledgeItemId"):
+        extra_ids.append(int(td["knowledgeItemId"]))
+
+selected = [int(kid)] + extra_ids if kid else extra_ids
 gen = {
     "workspaceId": "1",
     "mode": "cover_letter",
     "host": "web",
     "locale": "ru",
-    "selectedSourceIds": [kid] if kid else [],
+    "selectedSourceIds": selected,
     "vacancy": {
         "title": "n8n automation engineer",
         "company": "SmokeCo",
@@ -116,42 +147,59 @@ gen = {
     },
 }
 gt0 = time.monotonic()
-greq = urllib.request.Request(
-    "http://127.0.0.1:8900/api/v1/job-responder/generate",
-    data=json.dumps(gen).encode(),
-    method="POST",
-    headers={"Content-Type": "application/json"},
-)
 try:
-    with urllib.request.urlopen(greq, timeout=50) as r:
-        graw = r.read()
-        gelapsed = time.monotonic() - gt0
-        print("generate", r.status, f"{gelapsed:.2f}s", graw[:400])
+    gst, gdata = post_json("/api/v1/job-responder/generate", gen, timeout=55)
+    gelapsed = time.monotonic() - gt0
+    text = (gdata.get("text") or "").strip()
+    print(
+        "generate",
+        gst,
+        f"{gelapsed:.2f}s",
+        "ok=", gdata.get("ok"),
+        "chars=", gdata.get("compactProfileChars"),
+        "merged=", gdata.get("sourcesMerged"),
+        "unified=", gdata.get("usedUnifiedProfile"),
+        "text_len=", len(text),
+        text[:180],
+    )
+    if gdata.get("ok") is False or not text:
+        print("GENERATE_FAIL", gdata.get("error"), gdata.get("message"))
+        raise SystemExit(2)
+    if "меньше sources" in str(gdata.get("message") or "").lower():
+        print("BAD_TIMEOUT_COPY", gdata.get("message"))
+        raise SystemExit(3)
 except Exception as e:
     gelapsed = time.monotonic() - gt0
     code = getattr(e, "code", None)
     payload = e.read()[:400] if hasattr(e, "read") else b""
     print("generate ERR", code, f"{gelapsed:.2f}s", payload or e)
+    raise
 
 # purge smoke
-dreq = urllib.request.Request(
-    "http://127.0.0.1:8900/api/v1/job-responder/resume/sources/delete",
-    data=json.dumps({"workspaceId": "1", "titles": ["jr-smoke-cv.pdf"]}).encode(),
-    method="POST",
-    headers={"Content-Type": "application/json"},
+titles = ["jr-smoke-cv.pdf"] + [f"jr-smoke-note-{i}.txt" for i in range(3)]
+st, pdata = post_json(
+    "/api/v1/job-responder/resume/sources/delete",
+    {"workspaceId": "1", "titles": titles},
+    timeout=20,
 )
-with urllib.request.urlopen(dreq, timeout=20) as r:
-    print("purge-smoke", r.status, r.read()[:300])
+print("purge-smoke", st, pdata)
 PY
 REMOTE
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker exec autoro-agent-api python3 - <<'PY'
-import os, urllib.request, json
+import urllib.request, json
 url = "http://127.0.0.1:8900/api/v1/job-responder/resume/sources/delete"
 body = json.dumps({
     "workspaceId": "1",
-    "titles": ["second-cv.pdf", "smoke-nul-cv.pdf", "jr-smoke-cv.pdf"],
+    "titles": [
+        "second-cv.pdf",
+        "smoke-nul-cv.pdf",
+        "jr-smoke-cv.pdf",
+        "jr-smoke-note-0.txt",
+        "jr-smoke-note-1.txt",
+        "jr-smoke-note-2.txt",
+    ],
 }).encode()
 req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
 try:

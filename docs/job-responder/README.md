@@ -31,25 +31,27 @@ Chrome MV3 extension: персонализированные отклики с R
 - Ссылки из текста файлов/OCR/Drive/paste -> автоизвлечение http(s) **после** ответа ingest (не блокирует Cloudflare 524)
 - Кнопка **Удалить** у каждого source
 - Google Drive folder -> Connect через `chrome.identity` + import (см. [drive.md](./drive.md); нужен OAuth client ID в manifest)
-- Чекбоксы: генерация только по выбранным источникам
+- Чекбоксы: прозрачность выбора; generate/relevance всегда сливают отмеченные (или все) в **unified compact profile**
 - При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, `experience`, `education`, `links` с title+описанием)
 - Дедуп: тот же URL / content_hash / близкий текст -> merge (бейдж «слит»)
 - Ссылки: title + 1–3 предложения (лёгкий fetch, async, не блокирует ingest)
 - Список sources: компактные строки (не таблица)
-- Generate: лимит 6 источников, JSON-ошибки без HTTP 502 (Cloudflare иначе подменяет HTML)
+- Generate: LLM получает vacancy + **один** compact profile (~3–6k chars), не тела PDF; при timeout - retry с ещё более сжатым профилем; JSON-ошибки без HTTP 502
 - После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
 
 ## Релевантность
 
 `POST /api/v1/job-responder/relevance` и кнопка «Оценка релевантности» в panel:
 
-- score 0–100, детерминированный (tools / skills / role / format / experience)
+- score 0–100 по **тому же** unified compact profile (tools / skills / role / format / experience)
 - rationale + списки matched / missing в side panel
 
 ## LLM (generate)
 
 Порядок провайдеров: **GLM → Gemini → openmodel**. OpenRouter для Job Responder не используется.
 Ключи: Swoop Admin -> Settings (GLM / Gemini / openmodel).
+
+Промпт: `VACANCY` (cap ~2.8k) + `RESUME CONTEXT` = unified profile (cap 6k, retry 3.2k) + optional cover template (2.5k / retry 1.2k).
 
 ## Сопроводительное (шаблон)
 
@@ -60,9 +62,10 @@ Chrome MV3 extension: персонализированные отклики с R
 - Если шаблон не пустой - LLM **адаптирует** его под вакансию (голос автора), а не пишет с нуля
 - Формат HH: `-`, `->`, ASCII `"`
 
-## Sources list (v0.5.5+)
+## Sources list (v0.5.6+)
 
 Строка: checkbox | title | meta | delete. Чекбоксы не должны раздуваться на 100% ширины (`input[type=checkbox] { width: auto }`).
+Отклик по умолчанию идёт через unified compact profile (много sources OK).
 
 ## Парсинг вакансии
 
