@@ -25,21 +25,45 @@ const JR_API = (() => {
       }
     }
     if (!response.ok) {
-      const detail =
-        data?.detail != null
-          ? typeof data.detail === 'string'
-            ? data.detail
-            : JSON.stringify(data.detail)
-          : `HTTP ${response.status}`;
-      if (response.status === 404 || /^not found$/i.test(String(detail))) {
-        throw new Error(
-          `API 404: маршрут не найден (${url.split('?')[0]}). ` +
-            'Нужен redeploy agent-api (job_responder.py) на swoop.autoro.tech, затем Reload расширения.'
-        );
-      }
-      throw new Error(detail);
+      throw new Error(formatApiError(response.status, data, raw, url));
     }
     return data || {};
+  }
+
+  function formatApiError(status, data, raw, url) {
+    let detail = '';
+    if (data?.detail != null) {
+      if (typeof data.detail === 'string') detail = data.detail;
+      else if (Array.isArray(data.detail)) {
+        detail = data.detail
+          .map((item) => {
+            if (!item) return '';
+            if (typeof item === 'string') return item;
+            return item.msg || JSON.stringify(item);
+          })
+          .filter(Boolean)
+          .join('; ');
+      } else {
+        detail = JSON.stringify(data.detail);
+      }
+    }
+    if (!detail) {
+      const clipped = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+      detail = clipped || `HTTP ${status}`;
+    }
+    if (status === 404 || /^not found$/i.test(detail)) {
+      return (
+        `API 404: маршрут не найден (${String(url || '').split('?')[0]}). ` +
+        'Нужен redeploy agent-api (job_responder.py) на swoop.autoro.tech, затем Reload расширения.'
+      );
+    }
+    if (status === 413 || /file_too_large/i.test(detail)) {
+      return `Файл слишком большой (лимит 12 МБ). ${detail}`;
+    }
+    if (status === 422) {
+      return detail;
+    }
+    return `${detail} (HTTP ${status})`;
   }
 
   async function getApiBase() {
@@ -142,7 +166,10 @@ const JR_API = (() => {
   }
 
   async function resumeFileCapture({ file, title, kind = 'job_resume', category = 'cv' }) {
-    if (!file) throw new Error('File is required');
+    const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      throw new Error(`${file.name || 'file'}: больше 12 МБ`);
+    }
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders(true);
     const workspaceId = await getWorkspaceId();

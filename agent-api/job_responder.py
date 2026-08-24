@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -13,6 +14,10 @@ from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, Field
 
 import os
+
+from kb_file_ingest import MAX_FILE_BYTES, sanitize_extracted_text
+
+_LOG = logging.getLogger("job-responder")
 
 RESUME_KINDS = ("job_resume", "job_experience", "job_skills")
 RESUME_SOURCE = "job_responder"
@@ -890,6 +895,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         url: Optional[str],
         extra_tags: Optional[List[str]] = None,
     ) -> Tuple[int, bool, str, Dict[str, Any]]:
+        title = sanitize_extracted_text(title or "")
+        text = sanitize_extracted_text(text or "")
         profile = extract_resume_profile(text, title=title, category=category)
         content_text, ai_summary = wrap_content_with_profile(text, profile)
         tags = profile_tags(profile, [category, *(extra_tags or [])])
@@ -1298,79 +1305,113 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         kind_norm = _resume_kind_norm(kind)
         category_norm = truncate_text(str(category).strip().lower(), 128) or "cv"
-        safe_name = str(file.filename or "upload.bin")
+        safe_name = sanitize_extracted_text(str(file.filename or "upload.bin")) or "upload.bin"
 
         raw = await file.read()
         if not raw:
             raise HTTPException(status_code=400, detail="empty_file")
+        if len(raw) > MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"file_too_large_max_{MAX_FILE_BYTES}",
+            )
 
         mime_type = str(file.content_type or "application/octet-stream")
-        extracted_text, meta, category_override = _extract_text_with_vision(
-            safe_name,
-            raw,
-            mime_type,
-            allow_vision=True,
-            category_hint=category_norm,
-        )
-        if category_override:
-            category_norm = category_override
-            if kind_norm == PRIMARY_CV_KIND and category_norm == "screenshot":
-                # screenshots in portfolio path should stay experience; keep CV kind if user forced it
-                pass
-            elif kind_norm != PRIMARY_CV_KIND:
-                kind_norm = "job_experience"
-
-        if caption:
-            extracted_text = f"{caption.strip()}\n\n{extracted_text}".strip()
-
-        extracted_text = (extracted_text or "").strip()
-        if len(extracted_text) < 20:
-            raise HTTPException(status_code=422, detail=f"no_text_extracted: {meta}")
-
-        item_title = truncate_text(
-            (title or str(meta.get("filename") or safe_name) or "Resume").strip(),
-            1000,
-        )
-        extra_tags = ["screenshot"] if category_norm == "screenshot" else None
-
-        conn = pg_connect()
         try:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                kid, embedded, content_hash, profile = _upsert_resume_item_text(
-                    cur,
-                    workspace_id,
-                    title=item_title,
-                    text=extracted_text,
-                    kind_norm=kind_norm,
-                    category=category_norm,
-                    url=None,
-                    extra_tags=extra_tags,
+            extracted_text, meta, category_override = _extract_text_with_vision(
+                safe_name,
+                raw,
+                mime_type,
+                allow_vision=True,
+                category_hint=category_norm,
+            )
+            if category_override:
+                category_norm = category_override
+                if kind_norm == PRIMARY_CV_KIND and category_norm == "screenshot":
+                    # screenshots in portfolio path should stay experience; keep CV kind if user forced it
+                    pass
+                elif kind_norm != PRIMARY_CV_KIND:
+                    kind_norm = "job_experience"
+
+            if caption:
+                extracted_text = f"{caption.strip()}\n\n{extracted_text}".strip()
+
+            extracted_text = sanitize_extracted_text(extracted_text or "")
+            if len(extracted_text) < 20:
+                err = meta.get("error") or "too_short"
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"no_text_extracted ({err}). "
+                        "Для PDF/DOC сохраните как текст или DOCX, либо загрузите скриншот. "
+                        f"extract={meta}"
+                    ),
                 )
-                linked = _index_extracted_links(
-                    cur,
-                    workspace_id,
-                    extracted_text,
-                    parent_title=item_title,
-                    parent_id=kid if kid != -1 else None,
+
+            # Keep multiple primary CVs as separate RAG rows even if extract overlaps.
+            if kind_norm == PRIMARY_CV_KIND:
+                extracted_text = f"CV file: {safe_name}\n\n{extracted_text}"
+
+            item_title = truncate_text(
+                sanitize_extracted_text(
+                    (title or str(meta.get("filename") or safe_name) or "Resume").strip()
                 )
-            conn.commit()
-            return {
-                "ok": True,
-                "knowledgeItemId": kid,
-                "kind": kind_norm,
-                "category": category_norm,
-                "embedded": embedded,
-                "contentHash": content_hash,
-                "extract": meta,
-                "profile": profile,
-                "linkedSources": linked,
-                "workspaceId": str(workspace_id),
-            }
-        except Exception:
-            conn.rollback()
+                or "Resume",
+                1000,
+            )
+            extra_tags = ["screenshot"] if category_norm == "screenshot" else None
+
+            conn = pg_connect()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    kid, embedded, content_hash, profile = _upsert_resume_item_text(
+                        cur,
+                        workspace_id,
+                        title=item_title,
+                        text=extracted_text,
+                        kind_norm=kind_norm,
+                        category=category_norm,
+                        url=None,
+                        extra_tags=extra_tags,
+                    )
+                    linked = _index_extracted_links(
+                        cur,
+                        workspace_id,
+                        extracted_text,
+                        parent_title=item_title,
+                        parent_id=kid if kid != -1 else None,
+                    )
+                conn.commit()
+                return {
+                    "ok": True,
+                    "knowledgeItemId": kid,
+                    "kind": kind_norm,
+                    "category": category_norm,
+                    "embedded": embedded,
+                    "contentHash": content_hash,
+                    "extract": meta,
+                    "profile": profile,
+                    "linkedSources": linked,
+                    "workspaceId": str(workspace_id),
+                }
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        except HTTPException:
             raise
-        finally:
-            conn.close()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"invalid_extracted_text: {exc}",
+            ) from exc
+        except Exception as exc:
+            _LOG.exception("file-capture failed name=%s", safe_name)
+            raise HTTPException(
+                status_code=422,
+                detail=f"file_ingest_failed: {type(exc).__name__}: {exc}",
+            ) from exc
 
     @app.post("/api/v1/job-responder/resume/link-capture")
     async def job_responder_resume_link_capture(

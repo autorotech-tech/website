@@ -21,7 +21,6 @@ const workspaceIdInput = document.getElementById('workspaceIdInput');
 function setError(msg) {
   errorEl.textContent = msg || '';
   if (msg) {
-    successEl.textContent = '';
     errorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
@@ -29,7 +28,6 @@ function setError(msg) {
 function setSuccess(msg) {
   successEl.textContent = msg || '';
   if (msg) {
-    errorEl.textContent = '';
     successEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
@@ -403,6 +401,7 @@ async function uploadFilesSequentially(files, { kind, category, button, label })
   const added = [];
   const errors = [];
   let linkedTotal = 0;
+  let okCount = 0;
   let i = 0;
   for (const file of files) {
     i += 1;
@@ -414,13 +413,14 @@ async function uploadFilesSequentially(files, { kind, category, button, label })
         category,
         title: file.name,
       });
+      okCount += 1;
       added.push(...collectLinkedIds(res));
       linkedTotal += (res.linkedSources || []).length;
     } catch (err) {
       errors.push(`${file.name}: ${err.message || err}`);
     }
   }
-  return { added, errors, linkedTotal };
+  return { added, errors, linkedTotal, okCount };
 }
 
 async function refreshDriveStatus() {
@@ -479,7 +479,7 @@ if (uploadResumeFileBtn) {
     uploadResumeFileBtn.textContent = `Загрузка 0/${files.length}…`;
     try {
       await JR_API.ensureWorkspace();
-      const { added, errors, linkedTotal } = await uploadFilesSequentially(files, {
+      const { added, errors, linkedTotal, okCount } = await uploadFilesSequentially(files, {
         kind: 'job_resume',
         category: 'cv',
         button: uploadResumeFileBtn,
@@ -492,12 +492,12 @@ if (uploadResumeFileBtn) {
       if (errors.length) {
         setError(`Часть CV не загрузилась:\n${errors.join('\n')}`);
       }
-      if (added.length) {
+      if (okCount > 0) {
         const summary =
-          `CV: ${files.length - errors.length}/${files.length} файл(ов)` +
+          `CV: ${okCount}/${files.length} файл(ов)` +
           (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '');
         setSuccess(summary);
-        showIngestBanner({ addedCount: added.length, summary });
+        showIngestBanner({ addedCount: added.length || okCount, summary });
       }
     } catch (err) {
       setError(String(err.message || err));
@@ -523,7 +523,7 @@ if (uploadPortfolioFilesBtn) {
     uploadPortfolioFilesBtn.textContent = `Загрузка 0/${files.length}…`;
     try {
       await JR_API.ensureWorkspace();
-      const { added, errors, linkedTotal } = await uploadFilesSequentially(files, {
+      const { added, errors, linkedTotal, okCount } = await uploadFilesSequentially(files, {
         kind: 'job_experience',
         category: 'experience',
         button: uploadPortfolioFilesBtn,
@@ -536,12 +536,12 @@ if (uploadPortfolioFilesBtn) {
       if (errors.length) {
         setError(`Часть файлов не загрузилась:\n${errors.join('\n')}`);
       }
-      if (added.length) {
+      if (okCount > 0) {
         const summary =
-          `Portfolio: ${files.length - errors.length}/${files.length} файл(ов)` +
+          `Portfolio: ${okCount}/${files.length} файл(ов)` +
           (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '');
         setSuccess(summary);
-        showIngestBanner({ addedCount: added.length, summary });
+        showIngestBanner({ addedCount: added.length || okCount, summary });
       }
     } catch (err) {
       setError(String(err.message || err));

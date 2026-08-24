@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Деплой Job Responder API на VPS: job_responder.py + main.py -> autoro-agent-api
+# Деплой Job Responder API на VPS: job_responder.py + kb_file_ingest.py + main.py -> autoro-agent-api
 # Usage: bash scripts/deploy-job-responder-api.sh
 set -euo pipefail
 
@@ -9,19 +9,25 @@ KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_autoro}"
 SSH_OPTS=(-i "$KEY" -o ConnectTimeout=60 -o ServerAliveInterval=15)
 
 echo "=== 1. Syntax check ==="
-python3 -m py_compile "$ROOT/agent-api/job_responder.py" "$ROOT/agent-api/main.py"
+python3 -m py_compile \
+  "$ROOT/agent-api/job_responder.py" \
+  "$ROOT/agent-api/kb_file_ingest.py" \
+  "$ROOT/agent-api/main.py"
 
-echo "=== 2. Upload job_responder.py + main.py ==="
+echo "=== 2. Upload job_responder.py + kb_file_ingest.py + main.py ==="
 scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder.py" \
+  "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py" \
   "$REMOTE:/tmp/"
 
-echo "=== 3. docker cp + restart autoro-agent-api ==="
+echo "=== 3. docker cp + pypdf + restart autoro-agent-api ==="
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
+docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
+docker exec autoro-agent-api pip install -q --no-cache-dir 'pypdf>=4.0' || true
 docker restart autoro-agent-api
 sleep 10
 docker ps --filter name=autoro-agent-api --format '{{.Names}} {{.Status}}'

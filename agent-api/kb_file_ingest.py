@@ -10,7 +10,9 @@ import hashlib
 import io
 import json
 import re
-from typing import Any, Dict, Optional, Tuple
+import zipfile
+import zlib
+from typing import Any, Dict, List, Optional, Tuple
 
 MAX_FILE_BYTES = 12 * 1024 * 1024  # 12 MiB
 
@@ -19,6 +21,7 @@ _TEXT_EXTENSIONS = frozenset({
 })
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 _AUDIO_EXTENSIONS = frozenset({".mp3", ".m4a", ".wav", ".ogg", ".oga", ".webm", ".mp4", ".mpeg"})
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 _KIND_HINT_RE = re.compile(
     r"(?:#kind\s+|#)(bookmark|note|idea|plan|development|task|article|prompt|contact|link)\b",
@@ -46,6 +49,8 @@ def guess_extension(filename: str, mime_type: Optional[str] = None) -> str:
         "application/json": ".json",
         "text/html": ".html",
         "application/pdf": ".pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/msword": ".doc",
         "image/png": ".png",
         "image/jpeg": ".jpg",
         "image/webp": ".webp",
@@ -116,18 +121,204 @@ def _extract_html_text(data: bytes) -> str:
     return cleaned.strip()
 
 
-def _extract_pdf_fallback(data: bytes) -> str:
-    """Без pypdf: вытаскиваем читаемые фрагменты из PDF (best-effort)."""
-    chunks: list[str] = []
-    for match in re.finditer(rb"\(([^()\\]{4,2000})\)", data):
-        try:
-            piece = match.group(1).decode("latin-1", errors="ignore").strip()
-        except Exception:
+def sanitize_extracted_text(text: str) -> str:
+    """Strip NULs/control chars so Postgres/psycopg2 will accept the string."""
+    if not text:
+        return ""
+    cleaned = text.replace("\x00", "")
+    cleaned = _CONTROL_CHARS_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _printable_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    good = sum(1 for ch in text if ch.isprintable() or ch in "\n\t")
+    return good / max(len(text), 1)
+
+
+def _looks_like_text(piece: str, *, min_len: int = 4) -> bool:
+    if len(piece) < min_len:
+        return False
+    if "\x00" in piece:
+        return False
+    if _printable_ratio(piece) < 0.85:
+        return False
+    return bool(re.search(r"[A-Za-zА-Яа-яЁё0-9]", piece))
+
+
+def _pdf_unescape_bytes(raw: bytes) -> bytes:
+    out = bytearray()
+    i = 0
+    while i < len(raw):
+        b = raw[i]
+        if b != 0x5C or i + 1 >= len(raw):
+            out.append(b)
+            i += 1
             continue
-        if len(piece) >= 4 and re.search(r"[A-Za-zА-Яа-я0-9]", piece):
+        nxt = raw[i + 1]
+        mapping = {0x6E: 10, 0x72: 13, 0x74: 9, 0x62: 8, 0x66: 12, 0x28: 0x28, 0x29: 0x29, 0x5C: 0x5C}
+        if nxt in mapping:
+            out.append(mapping[nxt])
+            i += 2
+            continue
+        if 0x30 <= nxt <= 0x37:
+            octal = [nxt]
+            j = i + 2
+            while j < len(raw) and len(octal) < 3 and 0x30 <= raw[j] <= 0x37:
+                octal.append(raw[j])
+                j += 1
+            out.append(int(bytes(octal), 8) & 0xFF)
+            i = j
+            continue
+        out.append(nxt)
+        i += 2
+    return bytes(out)
+
+
+def _decode_pdf_bytes(raw: bytes) -> str:
+    if not raw:
+        return ""
+    if raw.startswith(b"\xfe\xff"):
+        return raw[2:].decode("utf-16-be", errors="ignore")
+    if raw.startswith(b"\xff\xfe"):
+        return raw[2:].decode("utf-16-le", errors="ignore")
+    if b"\x00" in raw and len(raw) >= 4 and (raw.count(b"\x00") / len(raw)) >= 0.3:
+        padded = raw if len(raw) % 2 == 0 else raw + b"\x00"
+        return padded.decode("utf-16-be", errors="ignore")
+    if b"\x00" in raw:
+        raw = raw.replace(b"\x00", b"")
+        if not raw:
+            return ""
+    for enc in ("utf-8", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="ignore")
+
+
+def _iter_pdf_literal_strings(data: bytes) -> List[str]:
+    chunks: List[str] = []
+    for match in re.finditer(rb"\((?:\\.|[^\\)]){2,8000}\)", data):
+        decoded = _decode_pdf_bytes(_pdf_unescape_bytes(match.group(0)[1:-1]))
+        piece = decoded.replace("\x00", "").strip()
+        if _looks_like_text(piece):
             chunks.append(piece)
-    text = "\n".join(chunks)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
+    for match in re.finditer(rb"<([0-9A-Fa-f \t\r\n]{8,8000})>", data):
+        hex_s = re.sub(rb"\s+", b"", match.group(1))
+        if len(hex_s) % 2:
+            hex_s += b"0"
+        try:
+            raw = bytes.fromhex(hex_s.decode("ascii"))
+        except ValueError:
+            continue
+        piece = _decode_pdf_bytes(raw).replace("\x00", "").strip()
+        if _looks_like_text(piece):
+            chunks.append(piece)
+    return chunks
+
+
+def _inflate_pdf_streams(data: bytes, *, limit: int = 250) -> List[bytes]:
+    inflated: List[bytes] = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", data, re.S):
+        blob = match.group(1)
+        if blob.endswith(b"\r\n"):
+            blob = blob[:-2]
+        elif blob.endswith(b"\n") or blob.endswith(b"\r"):
+            blob = blob[:-1]
+        dec = None
+        for wbits in (zlib.MAX_WBITS, -15):
+            try:
+                dec = zlib.decompress(blob, wbits)
+                break
+            except zlib.error:
+                continue
+        if dec:
+            inflated.append(dec)
+        if len(inflated) >= limit:
+            break
+    return inflated
+
+
+def _extract_pdf_pypdf(data: bytes) -> str:
+    reader = None
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(io.BytesIO(data))
+    except Exception:
+        try:
+            from PyPDF2 import PdfReader  # type: ignore
+
+            reader = PdfReader(io.BytesIO(data))
+        except Exception:
+            return ""
+    if reader is None:
+        return ""
+    pages: List[str] = []
+    try:
+        for page in list(getattr(reader, "pages", []) or [])[:40]:
+            try:
+                piece = page.extract_text() or ""
+            except Exception:
+                piece = ""
+            if piece.strip():
+                pages.append(piece)
+    except Exception:
+        return ""
+    return "\n".join(pages)
+
+
+def _extract_pdf_text(data: bytes) -> Tuple[str, str]:
+    """Returns (text, method). Never includes NUL bytes."""
+    candidates: List[Tuple[str, str]] = []
+
+    pypdf_text = sanitize_extracted_text(_extract_pdf_pypdf(data))
+    if pypdf_text:
+        candidates.append((pypdf_text, "pdf_pypdf"))
+
+    inflated = _inflate_pdf_streams(data)
+    if inflated:
+        flate_chunks: List[str] = []
+        for blob in inflated:
+            flate_chunks.extend(_iter_pdf_literal_strings(blob))
+        flate_text = sanitize_extracted_text("\n".join(flate_chunks))
+        if flate_text:
+            candidates.append((flate_text, "pdf_flate"))
+
+    raw_text = sanitize_extracted_text("\n".join(_iter_pdf_literal_strings(data)))
+    if raw_text:
+        candidates.append((raw_text, "pdf_literals"))
+
+    ranked = [
+        item
+        for item in candidates
+        if len(item[0]) >= 40 and _printable_ratio(item[0]) >= 0.85
+    ]
+    if ranked:
+        ranked.sort(key=lambda item: len(item[0]), reverse=True)
+        return ranked[0]
+    if candidates:
+        candidates.sort(key=lambda item: len(item[0]), reverse=True)
+        return candidates[0]
+    return "", "pdf_none"
+
+
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            xml = zf.read("word/document.xml")
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return ""
+    xml = re.sub(rb"</w:p[^>]*>", b"\n", xml)
+    xml = re.sub(rb"<[^>]+>", b" ", xml)
+    text = _decode_text_bytes(xml)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return sanitize_extracted_text(text)
 
 
 def extract_text_from_bytes(
@@ -149,19 +340,29 @@ def extract_text_from_bytes(
 
     if ext in _TEXT_EXTENSIONS or mime.startswith("text/") or mime == "application/json":
         if ext == ".csv" or ext == ".tsv" or mime == "text/csv":
-            return _extract_csv_text(data), {**meta, "method": "csv"}
-        if ext == ".json" or ext == ".jsonl" or mime == "application/json":
-            return _extract_json_text(data), {**meta, "method": "json"}
-        if ext in {".html", ".htm"} or mime == "text/html":
-            return _extract_html_text(data), {**meta, "method": "html"}
-        text = _decode_text_bytes(data).strip()
-        return text, {**meta, "method": "text"}
+            text, method = sanitize_extracted_text(_extract_csv_text(data)), "csv"
+        elif ext == ".json" or ext == ".jsonl" or mime == "application/json":
+            text, method = sanitize_extracted_text(_extract_json_text(data)), "json"
+        elif ext in {".html", ".htm"} or mime == "text/html":
+            text, method = sanitize_extracted_text(_extract_html_text(data)), "html"
+        else:
+            text, method = sanitize_extracted_text(_decode_text_bytes(data)), "text"
+        return text, {**meta, "method": method}
 
     if ext == ".pdf" or mime == "application/pdf":
-        text = _extract_pdf_fallback(data)
+        text, method = _extract_pdf_text(data)
         if len(text) >= 40:
-            return text, {**meta, "method": "pdf_fallback"}
-        return "", {**meta, "method": "pdf_fallback", "error": "pdf_text_not_extracted"}
+            return text, {**meta, "method": method}
+        return "", {**meta, "method": method or "pdf_none", "error": "pdf_text_not_extracted"}
+
+    if ext == ".docx" or "wordprocessingml.document" in mime:
+        text = _extract_docx_text(data)
+        if len(text) >= 20:
+            return text, {**meta, "method": "docx"}
+        return "", {**meta, "method": "docx", "error": "docx_text_not_extracted"}
+
+    if ext == ".doc" or mime == "application/msword":
+        return "", {**meta, "method": "doc", "error": "legacy_doc_unsupported_save_as_pdf_or_docx"}
 
     if ext in _IMAGE_EXTENSIONS or mime.startswith("image/"):
         return "", {**meta, "method": "image", "needsVision": True}
@@ -172,7 +373,7 @@ def extract_text_from_bytes(
     # generic fallback — если файл похож на текст
     sample = data[:4096]
     if sample and sum(32 <= b < 127 or b in (9, 10, 13) for b in sample) / max(len(sample), 1) > 0.85:
-        text = _decode_text_bytes(data).strip()
+        text = sanitize_extracted_text(_decode_text_bytes(data))
         if text:
             return text, {**meta, "method": "binary_as_text"}
     return "", {**meta, "error": "unsupported_file_type", "extension": ext or None}
