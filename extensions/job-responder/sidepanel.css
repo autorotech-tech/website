@@ -144,9 +144,16 @@ button:disabled {
   color: #64748b;
 }
 
-.sourceItemTitle {
-  font-size: 12px;
-  font-weight: 600;
+.sourceItemBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.sourceDeleteBtn {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .sourceItemPreview {

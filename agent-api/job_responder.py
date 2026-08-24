@@ -9,7 +9,7 @@ import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import Header, HTTPException, Request
+from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, Field
 
@@ -242,6 +242,12 @@ class JobResponderDriveImportPayload(BaseModel):
     kind: str = Field(default="job_experience", max_length=64)
     category: str = Field(default="drive", max_length=128)
     maxFiles: int = Field(default=25, ge=1, le=50)
+
+
+class JobResponderDeleteSourcesPayload(BaseModel):
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    knowledgeItemIds: List[int] = Field(default_factory=list)
+    titles: List[str] = Field(default_factory=list)
 
 
 def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
@@ -1014,10 +1020,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         *,
         parent_title: str = "",
         parent_id: Optional[int] = None,
-        max_links: int = 12,
-        fetch_remote: bool = True,
+        max_links: int = 8,
+        fetch_remote: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Extract http(s) URLs from text and upsert selectable link sources (category=link)."""
+        """Extract http(s) URLs from text and upsert selectable link sources (category=link).
+
+        Remote Jina fetch is off by default so ingest stays under Cloudflare ~100s.
+        """
         urls = extract_urls_from_text(text, limit=max_links)
         linked: List[Dict[str, Any]] = []
         for url in urls:
@@ -1036,7 +1045,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             link_text = ""
             if fetch_remote:
                 try:
-                    fetched = fetch_content_via_jina(normalize_url(url), timeout_sec=12)
+                    fetched = fetch_content_via_jina(normalize_url(url), timeout_sec=4)
                     if fetched.get("ok"):
                         link_text = str(fetched.get("content_text") or "").strip()
                 except Exception:
@@ -1074,6 +1083,88 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 }
             )
         return linked
+
+    def _queue_extracted_link_index(
+        background_tasks: Optional[BackgroundTasks],
+        workspace_id: int,
+        text: str,
+        *,
+        parent_title: str = "",
+        parent_id: Optional[int] = None,
+        raw_bytes: int = 0,
+    ) -> None:
+        """Best-effort: index URLs after the HTTP response. Skip on large PDFs."""
+        if background_tasks is None:
+            return
+        if raw_bytes > 2 * 1024 * 1024:
+            return
+        urls = extract_urls_from_text(text, limit=8)
+        if not urls:
+            return
+        snapshot = text
+
+        def _job() -> None:
+            conn = pg_connect()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    _index_extracted_links(
+                        cur,
+                        workspace_id,
+                        snapshot,
+                        parent_title=parent_title,
+                        parent_id=parent_id,
+                        max_links=8,
+                        fetch_remote=False,
+                    )
+                conn.commit()
+            except Exception:
+                _LOG.exception("async link index failed parent_id=%s", parent_id)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            finally:
+                conn.close()
+
+        background_tasks.add_task(_job)
+
+    def _delete_resume_sources(
+        cur,
+        workspace_id: int,
+        *,
+        knowledge_item_ids: Optional[List[int]] = None,
+        titles: Optional[List[str]] = None,
+    ) -> List[int]:
+        ids = [int(x) for x in (knowledge_item_ids or []) if int(x) > 0]
+        title_list = [str(t).strip() for t in (titles or []) if str(t).strip()]
+        if not ids and not title_list:
+            return []
+        if title_list:
+            cur.execute(
+                """
+                select id
+                from public.knowledge_items
+                where workspace_id = %s
+                  and source = %s
+                  and lower(title) = any(%s)
+                """,
+                (workspace_id, RESUME_SOURCE, [t.lower() for t in title_list]),
+            )
+            ids.extend(int(r["id"]) for r in cur.fetchall() if r.get("id") is not None)
+        uniq = sorted(set(ids))
+        if not uniq:
+            return []
+        cur.execute(
+            """
+            delete from public.knowledge_items
+            where workspace_id = %s
+              and source = %s
+              and id = any(%s)
+            returning id
+            """,
+            (workspace_id, RESUME_SOURCE, uniq),
+        )
+        return [int(r["id"]) for r in cur.fetchall() if r.get("id") is not None]
 
     @app.get("/api/v1/job-responder/resume/status")
     async def job_responder_resume_status(
@@ -1171,10 +1262,81 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         finally:
             conn.close()
 
+    @app.post("/api/v1/job-responder/resume/sources/delete")
+    async def job_responder_resume_sources_delete(
+        payload: JobResponderDeleteSourcesPayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                deleted = _delete_resume_sources(
+                    cur,
+                    workspace_id,
+                    knowledge_item_ids=payload.knowledgeItemIds,
+                    titles=payload.titles,
+                )
+            conn.commit()
+            return {
+                "ok": True,
+                "deletedIds": deleted,
+                "deletedCount": len(deleted),
+                "workspaceId": str(workspace_id),
+            }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @app.delete("/api/v1/job-responder/resume/sources/{knowledge_item_id}")
+    async def job_responder_resume_source_delete_one(
+        knowledge_item_id: int,
+        workspaceId: str,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        if knowledge_item_id <= 0:
+            raise HTTPException(status_code=400, detail="knowledge_item_id must be positive")
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                deleted = _delete_resume_sources(
+                    cur,
+                    workspace_id,
+                    knowledge_item_ids=[knowledge_item_id],
+                )
+            conn.commit()
+            if not deleted:
+                raise HTTPException(status_code=404, detail="source_not_found")
+            return {
+                "ok": True,
+                "deletedIds": deleted,
+                "deletedCount": len(deleted),
+                "workspaceId": str(workspace_id),
+            }
+        except HTTPException:
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     @app.post("/api/v1/job-responder/resume/capture")
     async def job_responder_resume_capture(
         payload: JobResponderResumeCapturePayload,
         request: Request,
+        background_tasks: BackgroundTasks,
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
@@ -1198,14 +1360,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     category=category,
                     url=None,
                 )
-                linked = _index_extracted_links(
-                    cur,
-                    workspace_id,
-                    text,
-                    parent_title=title,
-                    parent_id=kid if kid != -1 else None,
-                )
             conn.commit()
+            _queue_extracted_link_index(
+                background_tasks,
+                workspace_id,
+                text,
+                parent_title=title,
+                parent_id=kid if kid != -1 else None,
+            )
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -1214,7 +1376,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "embedded": embedded,
                 "contentHash": _content_hash,
                 "profile": profile,
-                "linkedSources": linked,
+                "linkedSources": [],
+                "linkIndexQueued": True,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1227,6 +1390,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     async def job_responder_resume_text_capture(
         payload: JobResponderTextCapturePayload,
         request: Request,
+        background_tasks: BackgroundTasks,
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
@@ -1259,14 +1423,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     url=None,
                     extra_tags=["pasted-text"],
                 )
-                linked = _index_extracted_links(
-                    cur,
-                    workspace_id,
-                    text,
-                    parent_title=title,
-                    parent_id=kid if kid != -1 else None,
-                )
             conn.commit()
+            _queue_extracted_link_index(
+                background_tasks,
+                workspace_id,
+                text,
+                parent_title=title,
+                parent_id=kid if kid != -1 else None,
+            )
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -1275,7 +1439,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "embedded": embedded,
                 "contentHash": content_hash,
                 "profile": profile,
-                "linkedSources": linked,
+                "linkedSources": [],
+                "linkIndexQueued": True,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -1287,6 +1452,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     @app.post("/api/v1/job-responder/resume/file-capture")
     async def job_responder_resume_file_capture(
         request: Request,
+        background_tasks: BackgroundTasks,
         workspaceId: str = Form(...),
         kind: str = Form("job_resume"),
         category: str = Form("cv"),
@@ -1374,14 +1540,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         url=None,
                         extra_tags=extra_tags,
                     )
-                    linked = _index_extracted_links(
-                        cur,
-                        workspace_id,
-                        extracted_text,
-                        parent_title=item_title,
-                        parent_id=kid if kid != -1 else None,
-                    )
                 conn.commit()
+                _queue_extracted_link_index(
+                    background_tasks,
+                    workspace_id,
+                    extracted_text,
+                    parent_title=item_title,
+                    parent_id=kid if kid != -1 else None,
+                    raw_bytes=len(raw),
+                )
                 return {
                     "ok": True,
                     "knowledgeItemId": kid,
@@ -1391,7 +1558,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     "contentHash": content_hash,
                     "extract": meta,
                     "profile": profile,
-                    "linkedSources": linked,
+                    "linkedSources": [],
+                    "linkIndexQueued": True,
                     "workspaceId": str(workspace_id),
                 }
             except Exception:
@@ -1486,6 +1654,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     async def job_responder_drive_import(
         payload: JobResponderDriveImportPayload,
         request: Request,
+        background_tasks: BackgroundTasks,
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
@@ -1607,14 +1776,6 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             url=f"https://drive.google.com/file/d/{fid}/view",
                             extra_tags=["drive", "screenshot"] if use_category == "screenshot" else ["drive"],
                         )
-                        linked = _index_extracted_links(
-                            cur,
-                            workspace_id,
-                            text.strip(),
-                            parent_title=fname,
-                            parent_id=kid if kid != -1 else None,
-                            max_links=8,
-                        )
                         imported.append(
                             {
                                 "knowledgeItemId": kid,
@@ -1624,8 +1785,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                                 "embedded": embedded,
                                 "contentHash": content_hash,
                                 "profile": profile,
-                                "linkedSources": linked,
+                                "linkedSources": [],
                             }
+                        )
+                        _queue_extracted_link_index(
+                            background_tasks,
+                            workspace_id,
+                            text.strip(),
+                            parent_title=fname,
+                            parent_id=kid if kid != -1 else None,
+                            raw_bytes=len(raw),
                         )
                     except HTTPException as exc:
                         errors.append({"name": fname, "error": str(exc.detail)})

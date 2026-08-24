@@ -10,11 +10,15 @@ import hashlib
 import io
 import json
 import re
+import time
 import zipfile
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
 
 MAX_FILE_BYTES = 12 * 1024 * 1024  # 12 MiB
+PDF_MAX_PAGES = 12
+PDF_EXTRACT_BUDGET_SEC = 18.0
+PDF_FLATE_STREAM_LIMIT = 60
 
 _TEXT_EXTENSIONS = frozenset({
     ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".jsonl", ".html", ".htm", ".log", ".yaml", ".yml",
@@ -221,7 +225,7 @@ def _iter_pdf_literal_strings(data: bytes) -> List[str]:
     return chunks
 
 
-def _inflate_pdf_streams(data: bytes, *, limit: int = 250) -> List[bytes]:
+def _inflate_pdf_streams(data: bytes, *, limit: int = PDF_FLATE_STREAM_LIMIT) -> List[bytes]:
     inflated: List[bytes] = []
     for match in re.finditer(rb"stream\r?\n(.*?)endstream", data, re.S):
         blob = match.group(1)
@@ -243,8 +247,14 @@ def _inflate_pdf_streams(data: bytes, *, limit: int = 250) -> List[bytes]:
     return inflated
 
 
-def _extract_pdf_pypdf(data: bytes) -> str:
+def _extract_pdf_pypdf(
+    data: bytes,
+    *,
+    max_pages: int = PDF_MAX_PAGES,
+    budget_sec: float = PDF_EXTRACT_BUDGET_SEC,
+) -> Tuple[str, Dict[str, Any]]:
     reader = None
+    extra: Dict[str, Any] = {"pdfPages": 0, "pdfTruncated": False}
     try:
         from pypdf import PdfReader  # type: ignore
 
@@ -255,44 +265,70 @@ def _extract_pdf_pypdf(data: bytes) -> str:
 
             reader = PdfReader(io.BytesIO(data))
         except Exception:
-            return ""
+            return "", extra
     if reader is None:
-        return ""
+        return "", extra
     pages: List[str] = []
+    deadline = time.monotonic() + max(2.0, float(budget_sec))
     try:
-        for page in list(getattr(reader, "pages", []) or [])[:40]:
+        all_pages = list(getattr(reader, "pages", []) or [])
+        extra["pdfPageCount"] = len(all_pages)
+        for page in all_pages[: max(1, int(max_pages))]:
+            if time.monotonic() > deadline:
+                extra["pdfTruncated"] = True
+                break
             try:
                 piece = page.extract_text() or ""
             except Exception:
                 piece = ""
+            extra["pdfPages"] = int(extra["pdfPages"]) + 1
             if piece.strip():
                 pages.append(piece)
+        if extra["pdfPageCount"] > extra["pdfPages"]:
+            extra["pdfTruncated"] = True
     except Exception:
-        return ""
-    return "\n".join(pages)
+        return sanitize_extracted_text("\n".join(pages)), extra
+    return sanitize_extracted_text("\n".join(pages)), extra
 
 
-def _extract_pdf_text(data: bytes) -> Tuple[str, str]:
-    """Returns (text, method). Never includes NUL bytes."""
+def _extract_pdf_text(data: bytes) -> Tuple[str, str, Dict[str, Any]]:
+    """Returns (text, method, extra). Never includes NUL bytes. Fast-path pypdf."""
+    started = time.monotonic()
+    deadline = started + PDF_EXTRACT_BUDGET_SEC
+    extra: Dict[str, Any] = {}
+
+    pypdf_text, pypdf_meta = _extract_pdf_pypdf(data)
+    extra.update(pypdf_meta)
+    if len(pypdf_text) >= 80:
+        extra["pdfElapsedSec"] = round(time.monotonic() - started, 3)
+        return pypdf_text, "pdf_pypdf", extra
+
     candidates: List[Tuple[str, str]] = []
-
-    pypdf_text = sanitize_extracted_text(_extract_pdf_pypdf(data))
     if pypdf_text:
         candidates.append((pypdf_text, "pdf_pypdf"))
 
-    inflated = _inflate_pdf_streams(data)
-    if inflated:
-        flate_chunks: List[str] = []
-        for blob in inflated:
-            flate_chunks.extend(_iter_pdf_literal_strings(blob))
-        flate_text = sanitize_extracted_text("\n".join(flate_chunks))
-        if flate_text:
-            candidates.append((flate_text, "pdf_flate"))
+    if time.monotonic() < deadline:
+        inflated = _inflate_pdf_streams(data, limit=PDF_FLATE_STREAM_LIMIT)
+        if inflated:
+            flate_chunks: List[str] = []
+            for blob in inflated:
+                if time.monotonic() > deadline:
+                    extra["pdfTruncated"] = True
+                    break
+                flate_chunks.extend(_iter_pdf_literal_strings(blob))
+            flate_text = sanitize_extracted_text("\n".join(flate_chunks))
+            if flate_text:
+                candidates.append((flate_text, "pdf_flate"))
 
-    raw_text = sanitize_extracted_text("\n".join(_iter_pdf_literal_strings(data)))
-    if raw_text:
-        candidates.append((raw_text, "pdf_literals"))
+    # Full-file literal scan is O(file size) and can exceed Cloudflare 524.
+    if time.monotonic() < deadline and len(data) <= 1_500_000:
+        raw_text = sanitize_extracted_text("\n".join(_iter_pdf_literal_strings(data)))
+        if raw_text:
+            candidates.append((raw_text, "pdf_literals"))
+    elif len(data) > 1_500_000:
+        extra["pdfSkippedLiterals"] = True
 
+    extra["pdfElapsedSec"] = round(time.monotonic() - started, 3)
     ranked = [
         item
         for item in candidates
@@ -300,11 +336,11 @@ def _extract_pdf_text(data: bytes) -> Tuple[str, str]:
     ]
     if ranked:
         ranked.sort(key=lambda item: len(item[0]), reverse=True)
-        return ranked[0]
+        return ranked[0][0], ranked[0][1], extra
     if candidates:
         candidates.sort(key=lambda item: len(item[0]), reverse=True)
-        return candidates[0]
-    return "", "pdf_none"
+        return candidates[0][0], candidates[0][1], extra
+    return "", "pdf_none", extra
 
 
 def _extract_docx_text(data: bytes) -> str:
@@ -350,7 +386,8 @@ def extract_text_from_bytes(
         return text, {**meta, "method": method}
 
     if ext == ".pdf" or mime == "application/pdf":
-        text, method = _extract_pdf_text(data)
+        text, method, pdf_extra = _extract_pdf_text(data)
+        meta.update(pdf_extra)
         if len(text) >= 40:
             return text, {**meta, "method": method}
         return "", {**meta, "method": method or "pdf_none", "error": "pdf_text_not_extracted"}

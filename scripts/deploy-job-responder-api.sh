@@ -49,7 +49,28 @@ for path in (
 PY
 REMOTE
 
-echo "=== 4. Public URL ==="
+echo "=== 4. Purge smoke-test CV titles (workspace 1 only) ==="
+ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
+set -euo pipefail
+docker exec autoro-agent-api python3 - <<'PY'
+import os, urllib.request, json
+url = "http://127.0.0.1:8900/api/v1/job-responder/resume/sources/delete"
+body = json.dumps({
+    "workspaceId": "1",
+    "titles": ["second-cv.pdf", "smoke-nul-cv.pdf"],
+}).encode()
+req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        print("purge", r.status, r.read()[:400])
+except Exception as e:
+    code = getattr(e, "code", None)
+    payload = e.read()[:400] if hasattr(e, "read") else b""
+    print("purge ERR", code, payload or e)
+PY
+REMOTE
+
+echo "=== 5. Public URL ==="
 curl -sS -m 20 -o /tmp/jr-pub.txt -w 'public status:%{http_code}\n' \
   'https://swoop.autoro.tech/api/v1/job-responder/resume/status?workspaceId=1' || true
 head -c 240 /tmp/jr-pub.txt; echo

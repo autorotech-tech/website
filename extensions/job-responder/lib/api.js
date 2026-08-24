@@ -14,7 +14,24 @@ const JR_API = (() => {
   }
 
   async function fetchJson(url, options = {}) {
-    const response = await fetch(url, options);
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
+    const { timeoutMs: _ignored, ...fetchOpts } = options;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetch(url, { ...fetchOpts, signal: controller.signal });
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+        throw new Error(
+          `Таймаут ${Math.round(timeoutMs / 1000)}с: сервер не ответил вовремя. ` +
+            'Если это большой PDF - подождите и нажмите «Обновить sources», либо загрузите меньший файл.'
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     const raw = await response.text();
     let data = null;
     if (raw) {
@@ -27,10 +44,35 @@ const JR_API = (() => {
     if (!response.ok) {
       throw new Error(formatApiError(response.status, data, raw, url));
     }
+    if (data == null && looksLikeHtml(raw)) {
+      throw new Error(cloudflareTimeoutMessage(response.status));
+    }
     return data || {};
   }
 
+  function looksLikeHtml(raw) {
+    const s = String(raw || '').trim();
+    return /^<!DOCTYPE html/i.test(s) || /^<html[\s>]/i.test(s);
+  }
+
+  function cloudflareTimeoutMessage(status) {
+    const code = status || 524;
+    return (
+      `Таймаут Cloudflare (${code}): сервер не успел обработать файл. ` +
+      'Попробуйте ещё раз после обновления API или загрузите PDF поменьше. Список sources можно обновить вручную.'
+    );
+  }
+
   function formatApiError(status, data, raw, url) {
+    if (
+      status === 524 ||
+      status === 504 ||
+      status === 408 ||
+      (status >= 520 && status <= 530) ||
+      looksLikeHtml(raw)
+    ) {
+      return cloudflareTimeoutMessage(status);
+    }
     let detail = '';
     if (data?.detail != null) {
       if (typeof data.detail === 'string') detail = data.detail;
@@ -185,6 +227,7 @@ const JR_API = (() => {
       method: 'POST',
       headers,
       body: form,
+      timeoutMs: 75000,
     });
   }
 
@@ -205,6 +248,7 @@ const JR_API = (() => {
         kind,
         category,
       }),
+      timeoutMs: 45000,
     });
   }
 
@@ -217,6 +261,7 @@ const JR_API = (() => {
       method: 'POST',
       headers,
       body: JSON.stringify({ workspaceId, url, title, kind, category }),
+      timeoutMs: 40000,
     });
   }
 
@@ -234,6 +279,7 @@ const JR_API = (() => {
         kind,
         category,
       }),
+      timeoutMs: 90000,
     });
   }
 
@@ -272,6 +318,7 @@ const JR_API = (() => {
         selectedSourceIds,
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
       }),
+      timeoutMs: 90000,
     });
     const text = pickGeneratedText(data);
     return { ...data, text };
@@ -314,6 +361,18 @@ const JR_API = (() => {
     });
   }
 
+  async function deleteSources({ knowledgeItemIds = [], titles = [] } = {}) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/sources/delete`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, knowledgeItemIds, titles }),
+      timeoutMs: 20000,
+    });
+  }
+
   async function logout() {
     await chrome.storage.local.remove([
       'userAccessToken',
@@ -326,6 +385,7 @@ const JR_API = (() => {
   return {
     DEFAULT_API_BASE,
     DEFAULT_TEST_WORKSPACE_ID,
+    deleteSources,
     driveImport,
     ensureWorkspace,
     fetchVacancyFromTab,

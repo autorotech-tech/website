@@ -28,7 +28,8 @@ Chrome MV3 extension: персонализированные отклики с R
 - Portfolio files / скриншоты (png/jpg/webp, multiple) -> `kind=job_experience`, category `screenshot` при vision OCR
 - Текст для RAG (textarea) -> `POST .../resume/text-capture`, category `notes`
 - URL links -> fetch + index (`category=link`)
-- Ссылки из текста файлов/OCR/Drive/paste -> автоизвлечение http(s), dedupe по URL, отдельные sources `category=link`
+- Ссылки из текста файлов/OCR/Drive/paste -> автоизвлечение http(s) **после** ответа ingest (не блокирует Cloudflare 524)
+- Кнопка **Удалить** у каждого source
 - Google Drive folder -> Connect через `chrome.identity` + import (см. [drive.md](./drive.md); нужен OAuth client ID в manifest)
 - Чекбоксы: генерация только по выбранным источникам
 - При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, …) для matching
@@ -68,6 +69,8 @@ Chrome MV3 extension: персонализированные отклики с R
 | POST | `/api/v1/job-responder/resume/capture` |
 | POST | `/api/v1/job-responder/resume/text-capture` |
 | POST | `/api/v1/job-responder/resume/file-capture` |
+| DELETE | `/api/v1/job-responder/resume/sources/{id}?workspaceId=` |
+| POST | `/api/v1/job-responder/resume/sources/delete` (`knowledgeItemIds` / `titles`) |
 | POST | `/api/v1/job-responder/resume/link-capture` |
 | POST | `/api/v1/job-responder/resume/drive-import` |
 | POST | `/api/v1/job-responder/relevance` |

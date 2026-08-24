@@ -49,7 +49,8 @@ function setButtonBusy(btn, busy, idleLabel, busyLabel) {
   if (!btn) return;
   btn.disabled = Boolean(busy);
   if (busy) {
-    btn.dataset.idleLabel = idleLabel || btn.dataset.idleLabel || btn.textContent;
+    if (idleLabel) btn.dataset.idleLabel = idleLabel;
+    else if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
     btn.innerHTML = `<span class="btnSpinner" aria-hidden="true"></span>${busyLabel || 'Загрузка…'}`;
   } else {
     btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
@@ -125,17 +126,18 @@ function renderSources(items) {
       const preview = escapeHtml(item.preview || '');
       const title = escapeHtml(item.title || 'Untitled');
       return `
-        <label class="sourceItem${isNew}">
+        <div class="sourceItem${isNew}">
           <div class="sourceItemHeader">
             <input type="checkbox" class="sourceCheckbox" value="${id}" ${checked} />
-            <div>
+            <div class="sourceItemBody">
               <div class="sourceItemTitle">${title}</div>
               <div class="sourceItemMeta">${escapeHtml(meta)}</div>
               ${urlLine}
               ${preview ? `<div class="sourceItemPreview">${preview}</div>` : ''}
             </div>
+            <button type="button" class="sourceDeleteBtn" data-id="${id}" data-title="${title}">Удалить</button>
           </div>
-        </label>
+        </div>
       `;
     })
     .join('');
@@ -405,7 +407,9 @@ async function uploadFilesSequentially(files, { kind, category, button, label })
   let i = 0;
   for (const file of files) {
     i += 1;
-    if (button) button.textContent = `Загрузка ${i}/${files.length}…`;
+    if (button) {
+      setButtonBusy(button, true, button.dataset.idleLabel, `Загрузка ${i}/${files.length}…`);
+    }
     try {
       const res = await JR_API.resumeFileCapture({
         file,
@@ -475,8 +479,8 @@ if (uploadResumeFileBtn) {
       resumeFileInput?.click();
       return;
     }
-    uploadResumeFileBtn.disabled = true;
-    uploadResumeFileBtn.textContent = `Загрузка 0/${files.length}…`;
+    uploadResumeFileBtn.dataset.idleLabel = 'Добавить CV';
+    setButtonBusy(uploadResumeFileBtn, true, 'Добавить CV', `Загрузка 0/${files.length}…`);
     try {
       await JR_API.ensureWorkspace();
       const { added, errors, linkedTotal, okCount } = await uploadFilesSequentially(files, {
@@ -503,8 +507,7 @@ if (uploadResumeFileBtn) {
       setError(String(err.message || err));
       await refreshSources().catch(() => {});
     } finally {
-      uploadResumeFileBtn.disabled = false;
-      uploadResumeFileBtn.textContent = 'Добавить CV';
+      setButtonBusy(uploadResumeFileBtn, false, 'Добавить CV');
     }
   });
 }
@@ -519,8 +522,8 @@ if (uploadPortfolioFilesBtn) {
       portfolioFilesInput?.click();
       return;
     }
-    uploadPortfolioFilesBtn.disabled = true;
-    uploadPortfolioFilesBtn.textContent = `Загрузка 0/${files.length}…`;
+    uploadPortfolioFilesBtn.dataset.idleLabel = 'Добавить portfolio';
+    setButtonBusy(uploadPortfolioFilesBtn, true, 'Добавить portfolio', `Загрузка 0/${files.length}…`);
     try {
       await JR_API.ensureWorkspace();
       const { added, errors, linkedTotal, okCount } = await uploadFilesSequentially(files, {
@@ -546,8 +549,7 @@ if (uploadPortfolioFilesBtn) {
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      uploadPortfolioFilesBtn.disabled = false;
-      uploadPortfolioFilesBtn.textContent = 'Добавить portfolio';
+      setButtonBusy(uploadPortfolioFilesBtn, false, 'Добавить portfolio');
     }
   });
 }
@@ -562,8 +564,7 @@ if (addRagTextBtn) {
       setError('Вставьте текст (мин. 20 символов)');
       return;
     }
-    addRagTextBtn.disabled = true;
-    addRagTextBtn.textContent = 'Добавление…';
+    setButtonBusy(addRagTextBtn, true, 'Добавить в RAG', 'Добавление…');
     try {
       await JR_API.ensureWorkspace();
       const res = await JR_API.resumeTextCapture({
@@ -583,8 +584,7 @@ if (addRagTextBtn) {
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      addRagTextBtn.disabled = false;
-      addRagTextBtn.textContent = 'Добавить в RAG';
+      setButtonBusy(addRagTextBtn, false, 'Добавить в RAG');
     }
   });
 }
@@ -599,8 +599,7 @@ if (addLinkBtn) {
       setError('Укажите ссылку');
       return;
     }
-    addLinkBtn.disabled = true;
-    addLinkBtn.textContent = 'Загрузка…';
+    setButtonBusy(addLinkBtn, true, 'Добавить ссылку', 'Загрузка…');
     try {
       await JR_API.ensureWorkspace();
       const res = await JR_API.resumeLinkCapture({
@@ -619,8 +618,7 @@ if (addLinkBtn) {
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      addLinkBtn.disabled = false;
-      addLinkBtn.textContent = 'Добавить ссылку';
+      setButtonBusy(addLinkBtn, false, 'Добавить ссылку');
     }
   });
 }
@@ -735,6 +733,30 @@ refreshSourcesBtn.addEventListener('click', () => {
   setError('');
   refreshSources({ quiet: false }).catch(() => {});
 });
+if (sourcesListEl) {
+  sourcesListEl.addEventListener('click', async (ev) => {
+    const btn = ev.target?.closest?.('.sourceDeleteBtn');
+    if (!btn) return;
+    ev.preventDefault();
+    const id = Number(btn.getAttribute('data-id') || 0);
+    const title = String(btn.getAttribute('data-title') || 'источник');
+    if (!id) return;
+    if (!window.confirm(`Удалить «${title}» из Resume RAG?`)) return;
+    setError('');
+    setSuccess('');
+    btn.disabled = true;
+    try {
+      await JR_API.deleteSources({ knowledgeItemIds: [id] });
+      lastAddedSourceIds.delete(id);
+      await refreshResumeStatus();
+      await refreshSources({ quiet: true });
+      setSuccess(`Удалено: ${title}`);
+    } catch (err) {
+      setError(String(err.message || err));
+      btn.disabled = false;
+    }
+  });
+}
 if (scoreBtn) {
   scoreBtn.addEventListener('click', async () => {
     setError('');
