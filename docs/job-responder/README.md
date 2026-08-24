@@ -32,6 +32,9 @@ Chrome MV3 extension: персонализированные отклики с R
 - Google Drive folder -> Connect через `chrome.identity` + import (см. [drive.md](./drive.md); нужен OAuth client ID в manifest)
 - Чекбоксы: генерация только по выбранным источникам
 - При ingest в content/summary пишется structured profile (`skills`, `roles`, `tools`, …) для matching
+- После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
+
+## Сопроводительное (шаблон)
 
 ## Сопроводительное (шаблон)
 
@@ -72,7 +75,18 @@ Chrome MV3 extension: персонализированные отклики с R
 
 ## Redeploy API
 
-После правок `agent-api/job_responder.py` - redeploy Swoop agent-api на VPS (как обычно для swoop.autoro.tech). Локально: перезапуск process с `JOB_RESPONDER_TEST_MODE=1`.
+После правок `agent-api/job_responder.py` / `main.py`:
+
+```bash
+npm run deploy:job-responder-api
+# или: bash scripts/deploy-job-responder-api.sh
+```
+
+Копирует `job_responder.py` + `main.py` в контейнер `autoro-agent-api` и делает restart. Публичный префикс: `https://swoop.autoro.tech/api/v1/job-responder/...`
+
+Локально: перезапуск process с `JOB_RESPONDER_TEST_MODE=1`.
+
+Если в side panel **Not Found** / API 404 - маршруты ещё не на проде; после деплоя: Chrome -> `chrome://extensions` -> **Reload** у Job Responder.
 
 ## Фаза 2
 

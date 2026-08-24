@@ -9,11 +9,14 @@
     <header>
       <h1>Job Responder</h1>
       <p class="hint" id="authHint">Загрузка…</p>
+      <p class="error banner" id="error" role="alert"></p>
+      <p class="success banner" id="success" role="status"></p>
     </header>
 
     <section class="card">
       <h2>Sources (Resume RAG)</h2>
       <p class="hint" id="resumeStatus">—</p>
+      <div class="ingestBanner" id="ingestBanner" hidden></div>
       <div class="field">
         <span>workspaceId (test default = 1)</span>
         <div class="row tight">
@@ -115,9 +118,6 @@
       <button type="button" id="loginBtn" class="link" hidden>Вход</button>
       <button type="button" id="logoutBtn" class="link" hidden>Выход</button>
     </footer>
-
-    <p class="error" id="error"></p>
-    <p class="success" id="success"></p>
 
     <script src="lib/api.js"></script>
     <script src="lib/drive-auth.js"></script>

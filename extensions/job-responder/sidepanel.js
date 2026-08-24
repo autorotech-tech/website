@@ -1,9 +1,12 @@
 let currentVacancy = null;
 let currentSources = [];
 let lastAddedSourceIds = new Set();
+let lastAddedAt = null;
+let lastIngestSummary = '';
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
+const ingestBanner = document.getElementById('ingestBanner');
 const vacancyMeta = document.getElementById('vacancyMeta');
 const vacancyDescription = document.getElementById('vacancyDescription');
 const vacancyStructuredEl = document.getElementById('vacancyStructured');
@@ -17,12 +20,42 @@ const workspaceIdInput = document.getElementById('workspaceIdInput');
 
 function setError(msg) {
   errorEl.textContent = msg || '';
-  if (msg) successEl.textContent = '';
+  if (msg) {
+    successEl.textContent = '';
+    errorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 }
 
 function setSuccess(msg) {
   successEl.textContent = msg || '';
-  if (msg) errorEl.textContent = '';
+  if (msg) {
+    errorEl.textContent = '';
+    successEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+function showIngestBanner({ addedCount = 0, total = currentSources.length, summary = '' } = {}) {
+  if (!ingestBanner) return;
+  if (summary) lastIngestSummary = summary;
+  if (addedCount > 0) lastAddedAt = new Date();
+  const when = lastAddedAt ? formatUpdatedAt(lastAddedAt.toISOString()) : '';
+  const lines = [];
+  if (lastIngestSummary) lines.push(lastIngestSummary);
+  lines.push(`В RAG сейчас: ${total} источник(ов)`);
+  if (when) lines.push(`Последнее добавление: ${when}`);
+  ingestBanner.hidden = false;
+  ingestBanner.textContent = lines.join(' · ');
+}
+
+function setButtonBusy(btn, busy, idleLabel, busyLabel) {
+  if (!btn) return;
+  btn.disabled = Boolean(busy);
+  if (busy) {
+    btn.dataset.idleLabel = idleLabel || btn.dataset.idleLabel || btn.textContent;
+    btn.innerHTML = `<span class="btnSpinner" aria-hidden="true"></span>${busyLabel || 'Загрузка…'}`;
+  } else {
+    btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
+  }
 }
 
 function escapeHtml(s) {
@@ -65,9 +98,10 @@ async function refreshResumeStatus() {
   try {
     const st = await JR_API.resumeStatus();
     const ws = st.workspaceId || (await JR_API.getWorkspaceId());
+    const lastAdd = lastAddedAt ? `, добавлено: ${formatUpdatedAt(lastAddedAt.toISOString())}` : '';
     resumeStatus.textContent = st.hasPrimaryCv
-      ? `Resume RAG ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}`
-      : `Resume RAG ws=${ws}: загрузите основное резюме (сейчас ${st.count} док.)`;
+      ? `Resume RAG ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}${lastAdd}`
+      : `Resume RAG ws=${ws}: загрузите основное резюме (сейчас ${st.count} док.)${lastAdd}`;
   } catch (err) {
     resumeStatus.textContent = `Resume RAG: ${err.message}`;
   }
@@ -115,21 +149,36 @@ function getSelectedSourceIds() {
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
-async function refreshSources({ highlightIds = [] } = {}) {
+async function refreshSources({ highlightIds = [], quiet = false } = {}) {
+  const refreshBtn = document.getElementById('refreshSourcesBtn');
+  const ids = (highlightIds || []).map((id) => Number(id)).filter((n) => Number.isFinite(n) && n > 0);
+  if (ids.length) ids.forEach((id) => lastAddedSourceIds.add(id));
+  sourcesListEl?.classList.add('isLoading');
+  if (!quiet) {
+    setButtonBusy(refreshBtn, true, 'Обновить sources', 'Обновляю…');
+  }
   try {
-    if (highlightIds.length) {
-      highlightIds.forEach((id) => lastAddedSourceIds.add(Number(id)));
-    }
     const data = await JR_API.listSources();
-    const items = data.items || [];
+    const items = Array.isArray(data.items) ? data.items : [];
     renderSources(items);
+    showIngestBanner({
+      addedCount: ids.length,
+      total: items.length,
+      summary: ids.length
+        ? `Новые источники подсвечены зелёным (${ids.length})`
+        : lastIngestSummary,
+    });
     if (!items.length) {
-      setError(
-        `Sources пусты для workspaceId=${data.workspaceId || (await JR_API.getWorkspaceId())}. ` +
-          `В test mode по умолчанию используется ${JR_API.DEFAULT_TEST_WORKSPACE_ID}. ` +
-          `Если загружали в другой workspace - смените ID выше и нажмите «Сохранить».`
-      );
-    } else if (highlightIds.length) {
+      if (!quiet) {
+        setSuccess(
+          `Список обновлён: 0 источников для workspaceId=${data.workspaceId || (await JR_API.getWorkspaceId())}. ` +
+            `Test default = ${JR_API.DEFAULT_TEST_WORKSPACE_ID}. Если грузили в другой workspace - смените ID и «Сохранить».`
+        );
+      }
+    } else if (!quiet && !ids.length) {
+      setSuccess(`Список обновлён: ${items.length} источник(ов)`);
+    }
+    if (ids.length) {
       sourcesListEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
     return items;
@@ -137,6 +186,9 @@ async function refreshSources({ highlightIds = [] } = {}) {
     renderSources([]);
     setError(`Ошибка списка sources: ${String(err.message || err)}`);
     throw err;
+  } finally {
+    sourcesListEl?.classList.remove('isLoading');
+    if (!quiet) setButtonBusy(refreshBtn, false, 'Обновить sources');
   }
 }
 
@@ -230,6 +282,10 @@ async function runRelevanceScore() {
     setError('Нужно описание вакансии для оценки релевантности');
     return;
   }
+  if (relevanceBox) {
+    relevanceBox.hidden = false;
+    relevanceBox.innerHTML = '<div>Считаю релевантность…</div>';
+  }
   const data = await JR_API.scoreRelevance({
     vacancy,
     selectedSourceIds: getSelectedSourceIds(),
@@ -247,7 +303,9 @@ async function runGenerate(mode) {
     return;
   }
   const btn = mode === 'question_answers' ? genAnswersBtn : genCoverBtn;
-  btn.disabled = true;
+  const idle = mode === 'question_answers' ? 'Ответы на вопросы' : 'Отклик';
+  setButtonBusy(btn, true, idle, 'Генерация…');
+  genMeta.textContent = 'Генерация…';
   try {
     await runRelevanceScore().catch(() => {});
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
@@ -261,17 +319,23 @@ async function runGenerate(mode) {
       selectedSourceIds: getSelectedSourceIds(),
       coverTemplate: mode === 'cover_letter' ? coverTemplate : undefined,
     });
-    resultText.value = data.text || '';
+    const letter = String(data.text || '').trim();
+    resultText.value = letter;
     if (data.relevance) renderRelevance(data.relevance);
     const tplNote = data.usedCoverTemplate ? ' | template: yes' : '';
     genMeta.textContent = `model: ${data.model || '-'} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
     }${tplNote}`;
+    if (!letter) {
+      setError('API ответил без текста письма. Проверьте sources и попробуйте ещё раз.');
+      return;
+    }
     setSuccess('Готово - проверьте текст и скопируйте');
   } catch (err) {
+    genMeta.textContent = '';
     setError(String(err.message || err));
   } finally {
-    btn.disabled = false;
+    setButtonBusy(btn, false, idle);
   }
 }
 
@@ -422,17 +486,18 @@ if (uploadResumeFileBtn) {
         label: 'CV',
       });
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: added });
+      await refreshSources({ highlightIds: added, quiet: true });
       resumeFileInput.value = '';
       formatFileHint(resumeFileInput, resumeFileHint);
       if (errors.length) {
         setError(`Часть CV не загрузилась:\n${errors.join('\n')}`);
       }
       if (added.length) {
-        setSuccess(
+        const summary =
           `CV: ${files.length - errors.length}/${files.length} файл(ов)` +
-            (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '')
-        );
+          (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '');
+        setSuccess(summary);
+        showIngestBanner({ addedCount: added.length, summary });
       }
     } catch (err) {
       setError(String(err.message || err));
@@ -465,17 +530,18 @@ if (uploadPortfolioFilesBtn) {
         label: 'Portfolio',
       });
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: added });
+      await refreshSources({ highlightIds: added, quiet: true });
       portfolioFilesInput.value = '';
       formatFileHint(portfolioFilesInput, portfolioFileHint);
       if (errors.length) {
         setError(`Часть файлов не загрузилась:\n${errors.join('\n')}`);
       }
       if (added.length) {
-        setSuccess(
+        const summary =
           `Portfolio: ${files.length - errors.length}/${files.length} файл(ов)` +
-            (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '')
-        );
+          (linkedTotal ? ` · извлечено ссылок: ${linkedTotal}` : '');
+        setSuccess(summary);
+        showIngestBanner({ addedCount: added.length, summary });
       }
     } catch (err) {
       setError(String(err.message || err));
@@ -507,9 +573,11 @@ if (addRagTextBtn) {
         category: 'notes',
       });
       const ids = collectLinkedIds(res);
-      setSuccess(`Текст в RAG (id=${res.knowledgeItemId})${formatLinkedNote(res)}`);
+      const summary = `Текст в RAG (id=${res.knowledgeItemId})${formatLinkedNote(res)}`;
+      setSuccess(summary);
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: ids });
+      await refreshSources({ highlightIds: ids, quiet: true });
+      showIngestBanner({ addedCount: ids.length || 1, summary });
       if (ragTextInput) ragTextInput.value = '';
       if (ragTextTitle) ragTextTitle.value = '';
     } catch (err) {
@@ -541,9 +609,11 @@ if (addLinkBtn) {
         kind: 'job_experience',
         category: 'link',
       });
-      setSuccess(`Ссылка добавлена (id=${res.knowledgeItemId})${formatLinkedNote(res)}`);
+      const summary = `Ссылка добавлена (id=${res.knowledgeItemId})${formatLinkedNote(res)}`;
+      setSuccess(summary);
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: collectLinkedIds(res) });
+      await refreshSources({ highlightIds: collectLinkedIds(res), quiet: true });
+      showIngestBanner({ addedCount: 1, summary });
       linkUrlInput.value = '';
       linkTitleInput.value = '';
     } catch (err) {
@@ -632,7 +702,7 @@ if (driveImportBtn) {
         }
       }
       await refreshResumeStatus();
-      await refreshSources({ highlightIds: ids });
+      await refreshSources({ highlightIds: ids, quiet: true });
       await refreshDriveStatus();
       const errN = (res.errors || []).length;
       const via = source === 'identity' ? 'oauth' : 'manual token';
@@ -642,6 +712,7 @@ if (driveImportBtn) {
         (linkedN > 0 ? `, ссылок ${linkedN}` : '') +
         (errN ? `, ошибок ${errN}` : '') +
         ` (${via})`;
+      showIngestBanner({ addedCount: ids.length, summary });
       if (errN && !(res.importedCount > 0)) {
         setError(`${summary}\n${(res.errors || []).map((e) => `${e.name}: ${e.error}`).join('\n')}`);
       } else if (errN) {
@@ -660,15 +731,27 @@ if (driveImportBtn) {
 }
 
 refreshVacancyBtn.addEventListener('click', refreshVacancyFromTab);
-refreshSourcesBtn.addEventListener('click', () => refreshSources().catch(() => {}));
+refreshSourcesBtn.addEventListener('click', () => {
+  setError('');
+  refreshSources({ quiet: false }).catch(() => {});
+});
 if (scoreBtn) {
   scoreBtn.addEventListener('click', async () => {
     setError('');
+    setButtonBusy(scoreBtn, true, 'Оценка релевантности', 'Считаю…');
     try {
       const data = await runRelevanceScore();
-      setSuccess(`Релевантность: ${data?.score ?? '-'} / 100`);
+      if (data && data.score != null) {
+        setSuccess(`Релевантность: ${data.score} / 100`);
+      } else if (!data) {
+        return;
+      } else {
+        setError('Оценка не вернула score. Проверьте API / redeploy.');
+      }
     } catch (err) {
       setError(String(err.message || err));
+    } finally {
+      setButtonBusy(scoreBtn, false, 'Оценка релевантности');
     }
   });
 }
@@ -696,7 +779,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.userAccessToken || changes.jrTestMode || changes.jrWorkspaceId) {
     refreshAuthHint();
     refreshResumeStatus();
-    refreshSources().catch(() => {});
+    refreshSources({ quiet: true }).catch(() => {});
   }
   if (changes.jrCoverTemplate && coverTemplateEl && document.activeElement !== coverTemplateEl) {
     coverTemplateEl.value = String(changes.jrCoverTemplate.newValue || '');
@@ -723,7 +806,7 @@ if (coverTemplateEl) {
     await refreshAuthHint();
     await JR_API.ensureWorkspace();
     await refreshResumeStatus();
-    await refreshSources();
+    await refreshSources({ quiet: true });
   } catch (err) {
     setError(String(err.message || err));
   }

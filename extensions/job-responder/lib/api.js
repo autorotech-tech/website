@@ -31,6 +31,12 @@ const JR_API = (() => {
             ? data.detail
             : JSON.stringify(data.detail)
           : `HTTP ${response.status}`;
+      if (response.status === 404 || /^not found$/i.test(String(detail))) {
+        throw new Error(
+          `API 404: маршрут не найден (${url.split('?')[0]}). ` +
+            'Нужен redeploy agent-api (job_responder.py) на swoop.autoro.tech, затем Reload расширения.'
+        );
+      }
       throw new Error(detail);
     }
     return data || {};
@@ -227,7 +233,7 @@ const JR_API = (() => {
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
     const template = String(coverTemplate || baseLetter || '').trim();
-    return fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
+    const data = await fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -240,6 +246,29 @@ const JR_API = (() => {
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
       }),
     });
+    const text = pickGeneratedText(data);
+    return { ...data, text };
+  }
+
+  function pickGeneratedText(data) {
+    if (!data || typeof data !== 'object') return '';
+    const direct = [data.text, data.letter, data.content, data.coverLetter]
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .find(Boolean);
+    if (direct) return direct;
+    if (Array.isArray(data.answers) && data.answers.length) {
+      return data.answers
+        .map((a) => {
+          if (!a || typeof a !== 'object') return '';
+          const q = String(a.question || '').trim();
+          const ans = String(a.answer || '').trim();
+          if (!q && !ans) return '';
+          return q ? `Q: ${q}\nA: ${ans}` : ans;
+        })
+        .filter(Boolean)
+        .join('\n\n');
+    }
+    return '';
   }
 
   async function fetchVacancyFromTab() {

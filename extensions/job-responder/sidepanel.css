@@ -201,3 +201,57 @@ button.link {
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+.banner:empty {
+  display: none;
+}
+
+.banner:not(:empty) {
+  display: block;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.error.banner:not(:empty) {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.success.banner:not(:empty) {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.ingestBanner {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  color: #065f46;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sourcesList.isLoading {
+  opacity: 0.65;
+}
+
+.btnSpinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: jrSpin 0.7s linear infinite;
+}
+
+@keyframes jrSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

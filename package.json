@@ -15,6 +15,7 @@
     "dev:admin": "vite --config vite.admin.config.ts",
     "build": "tsc && vite build",
     "deploy:swoop": "bash scripts/deploy-swoop-openrouter-catalog.sh",
+    "deploy:job-responder-api": "bash scripts/deploy-job-responder-api.sh",
     "preview": "vite preview",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
