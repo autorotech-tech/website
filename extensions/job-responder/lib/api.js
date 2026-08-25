@@ -348,6 +348,28 @@ const JR_API = (() => {
     });
   }
 
+  async function geminiRagStatus() {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(
+      `${apiBase}/api/v1/job-responder/gemini-rag/status?workspaceId=${encodeURIComponent(workspaceId)}`,
+      { headers, timeoutMs: 20000 }
+    );
+  }
+
+  async function geminiRagSync({ poll = true } = {}) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/gemini-rag/sync`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, poll }),
+      timeoutMs: poll ? 120000 : 20000,
+    });
+  }
+
   async function generateResponse({
     mode,
     host,
@@ -355,6 +377,7 @@ const JR_API = (() => {
     selectedSourceIds = [],
     coverTemplate,
     baseLetter,
+    useGeminiRag,
   }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -375,6 +398,8 @@ const JR_API = (() => {
           ? { questions: vacancy.questions }
           : {}),
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
+        ...(useGeminiRag === true ? { useGeminiRag: true } : {}),
+        ...(useGeminiRag === false ? { useGeminiRag: false } : {}),
       }),
       timeoutMs: 70000,
       errorKind: 'generate',
@@ -451,6 +476,8 @@ const JR_API = (() => {
     driveImport,
     ensureWorkspace,
     fetchVacancyFromTab,
+    geminiRagStatus,
+    geminiRagSync,
     generateResponse,
     getApiBase,
     getWorkspaceId,

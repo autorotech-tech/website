@@ -1,6 +1,18 @@
 # Job Responder: Gemini RAG / NotebookLM options (2026-08)
 
-**Verdict: hybrid — keep compact profile; optional Gemini File Search later. Skip NotebookLM (enterprise + unofficial) for MVP.**
+**Verdict: hybrid — compact profile default; Gemini File Search implemented (opt-in via `JOB_RESPONDER_GEMINI_RAG=1`). Skip NotebookLM (enterprise + unofficial).**
+
+**Status (2026-08-25): IMPLEMENTED**
+
+| Компонент | Статус |
+|-----------|--------|
+| `agent-api/job_responder_gemini_rag.py` | store per workspace, sync, generate with `fileSearch` tool |
+| Postgres `job_responder_gemini_stores` | workspace_id -> store_name, doc_count, last_sync_at |
+| Dedupe | tags `gemini_rag_doc:` / `gemini_rag_hash:` на `knowledge_items` |
+| Endpoints | `GET .../gemini-rag/status`, `POST .../gemini-rag/sync` |
+| Generate | auto when flag + store ready; fallback compact profile |
+| Extension v0.5.8 | статус Gemini RAG, кнопка sync, `useGeminiRag` при generate |
+| Smoke | `scripts/deploy-job-responder-api.sh` step 4c (если flag=1 на VPS) |
 
 Timeouts JR сейчас в основном от latency провайдеров (openmodel/Gemini/GLM) и CF wall-clock, не от «плохого RAG». Compact profile уже решает token bloat. File Search даёт лучший grounding по PDF, но **не** заменяет фикс таймаутов и **не** работает «бесплатно» через consumer NotebookLM.
 
@@ -176,12 +188,22 @@ file-capture / drive / text
 ### Feature flag
 
 ```bash
-JOB_RESPONDER_GEMINI_RAG=0   # default OFF
+JOB_RESPONDER_GEMINI_RAG=0   # default OFF on agent-api container
+JOB_RESPONDER_GEMINI_RAG=1   # enable after deploy + smoke
+JOB_RESPONDER_GEMINI_RAG_MODEL=gemini-2.5-flash  # optional override
 ```
 
-Модуль (чтобы не конфликтовать с правками Forms/timeout в `job_responder.py`):
+Модуль: `agent-api/job_responder_gemini_rag.py` (REST, без `google-genai` / `notebooklm-py`).
 
-`agent-api/job_responder_gemini_rag.py`
+### Enable on VPS (after smoke)
+
+```bash
+# in docker-compose or env for autoro-agent-api
+JOB_RESPONDER_GEMINI_RAG=1
+docker restart autoro-agent-api
+```
+
+Side panel: **Синхронизировать Gemini RAG** -> затем generate использует File Search (минимум tokens в prompt: только vacancy + template).
 
 ---
 

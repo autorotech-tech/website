@@ -345,6 +345,13 @@ class JobResponderGeneratePayload(BaseModel):
     # User's own cover letter to adapt (not write from scratch). Alias: baseLetter.
     coverTemplate: Optional[str] = Field(default=None, max_length=20000)
     baseLetter: Optional[str] = Field(default=None, max_length=20000)
+    # Prefer Gemini File Search RAG when JOB_RESPONDER_GEMINI_RAG=1 and store ready
+    useGeminiRag: Optional[bool] = None
+
+
+class JobResponderGeminiRagSyncPayload(BaseModel):
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    poll: bool = True
 
 
 class JobResponderResumeCapturePayload(BaseModel):
@@ -1338,6 +1345,10 @@ def build_user_prompt(
 
 
 def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
+    import job_responder_gemini_rag as jr_gemini_rag
+
+    jr_gemini_rag.ensure_schema(deps["pg_connect"])
+
     verify_bookmarks_access = deps["verify_bookmarks_access"]
     verify_workspace_membership = deps["verify_workspace_membership"]
     pg_connect = deps["pg_connect"]
@@ -1902,6 +1913,34 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         background_tasks.add_task(_job)
 
+    def _queue_gemini_rag_sync(
+        background_tasks: Optional[BackgroundTasks],
+        workspace_id: int,
+        knowledge_item_id: int,
+    ) -> None:
+        if background_tasks is None or knowledge_item_id <= 0 or not jr_gemini_rag.is_enabled():
+            return
+
+        def _job() -> None:
+            try:
+                res = jr_gemini_rag.sync_knowledge_item(
+                    pg_connect,
+                    workspace_id,
+                    knowledge_item_id,
+                    poll=False,
+                )
+                if not res.get("ok") and not res.get("skipped"):
+                    _LOG.warning(
+                        "gemini rag sync failed ws=%s kid=%s err=%s",
+                        workspace_id,
+                        knowledge_item_id,
+                        res.get("error"),
+                    )
+            except Exception:
+                _LOG.exception("gemini rag sync job failed kid=%s", knowledge_item_id)
+
+        background_tasks.add_task(_job)
+
     def _queue_embed(
         background_tasks: Optional[BackgroundTasks],
         kid: int,
@@ -2181,6 +2220,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             conn.commit()
             ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
             _queue_embed(background_tasks, kid, title, text, str((profile or {}).get("ai_summary") or ""))
+            _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -2248,6 +2288,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             conn.commit()
             ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
             _queue_embed(background_tasks, kid, title, text)
+            _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -2386,6 +2427,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 timings["upsertSec"] = round(time.monotonic() - t_upsert, 3)
                 ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
                 _queue_embed(background_tasks, kid, item_title, extracted_text)
+                _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
                 _queue_extracted_link_index(
                     background_tasks,
                     workspace_id,
@@ -2503,6 +2545,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 )
             conn.commit()
             _queue_embed(background_tasks, kid, item_title, text[:3500])
+            _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -2665,6 +2708,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             }
                         )
                         _queue_embed(background_tasks, kid, fname, text.strip())
+                        _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
                         _queue_extracted_link_index(
                             background_tasks,
                             workspace_id,
@@ -2760,6 +2804,52 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         result["usedUnifiedProfile"] = True
         return result
 
+    @app.get("/api/v1/job-responder/gemini-rag/status")
+    async def job_responder_gemini_rag_status(
+        workspaceId: str,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        return jr_gemini_rag.get_status(pg_connect, workspace_id)
+
+    @app.post("/api/v1/job-responder/gemini-rag/sync")
+    async def job_responder_gemini_rag_sync(
+        payload: JobResponderGeminiRagSyncPayload,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        if not jr_gemini_rag.is_enabled():
+            return {"ok": False, "enabled": False, "message": "JOB_RESPONDER_GEMINI_RAG is off"}
+
+        def _job() -> None:
+            try:
+                jr_gemini_rag.sync_workspace(pg_connect, workspace_id, poll=payload.poll)
+            except Exception:
+                _LOG.exception("gemini rag full sync failed ws=%s", workspace_id)
+
+        if payload.poll:
+            result = jr_gemini_rag.sync_workspace(pg_connect, workspace_id, poll=True)
+            result["enabled"] = True
+            return result
+
+        background_tasks.add_task(_job)
+        return {
+            "ok": True,
+            "enabled": True,
+            "queued": True,
+            "workspaceId": str(workspace_id),
+            "message": "Gemini RAG sync queued",
+        }
+
     @app.post("/api/v1/job-responder/generate")
     async def job_responder_generate(
         payload: JobResponderGeneratePayload,
@@ -2822,6 +2912,66 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         cover_cap = COVER_TEMPLATE_CHARS
         profile_compressed = False
         provider_errors: List[str] = []
+        gemini_rag_used = False
+        gemini_rag_citations: List[str] = []
+        raw_text = ""
+        chat_result = None
+        compact_text = ""
+        has_template = False
+
+        rag_status = jr_gemini_rag.get_status(pg_connect, workspace_id) if jr_gemini_rag.is_enabled() else {}
+        use_rag = payload.useGeminiRag
+        if use_rag is None:
+            use_rag = bool(jr_gemini_rag.is_enabled() and rag_status.get("ready"))
+
+        if use_rag and jr_gemini_rag.is_enabled() and rag_status.get("storeName") and int(rag_status.get("docCount") or 0) > 0:
+            cover_template_rag = resolve_cover_template(
+                payload.coverTemplate, payload.baseLetter, max_chars=cover_cap
+            )
+            has_template = bool(cover_template_rag) and mode == "cover_letter"
+            system_prompt_rag = build_system_prompt(mode, has_cover_template=has_template)
+            user_prompt_rag = jr_gemini_rag.build_gemini_rag_user_prompt(
+                payload.vacancy,
+                mode,
+                payload.host,
+                normalized_questions,
+                cover_template=cover_template_rag if has_template else "",
+                host_labels=HOST_LABELS,
+            )
+            remaining_rag = deadline - time.monotonic()
+            if remaining_rag >= 8:
+                try:
+                    rag_gen = call_with_timeout(
+                        jr_gemini_rag.generate_with_file_search,
+                        min(remaining_rag - 1.0, 22.0),
+                        store_name=str(rag_status["storeName"]),
+                        system_prompt=system_prompt_rag,
+                        user_prompt=user_prompt_rag,
+                        mode=mode,
+                        model=JR_GEMINI_MODEL,
+                    )
+                except FuturesTimeout:
+                    rag_gen = {"ok": False, "error": "timeout"}
+                    provider_errors.append("gemini_rag:timeout")
+                except Exception as exc:
+                    rag_gen = {"ok": False, "error": str(exc)}
+                    provider_errors.append(f"gemini_rag:{type(exc).__name__}")
+                else:
+                    if rag_gen.get("ok") and str(rag_gen.get("text") or "").strip():
+                        raw_text = str(rag_gen["text"]).strip()
+                        gemini_rag_used = True
+                        gemini_rag_citations = list(rag_gen.get("citations") or [])
+                        chat_result = type(
+                            "GeminiRagResult",
+                            (),
+                            {
+                                "content": raw_text,
+                                "model_resolved": rag_gen.get("model"),
+                                "provider_used": rag_gen.get("provider") or "gemini_file_search",
+                            },
+                        )()
+                    else:
+                        provider_errors.append(f"gemini_rag:{rag_gen.get('error') or 'empty'}")
 
         def _run_llm(profile_max: int, cover_max: int, attempt_timeout: float):
             cover_template = resolve_cover_template(
@@ -2904,9 +3054,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 chat_result = None
             return chat_result, last_err, compact_text, has_template
 
-        chat_result, last_err, compact_text, has_template = _run_llm(
-            profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
-        )
+        if not raw_text:
+            chat_result, last_err, compact_text, has_template = _run_llm(
+                profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
+            )
+        else:
+            last_err = ""
+            compact_text = format_compact_profile(merged, max_chars=profile_cap)
         if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and (
             last_err == "timeout" or last_err.startswith("timeout") or "timeout" in (last_err or "")
         ):
@@ -2924,7 +3078,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     profile_cap, cover_cap, min(9.0, remaining - 1.0)
                 )
 
-        raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
+        raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else raw_text
         if not raw_text:
             elapsed = time.monotonic() - started
             err_tail = "; ".join(provider_errors[-8:]) if provider_errors else last_err or "unknown"
@@ -3001,6 +3155,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             f"Unified profile: {len(rag_items)} sources -> {len(compact_text)} chars"
             + (" (mini retry)" if profile_compressed else "")
             + (f"; merge capped at {SELECTED_SOURCES_MAX}" if truncated else "")
+            + (f"; gemini_rag docs={rag_status.get('docCount')}" if gemini_rag_used else "")
             + f"; {elapsed_ok:.1f}s"
         )
         return {
@@ -3014,7 +3169,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "host": payload.host,
             "mode": mode,
             "usedCoverTemplate": has_template,
-            "usedUnifiedProfile": True,
+            "usedUnifiedProfile": not gemini_rag_used,
+            "usedGeminiRag": gemini_rag_used,
+            "geminiRagCitations": gemini_rag_citations,
             "profileCompressed": profile_compressed,
             "compactProfileChars": len(compact_text),
             "sourcesMerged": len(rag_items),

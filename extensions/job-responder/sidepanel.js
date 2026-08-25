@@ -3,9 +3,11 @@ let currentSources = [];
 let lastAddedSourceIds = new Set();
 let lastAddedAt = null;
 let lastIngestSummary = '';
+let geminiRagReady = false;
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
+const geminiRagStatusEl = document.getElementById('geminiRagStatus');
 const ingestBanner = document.getElementById('ingestBanner');
 const vacancyMeta = document.getElementById('vacancyMeta');
 const vacancyDescription = document.getElementById('vacancyDescription');
@@ -221,6 +223,34 @@ async function refreshAuthHint() {
   return false;
 }
 
+async function refreshGeminiRagStatus({ quiet = false } = {}) {
+  if (!geminiRagStatusEl) return null;
+  try {
+    const st = await JR_API.geminiRagStatus();
+    geminiRagReady = Boolean(st.enabled && st.ready);
+    if (!st.enabled) {
+      geminiRagStatusEl.textContent = 'Gemini RAG: выключен на сервере (JOB_RESPONDER_GEMINI_RAG=0)';
+      return st;
+    }
+    if (!st.hasGeminiKeys) {
+      geminiRagStatusEl.textContent = 'Gemini RAG: нет gemini_keys в Swoop Admin -> Settings';
+      return st;
+    }
+    const syncNote = st.lastSyncAt ? `, sync: ${formatUpdatedAt(st.lastSyncAt)}` : '';
+    geminiRagStatusEl.textContent = st.ready
+      ? `Gemini RAG: OK · ${st.docCount || 0} док.${syncNote}`
+      : `Gemini RAG: store ${st.storeName ? 'есть' : 'нет'} · ${st.docCount || 0} док. · нажмите «Синхронизировать»${syncNote}`;
+    if (!quiet && st.ready) {
+      setSuccess(`Gemini RAG готов: ${st.docCount} док.`);
+    }
+    return st;
+  } catch (err) {
+    geminiRagReady = false;
+    geminiRagStatusEl.textContent = `Gemini RAG: ${err.message}`;
+    return null;
+  }
+}
+
 async function refreshResumeStatus() {
   try {
     const st = await JR_API.resumeStatus();
@@ -229,6 +259,7 @@ async function refreshResumeStatus() {
     resumeStatus.textContent = st.hasPrimaryCv
       ? `Resume RAG ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}${lastAdd}`
       : `Resume RAG ws=${ws}: загрузите основное резюме (сейчас ${st.count} док.)${lastAdd}`;
+    await refreshGeminiRagStatus({ quiet: true });
   } catch (err) {
     resumeStatus.textContent = `Resume RAG: ${err.message}`;
   }
@@ -514,6 +545,7 @@ async function runGenerate(mode) {
       vacancy,
       selectedSourceIds: getSelectedSourceIds(),
       coverTemplate: !isQa ? coverTemplate : undefined,
+      useGeminiRag: geminiRagReady,
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
@@ -537,7 +569,8 @@ async function runGenerate(mode) {
     const compressNote = data.profileCompressed ? ' | compressed' : '';
     const elapsedNote = data.elapsedSec != null ? ` | ${data.elapsedSec}s` : '';
     const provNote = data.provider ? ` | ${data.provider}` : '';
-    genMeta.textContent = `model: ${data.model || '-'}${provNote} | sources: ${(data.sources || []).length} | score: ${
+    const ragNote = data.usedGeminiRag ? ' | gemini_rag' : '';
+    genMeta.textContent = `model: ${data.model || '-'}${provNote}${ragNote} | sources: ${(data.sources || []).length} | score: ${
       data.relevance?.score ?? '-'
     }${tplNote}${profileNote}${compressNote}${elapsedNote}`;
     if (data.limitMessage) {
@@ -568,6 +601,7 @@ const copyAllQaBtn = document.getElementById('copyAllQaBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
+const geminiRagSyncBtn = document.getElementById('geminiRagSyncBtn');
 const scoreBtn = document.getElementById('scoreBtn');
 const saveWorkspaceBtn = document.getElementById('saveWorkspaceBtn');
 
@@ -956,6 +990,29 @@ refreshSourcesBtn.addEventListener('click', () => {
   setError('');
   refreshSources({ quiet: false }).catch(() => {});
 });
+
+if (geminiRagSyncBtn) {
+  geminiRagSyncBtn.addEventListener('click', async () => {
+    setError('');
+    setButtonBusy(geminiRagSyncBtn, true, 'Синхронизировать Gemini RAG', 'Синхронизация…');
+    if (geminiRagStatusEl) geminiRagStatusEl.textContent = 'Синхронизация с Gemini…';
+    try {
+      const res = await JR_API.geminiRagSync({ poll: true });
+      await refreshGeminiRagStatus({ quiet: true });
+      setSuccess(
+        res.queued
+          ? 'Синхронизация Gemini RAG поставлена в очередь'
+          : `Gemini RAG: synced ${res.synced || 0}, skipped ${res.skipped || 0}`
+      );
+    } catch (err) {
+      setError(String(err.message || err));
+      await refreshGeminiRagStatus({ quiet: true });
+    } finally {
+      setButtonBusy(geminiRagSyncBtn, false, 'Синхронизировать Gemini RAG');
+    }
+  });
+}
+
 if (sourcesListEl) {
   sourcesListEl.addEventListener('click', async (ev) => {
     const btn = ev.target?.closest?.('.sourceDeleteBtn');

@@ -80,6 +80,13 @@ Chrome MV3 extension: персонализированные отклики с R
 Строка: checkbox | title | meta | delete. Чекбоксы не должны раздуваться на 100% ширины (`input[type=checkbox] { width: auto }`).
 Отклик по умолчанию идёт через unified compact profile (много sources OK).
 
+## v0.5.8
+
+- **Gemini File Search RAG** (opt-in): store per workspace, sync после ingest, generate через `fileSearch` tool
+- Side panel: статус Gemini RAG, кнопка «Синхронизировать Gemini RAG»
+- API: `GET/POST .../gemini-rag/status|sync`; generate поля `usedGeminiRag`, `geminiRagCitations`
+- Flag: `JOB_RESPONDER_GEMINI_RAG=1` на agent-api (после smoke)
+
 ## v0.5.7
 
 - Generate latency: openmodel→Gemini→GLM, compact ≤2800 first, `gemini-3.5-flash`
@@ -110,7 +117,27 @@ Chrome MV3 extension: персонализированные отклики с R
 | POST | `/api/v1/job-responder/resume/link-capture` |
 | POST | `/api/v1/job-responder/resume/drive-import` |
 | POST | `/api/v1/job-responder/relevance` |
-| POST | `/api/v1/job-responder/generate` (`mode`: `cover_letter` \| `qa` \| `question_answers`; `questions` optional; `coverTemplate` / `baseLetter` optional) |
+| POST | `/api/v1/job-responder/generate` (`mode`: `cover_letter` \| `qa` \| `question_answers`; `questions` optional; `coverTemplate` / `baseLetter` optional; `useGeminiRag` optional) |
+| GET | `/api/v1/job-responder/gemini-rag/status?workspaceId=` |
+| POST | `/api/v1/job-responder/gemini-rag/sync` (`workspaceId`, `poll`) |
+
+## Gemini RAG (File Search)
+
+1. На VPS: `JOB_RESPONDER_GEMINI_RAG=1` + redeploy (`npm run deploy:job-responder-api`).
+2. Ключи: Swoop Admin -> Settings -> `gemini_keys`.
+3. Extension **Reload** (v0.5.8+).
+4. Загрузите sources -> **Синхронизировать Gemini RAG** (или дождитесь background sync после ingest).
+5. **Отклик** / **Ответы на вопросы** - при `ready=true` prompt содержит только vacancy + template; факты из store.
+
+Подробнее: [gemini-rag.md](./gemini-rag.md).
+
+## Автomation groundwork (MVP scaffold)
+
+Следующий шаг (не в v0.5.8): HH auto-fill + отправка сгенерированного письма и вложений в чат Cursor/расширения.
+
+- Placeholder endpoint (future): `POST /api/v1/job-responder/outbound/prepare` - `{ letterText, attachmentSourceIds[] }` -> bundle для чата
+- Extension: кнопка «Подготовить для чата» (копия письма + список file sources)
+- См. [phase2-autofill.md](./phase2-autofill.md)
 
 ## Redeploy API
 
@@ -121,7 +148,7 @@ npm run deploy:job-responder-api
 # или: bash scripts/deploy-job-responder-api.sh
 ```
 
-Копирует `job_responder.py` + `main.py` в контейнер `autoro-agent-api` и делает restart. Публичный префикс: `https://swoop.autoro.tech/api/v1/job-responder/...`
+Копирует `job_responder.py` + `job_responder_gemini_rag.py` + `main.py` в контейнер `autoro-agent-api` и делает restart. Публичный префикс: `https://swoop.autoro.tech/api/v1/job-responder/...`
 
 Локально: перезапуск process с `JOB_RESPONDER_TEST_MODE=1`.
 
@@ -129,9 +156,9 @@ npm run deploy:job-responder-api
 
 ## Gemini RAG / NotebookLM
 
-Исследование и рекомендация (File Search vs NotebookLM Enterprise vs unofficial): [gemini-rag.md](./gemini-rag.md).
+Реализовано: Gemini File Search на `gemini_keys` (см. [gemini-rag.md](./gemini-rag.md)).
 
-**Кратко:** MVP = compact profile; opt-in позже = Gemini File Search на `gemini_keys`. NotebookLM Enterprise и `notebooklm-py` — не для JR MVP.
+**Кратко:** default = compact profile; opt-in = Gemini File Search при `JOB_RESPONDER_GEMINI_RAG=1`. NotebookLM Enterprise и `notebooklm-py` - не для JR.
 
 ## Маршрутизация моделей / token economy
 
