@@ -83,6 +83,8 @@ _CLUSTER_TERMS: Dict[str, Tuple[str, ...]] = {
         "анализ эффективности",
         "маркетинговый анализ",
         "анализ маркетинга",
+        "эффективность кампаний",
+        "эффективность рекламы",
         "a/b",
         "a/b test",
         "ab test",
@@ -90,6 +92,8 @@ _CLUSTER_TERMS: Dict[str, Tuple[str, ...]] = {
         "а/б",
         "эксперименты",
         "campaign performance",
+        "оптимизация кампаний",
+        "анализ рекламных кампаний",
     ),
     "marketing_metrics": (
         "маркетинговые метрики",
@@ -113,6 +117,9 @@ _CLUSTER_TERMS: Dict[str, Tuple[str, ...]] = {
         "конверсия",
         "unit economics",
         "юнит-экономика",
+        "маркетинговые kpi",
+        "показатели эффективности",
+        "performance metrics",
     ),
     "budget_planning": (
         "планирование бюджета",
@@ -127,6 +134,10 @@ _CLUSTER_TERMS: Dict[str, Tuple[str, ...]] = {
         "план бюджета",
         "budgeting",
         "бюджеты",
+        "планирование медиабюджета",
+        "распределение бюджета",
+        "media planning",
+        "медиапланирование",
     ),
     "ppc_seo_crm": (
         "ppc",
@@ -228,20 +239,37 @@ _EVIDENCE_PATTERNS: Tuple[Tuple[str, str], ...] = (
     (r"\bltv\b", "marketing_metrics"),
     (r"\bcac\b", "marketing_metrics"),
     (r"\bkpi\b", "marketing_metrics"),
+    (r"метрик", "marketing_metrics"),
+    (r"конверси", "marketing_metrics"),
     (r"\bppc\b", "ppc_seo_crm"),
     (r"\bseo\b", "ppc_seo_crm"),
     (r"\bcrm\b", "ppc_seo_crm"),
     (r"\bsem\b", "ppc_seo_crm"),
     (r"google\s*ads", "ppc_seo_crm"),
     (r"yandex\s*direct|яндекс\s*директ", "ppc_seo_crm"),
-    (r"growth\s*marketing|performance\s*marketing", "marketing"),
+    (r"контекстн\w*\s+реклам", "ppc_seo_crm"),
+    (r"growth\s*marketing|performance\s*marketing|performance[-\s]*маркетинг|перфоманс", "marketing"),
     (r"\bb2c\b", "marketing"),
     (r"\bb2b\b", "marketing"),
-    (r"media\s*budget|медиабюджет|бюджет", "budget_planning"),
+    (r"media\s*budget|медиабюджет|бюджет|медиапланир", "budget_planning"),
+    (r"планирован\w*\s+бюджет", "budget_planning"),
     (r"a/?b\s*test|а/?б\s*тест", "campaign_analysis"),
-    (r"campaign\s*analysis|анализ\s+кампани", "campaign_analysis"),
+    (r"campaign\s*analysis|анализ\s+кампани|анализ\s+эффективност|маркетингов\w*\s+анализ", "campaign_analysis"),
+    (r"эффективност\w*\s+(?:маркетинг|реклам|кампани)", "campaign_analysis"),
+    (r"оптимизаци\w*\s+кампани", "campaign_analysis"),
     (r"ga4|google\s*analytics|amplitude|mixpanel", "analytics"),
     (r"\bn8n\b|\brag\b|\bllm\b", "ai_automation"),
+)
+
+# If any of these clusters have evidence, sibling HH skill phrases should match.
+_MARKETING_FAMILY = frozenset(
+    {
+        "marketing",
+        "campaign_analysis",
+        "marketing_metrics",
+        "budget_planning",
+        "ppc_seo_crm",
+    }
 )
 
 
@@ -426,6 +454,20 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
         if d in {"ai", "ml", "automation"}:
             touch_cluster("ai_automation", d, source="domain")
 
+    # Marketing family inheritance: Growth/Performance CV covers HH skill phrasing
+    # like "маркетинговые метрики" / "планирование бюджета" even without every acronym.
+    family_present = _MARKETING_FAMILY & set(clusters.keys())
+    if family_present:
+        shared_ev: List[str] = []
+        for cid in sorted(family_present):
+            shared_ev.extend(str(e) for e in (clusters[cid].get("evidence") or [])[:6])
+        shared_ev = list(dict.fromkeys(shared_ev))[:10] or ["marketing"]
+        for cid in _MARKETING_FAMILY:
+            if cid in clusters:
+                continue
+            for ev in shared_ev[:4]:
+                touch_cluster(cid, ev, source="family")
+
     # Prefer short, readable evidence first
     for slot in clusters.values():
         ev = sorted(slot["evidence"], key=lambda x: (len(x) > 40, len(x), x))
@@ -433,7 +475,7 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
         slot["aliases"] = slot["aliases"][:40]
 
     grid = {
-        "version": 1,
+        "version": 2,
         "fingerprint": fp,
         "clusters": clusters,
         "aliases": sorted(aliases)[:200],
@@ -505,6 +547,24 @@ def match_skill_against_grid(
             "cluster": cid,
             "evidence": evidence[:5],
         }
+
+    # 2b) Marketing family: sibling cluster has evidence (HH phrasing vs Growth CV)
+    if cid and cid in _MARKETING_FAMILY:
+        family_hits = [c for c in _MARKETING_FAMILY if c in clusters]
+        if family_hits:
+            evidence: List[str] = []
+            for fc in family_hits:
+                for e in (clusters[fc].get("evidence") or [])[:4]:
+                    en = normalize_phrase(str(e))
+                    if en and en not in evidence:
+                        evidence.append(en)
+            return {
+                "skill": skill,
+                "normalized": n,
+                "tier": "synonym",
+                "cluster": cid,
+                "evidence": evidence[:5] or [family_hits[0]],
+            }
 
     # 3) Fuzzy / token overlap vs evidence + profile terms (not full synonym dump)
     compare_pool = exact | evidence_set

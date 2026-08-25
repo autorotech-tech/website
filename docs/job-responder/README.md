@@ -49,6 +49,14 @@ Chrome MV3 extension: персонализированные отклики с R
 - Matching: exact → synonym → fuzzy/token; «Не хватает» только если нет семантического покрытия
 - rationale + matched / missing / `semanticMatches` в side panel
 
+## v0.6.3
+
+- **Правки RAG (fix):** парсинг свободного RU ("Поменяй контакты… Telegram: @x") → structured `telegram`/`email`; документ overrides хранит parsed + raw.
+- **Generate:** всегда инжектит latest `job_profile_overrides` из Postgres в prompt (Gemini RAG и compact), даже если File Search sync ещё не догнал.
+- Overrides source всегда подмешивается к selected sources.
+- После «Сохранить в RAG»: preview сохранённых контактов + await Gemini sync (fallback queue).
+- **Semantic:** marketing family inheritance + RU evidence patterns; `matchedSemantic` в ответе relevance.
+
 ## v0.6.2
 
 - **Правки RAG**: блок в side panel + `POST /api/v1/job-responder/resume/patch` (kind=`job_profile_overrides`, category=`overrides`). Пишет в Postgres и ставит Gemini File Search sync в очередь. Локально: `jrRagEdits` в chrome.storage.

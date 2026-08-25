@@ -9,9 +9,13 @@ from job_responder import (
     JobResponderVacancyPayload,
     JobResponderVacancyStructured,
     cap_rag_items,
+    extract_contacts_from_rag_edits,
     extract_resume_profile,
     extract_urls_from_text,
+    format_structured_overrides_document,
+    merge_profiles_from_rows,
     near_duplicate_hash,
+    normalize_profile_overrides,
     normalize_questions,
     parse_answers_json,
     score_resume_vs_vacancy,
@@ -195,3 +199,75 @@ def test_semantic_grid_evidence_from_blob():
     )
     assert len(hits) >= 3
     assert any("quantum" in m.lower() for m in miss)
+
+
+def test_extract_contacts_from_freeform_russian():
+    text = "Поменяй контакты в базе Telegram: @autoro_tech ->\nemail: autoro.tech@gmail.com"
+    parsed = extract_contacts_from_rag_edits(text)
+    assert parsed.get("telegram") == "@autoro_tech"
+    assert parsed.get("email") == "autoro.tech@gmail.com"
+    assert normalize_profile_overrides(text) == parsed
+    doc = format_structured_overrides_document(text, parsed)
+    assert "telegram: @autoro_tech" in doc
+    merged = merge_profiles_from_rows(
+        [
+            {
+                "id": 1,
+                "title": "CV",
+                "kind": "job_resume",
+                "content_text": "Telegram https://t.me/old_handle\nemail old@x.com",
+                "ai_summary": "",
+            },
+            {
+                "id": 2,
+                "title": "Overrides",
+                "kind": "job_profile_overrides",
+                "category": "overrides",
+                "content_text": doc,
+                "ai_summary": "",
+            },
+        ]
+    )
+    assert merged.get("telegram") == "@autoro_tech"
+    assert merged.get("email") == "autoro.tech@gmail.com"
+
+
+def test_semantic_hh_phrases_without_english_acronyms():
+    """HH skill names must match Growth/Performance CV even without ROAS/GMV tokens."""
+    vacancy = JobResponderVacancyPayload(
+        url="https://hh.ru/vacancy/1",
+        title="Маркетолог",
+        company="X",
+        description="Нужен маркетинг",
+        structured=JobResponderVacancyStructured(
+            keySkills=[
+                "анализ эффективности маркетинговых кампаний",
+                "маркетинговые метрики",
+                "маркетинговый анализ",
+                "планирование бюджета",
+            ],
+        ),
+    )
+    resume_rows = [
+        {
+            "id": 1,
+            "title": "CV Performance",
+            "kind": "job_resume",
+            "content_text": (
+                "Маркетолог, performance-маркетинг, digital. "
+                "Работал с кампаниями и метриками, планирование."
+            ),
+            "ai_summary": "",
+        }
+    ]
+    out = score_resume_vs_vacancy(vacancy, resume_rows)
+    missing_joined = " ".join(out.get("missing") or []).lower()
+    for phrase in (
+        "анализ эффективности маркетинговых кампаний",
+        "маркетинговые метрики",
+        "маркетинговый анализ",
+        "планирование бюджета",
+    ):
+        assert phrase not in missing_joined
+    assert out.get("matchedSemantic") or out.get("semanticMatches")
+    assert out.get("semanticGrid", {}).get("clusterCount", 0) >= 3

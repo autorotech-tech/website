@@ -818,7 +818,8 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
             continue
         if title:
             source_titles.append(title[:120])
-        text_bits.append(f"{title} {plain[:2500]}")
+        # Keep enough full-text evidence for semantic grid (skills often only in body).
+        text_bits.append(f"{title} {plain[:8000]}")
         prof = _row_profile(row)
         skills.extend(prof.get("skills") or [])
         tools.extend(prof.get("tools") or [])
@@ -875,14 +876,14 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         "cover_snippets": cover_snippets[:3],
         "source_titles": list(dict.fromkeys(source_titles))[:24],
         "source_count": len(resume_rows),
-        "_text_blob": blob[:12000],
+        "_text_blob": blob[:24000],
     }
     # Authoritative RAG edits (job_profile_overrides) win over conflicting CV facts.
     if override_plains:
         rag_edits = "\n\n".join(override_plains)[:4000]
         profile["rag_edits"] = rag_edits
         for plain in override_plains:
-            ov = normalize_profile_overrides(plain)
+            ov = extract_contacts_from_rag_edits(plain) or normalize_profile_overrides(plain)
             if ov:
                 profile = apply_profile_overrides(profile, ov)
             free_lines = []
@@ -1367,6 +1368,7 @@ def score_resume_vs_vacancy(
         "missingSkills": skill_miss[:12],
         "missingTools": tool_miss[:12],
         "semanticMatches": semantic_matches[:16],
+        "matchedSemantic": semantic_matches[:16],
         "semanticGrid": {
             "fingerprint": grid.get("fingerprint"),
             "clusterCount": grid.get("clusterCount"),
@@ -1434,45 +1436,16 @@ def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optio
     return raw[: max(200, int(max_chars))]
 
 
-def normalize_profile_overrides(raw: Optional[Any]) -> Dict[str, str]:
-    """Normalize client profileOverrides into a flat key->value map."""
-    if not raw:
-        return {}
-    out: Dict[str, str] = {}
-    if isinstance(raw, str):
-        for chunk in re.split(r"[|\n]+", raw):
-            m = re.match(r"^\s*([^:]{1,40})\s*:\s*(.+?)\s*$", chunk)
-            if not m:
-                continue
-            key = m.group(1).strip().lower()
-            val = m.group(2).strip()
-            if key and val and len(key) <= 32 and len(val) <= 500:
-                out[key] = val
-        return out
-    if isinstance(raw, dict):
-        for k, v in raw.items():
-            key = str(k or "").strip().lower()
-            if not key or key.startswith("_"):
-                continue
-            if isinstance(v, (list, tuple)):
-                val = ", ".join(str(x).strip() for x in v if str(x).strip())
-            else:
-                val = str(v or "").strip()
-            if key and val and len(key) <= 40 and len(val) <= 500:
-                out[key[:40]] = val[:500]
-        return out
-    return {}
-
-
-def format_profile_overrides_block(overrides: Dict[str, str]) -> str:
-    if not overrides:
-        return ""
-    lines = [f"{k}: {v}" for k, v in overrides.items()]
-    return (
-        "Use these contact/profile overrides instead of conflicting RAG data:\n"
-        + "\n".join(lines)
-    )
-
+_EMAIL_EXTRACT_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_TG_HANDLE_EXTRACT_RE = re.compile(
+    r"(?:(?:https?://)?t\.me/|@)([A-Za-z0-9_]{4,64})",
+    re.I,
+)
+_TG_CONTEXT_RE = re.compile(
+    r"(?is)(?:telegram|телеграм|тг)\s*(?:в\s+базе)?\s*[:\-–—]?\s*(?:->|→)?\s*"
+    r"(?:https?://t\.me/|@)?([A-Za-z0-9_]{4,64})",
+)
+_URL_EXTRACT_RE = re.compile(r"https?://[^\s|>,\"']+")
 
 _TG_OVERRIDE_KEYS = ("telegram", "tg", "телеграм", "тг")
 _EMAIL_OVERRIDE_KEYS = ("email", "e-mail", "mail", "почта")
@@ -1489,6 +1462,171 @@ _LINK_OVERRIDE_KEYS = (
     "website",
     "site",
 )
+
+
+def _clean_override_value(val: str) -> str:
+    v = (val or "").strip()
+    v = re.sub(r"\s*(?:->|→)\s*$", "", v).strip()
+    v = v.strip(" ,;|")
+    return v[:500]
+
+
+def _canonical_override_key(key: str) -> str:
+    k = (key or "").strip().lower().replace("ё", "е")
+    if any(x in k for x in _TG_OVERRIDE_KEYS) or "telegram" in k or "телеграм" in k:
+        return "telegram"
+    if any(x in k for x in _EMAIL_OVERRIDE_KEYS) or "почт" in k:
+        return "email"
+    if any(x in k for x in _PHONE_OVERRIDE_KEYS):
+        return "phone"
+    for lk in _LINK_OVERRIDE_KEYS:
+        if lk in k:
+            return lk if lk in ("github", "linkedin", "portfolio", "website", "site") else "link"
+    return k[:40]
+
+
+def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
+    """Parse contacts from free-form RU/EN RAG edits (imperative lines OK)."""
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    out: Dict[str, str] = {}
+
+    # 1) key: value lines (also after remapping long Russian keys)
+    for chunk in re.split(r"[|\n]+", raw):
+        m = re.match(r"^\s*([^:]{1,80})\s*:\s*(.+?)\s*$", chunk)
+        if not m:
+            continue
+        key = _canonical_override_key(m.group(1))
+        val = _clean_override_value(m.group(2))
+        if not key or not val or key.startswith("_"):
+            continue
+        if key == "telegram":
+            hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(r"^([A-Za-z0-9_]{4,64})$", val.lstrip("@"))
+            if hm:
+                handle = hm.group(1) if hm.lastindex else hm.group(0)
+                out["telegram"] = f"@{str(handle).lstrip('@')}"
+            continue
+        if key == "email":
+            em = _EMAIL_EXTRACT_RE.search(val)
+            if em:
+                out["email"] = em.group(0)
+            continue
+        if len(key) <= 40 and len(val) <= 500:
+            out[key] = val
+
+    # 2) Free-form Telegram near Russian/English labels
+    if "telegram" not in out:
+        m = _TG_CONTEXT_RE.search(raw)
+        if m:
+            out["telegram"] = f"@{m.group(1).lstrip('@')}"
+        else:
+            # last resort: first @handle that is not an email local-part
+            for hm in _TG_HANDLE_EXTRACT_RE.finditer(raw):
+                handle = hm.group(1)
+                # skip if this @ is part of email
+                start = hm.start()
+                window = raw[max(0, start - 40) : hm.end() + 40]
+                if _EMAIL_EXTRACT_RE.search(window) and "@" + handle in window:
+                    # could be email; only skip if email contains this handle
+                    em = _EMAIL_EXTRACT_RE.search(window)
+                    if em and handle.lower() in em.group(0).lower():
+                        continue
+                if hm.group(0).startswith("http") or hm.group(0).startswith("@") or "t.me/" in hm.group(0).lower():
+                    out["telegram"] = f"@{handle}"
+                    break
+
+    # 3) Email anywhere
+    if "email" not in out:
+        em = _EMAIL_EXTRACT_RE.search(raw)
+        if em:
+            out["email"] = em.group(0)
+
+    # 4) Extra http(s) links (portfolio etc.)
+    if "link" not in out and "portfolio" not in out:
+        for um in _URL_EXTRACT_RE.finditer(raw):
+            url = um.group(0).rstrip(").,;")
+            if "t.me/" in url.lower() or url.lower().startswith("mailto:"):
+                continue
+            out.setdefault("link", url[:400])
+            break
+
+    return out
+
+
+def normalize_profile_overrides(raw: Optional[Any]) -> Dict[str, str]:
+    """Normalize client/DB profileOverrides into a flat key->value map.
+
+    Accepts dicts and free-form Russian/English text (Telegram/email/links).
+    """
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        return extract_contacts_from_rag_edits(raw)
+    if isinstance(raw, dict):
+        out: Dict[str, str] = {}
+        for k, v in raw.items():
+            key = _canonical_override_key(str(k or ""))
+            if not key or key.startswith("_"):
+                continue
+            if isinstance(v, (list, tuple)):
+                val = ", ".join(str(x).strip() for x in v if str(x).strip())
+            else:
+                val = str(v or "").strip()
+            val = _clean_override_value(val)
+            if not val:
+                continue
+            if key == "telegram":
+                hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(
+                    r"^@?([A-Za-z0-9_]{4,64})$", val
+                )
+                if hm:
+                    out["telegram"] = f"@{hm.group(1).lstrip('@')}"
+                continue
+            if key == "email":
+                em = _EMAIL_EXTRACT_RE.search(val)
+                if em:
+                    out["email"] = em.group(0)
+                continue
+            if len(key) <= 40 and len(val) <= 500:
+                out[key[:40]] = val[:500]
+        # Also mine freeform strings nested under raw/text keys
+        for extra_key in ("raw", "text", "edits", "rag_edits"):
+            bit = raw.get(extra_key)
+            if isinstance(bit, str) and bit.strip():
+                for ck, cv in extract_contacts_from_rag_edits(bit).items():
+                    out.setdefault(ck, cv)
+        return out
+    return {}
+
+
+def format_structured_overrides_document(raw_text: str, parsed: Dict[str, str]) -> str:
+    """Persist structured contacts + raw edits so merge/Gemini always see key:value."""
+    raw = (raw_text or "").strip()
+    lines = ["# Profile overrides (parsed - authoritative contacts)", ""]
+    if parsed:
+        for k in ("telegram", "email", "phone", "link", "portfolio", "github", "linkedin", "website"):
+            if parsed.get(k):
+                lines.append(f"{k}: {parsed[k]}")
+        for k, v in parsed.items():
+            if k in ("telegram", "email", "phone", "link", "portfolio", "github", "linkedin", "website"):
+                continue
+            lines.append(f"{k}: {v}")
+        lines.append("")
+    lines.append("# Raw edits")
+    lines.append(raw)
+    return "\n".join(lines).strip() + "\n"
+
+
+def format_profile_overrides_block(overrides: Dict[str, str]) -> str:
+    if not overrides:
+        return ""
+    lines = [f"{k}: {v}" for k, v in overrides.items()]
+    return (
+        "AUTHORITATIVE CONTACT/PROFILE OVERRIDES - use these contacts; "
+        "ignore older Telegram/email/phone from CV or File Search if they conflict:\n"
+        + "\n".join(lines)
+    )
 
 
 def apply_profile_overrides(merged: Dict[str, Any], overrides: Dict[str, str]) -> Dict[str, Any]:
@@ -1865,6 +2003,46 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         )
         return cur.fetchall()
 
+    def _fetch_profile_overrides_row(cur, workspace_id: int) -> Optional[Dict[str, Any]]:
+        oid = _find_profile_overrides_id(cur, workspace_id)
+        if not oid:
+            return None
+        cur.execute(
+            """
+            select
+              k.id,
+              k.source,
+              k.title,
+              k.url,
+              k.ai_summary,
+              k.category,
+              k.tags,
+              k.status,
+              k.note_path,
+              k.kind,
+              k.content_text,
+              null::float8 as distance,
+              k.updated_at
+            from public.knowledge_items k
+            where k.workspace_id = %s and k.id = %s
+            limit 1
+            """,
+            (workspace_id, oid),
+        )
+        return cur.fetchone()
+
+    def _ensure_overrides_in_rows(
+        cur, workspace_id: int, rows: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Always include job_profile_overrides even if user unchecked it."""
+        out = list(rows or [])
+        if any(_is_profile_overrides_row(r) for r in out):
+            return out
+        ov = _fetch_profile_overrides_row(cur, workspace_id)
+        if ov:
+            out.insert(0, ov)
+        return out
+
     def _resume_workspace_rows(cur, workspace_id: int, limit: int = SELECTED_SOURCES_MAX) -> List[Dict[str, Any]]:
         cur.execute(
             """
@@ -2135,14 +2313,19 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             (title or "").strip() or PROFILE_OVERRIDES_TITLE,
             1000,
         )
-        text_norm = sanitize_extracted_text(text or "").strip()
-        if len(text_norm) < 3:
+        raw_norm = sanitize_extracted_text(text or "").strip()
+        if len(raw_norm) < 3:
             raise HTTPException(status_code=422, detail="text too short (min 3 chars)")
+        parsed_contacts = extract_contacts_from_rag_edits(raw_norm)
+        text_norm = format_structured_overrides_document(raw_norm, parsed_contacts)
         profile = extract_resume_profile(
             text_norm,
             title=title_norm,
             category=PROFILE_OVERRIDES_CATEGORY,
         )
+        if parsed_contacts:
+            profile = apply_profile_overrides(profile, parsed_contacts)
+            profile["parsed_contacts"] = parsed_contacts
         content_text, ai_summary = wrap_content_with_profile(text_norm, profile)
         tags = profile_tags(
             profile,
@@ -2808,8 +2991,28 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 )
             conn.commit()
             ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
-            _queue_embed(background_tasks, kid, PROFILE_OVERRIDES_TITLE, text)
-            _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+            parsed_contacts = {}
+            if isinstance(profile, dict):
+                parsed_contacts = dict(profile.get("parsed_contacts") or {})
+                if not parsed_contacts:
+                    parsed_contacts = extract_contacts_from_rag_edits(text)
+            store_text = format_structured_overrides_document(text, parsed_contacts)
+            _queue_embed(background_tasks, kid, PROFILE_OVERRIDES_TITLE, store_text)
+            gemini_sync: Dict[str, Any] = {"queued": True, "ok": None}
+            # Prefer prompt injection on generate; still try a short sync so File Search catches up.
+            if jr_gemini_rag.is_enabled():
+                try:
+                    gemini_sync = jr_gemini_rag.sync_knowledge_item(
+                        pg_connect,
+                        workspace_id,
+                        kid,
+                        poll=True,
+                    )
+                    gemini_sync = {**dict(gemini_sync or {}), "queued": False, "awaited": True}
+                except Exception as exc:
+                    _LOG.warning("inline gemini sync after patch failed kid=%s: %s", kid, exc)
+                    _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+                    gemini_sync = {"queued": True, "ok": False, "error": str(exc), "awaited": False}
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -2817,10 +3020,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "category": PROFILE_OVERRIDES_CATEGORY,
                 "contentHash": content_hash,
                 "profile": profile,
+                "parsedContacts": parsed_contacts,
                 "replaced": replaced,
                 "merged": bool(ingest_meta.get("merged")),
                 "workspaceId": str(workspace_id),
-                "geminiSyncQueued": True,
+                "geminiSyncQueued": bool(gemini_sync.get("queued")),
+                "geminiSync": gemini_sync,
             }
         except HTTPException:
             conn.rollback()
@@ -3302,6 +3507,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
                 else:
                     rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
+                rows = _ensure_overrides_in_rows(cur, workspace_id, rows)
         finally:
             conn.close()
 
@@ -3412,6 +3618,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         raise HTTPException(status_code=422, detail="Selected sources were not found in your Resume RAG.")
                 else:
                     rag_rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
+                rag_rows = _ensure_overrides_in_rows(cur, workspace_id, rag_rows)
         finally:
             conn.close()
 
@@ -3424,10 +3631,19 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             merged_questions = list(payload.questions) + merged_questions
         normalized_questions = normalize_questions(merged_questions)
         prompt_extra = resolve_prompt_extra(payload.promptExtra, payload.customInstructions)
-        overrides = normalize_profile_overrides(payload.profileOverrides)
+        # ALWAYS inject latest DB overrides (Gemini File Search may lag; compact already has rag_edits).
+        db_overrides = extract_contacts_from_rag_edits(str(merged.get("rag_edits") or ""))
+        client_overrides = normalize_profile_overrides(payload.profileOverrides)
+        overrides = {**db_overrides, **client_overrides}
         if overrides:
             merged = apply_profile_overrides(merged, overrides)
             prompt_extra = inject_overrides_into_prompt_extra(prompt_extra, overrides)
+        elif str(merged.get("rag_edits") or "").strip():
+            # Free-form edits without parsed contacts - still force into prompt
+            prompt_extra = inject_overrides_into_prompt_extra(
+                prompt_extra,
+                {"rag_edits": str(merged.get("rag_edits") or "")[:1500]},
+            )
         # Aggressive compact on first try (not only on retry).
         profile_cap = COMPACT_PROFILE_CHARS
         cover_cap = COVER_TEMPLATE_CHARS

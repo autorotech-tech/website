@@ -25,28 +25,83 @@ const JR_DEFAULT_OPEN = new Set([
 ]);
 
 /**
- * Parse free-text overrides: "Telegram: @x | email: a@b | ссылка: https://…"
+ * Parse free-text overrides: "Telegram: @x | email: a@b" and free-form RU
+ * ("Поменяй контакты… Telegram: @autoro_tech").
  * @returns {Record<string, string>}
  */
 function parseProfileOverrides(text) {
   const out = {};
   const raw = String(text || '').trim();
   if (!raw) return out;
+
+  const canonKey = (key) => {
+    const k = String(key || '')
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, 'е');
+    if (/telegram|телеграм|\bтг\b|\btg\b/.test(k)) return 'telegram';
+    if (/email|e-mail|\bmail\b|почт/.test(k)) return 'email';
+    if (/phone|tel|телефон|мобильн/.test(k)) return 'phone';
+    if (/github/.test(k)) return 'github';
+    if (/linkedin/.test(k)) return 'linkedin';
+    if (/portfolio|портфолио|ссылка|website|сайт|\blink\b|\burl\b/.test(k)) return 'link';
+    return k.slice(0, 40);
+  };
+  const cleanVal = (v) =>
+    String(v || '')
+      .trim()
+      .replace(/\s*(?:->|→)\s*$/u, '')
+      .replace(/^[,;|\s]+|[,;|\s]+$/g, '')
+      .slice(0, 500);
+
   const chunks = raw.split(/[|\n]+/);
   for (const chunk of chunks) {
-    const m = String(chunk).match(/^\s*([^:]{1,40})\s*:\s*(.+?)\s*$/);
+    const m = String(chunk).match(/^\s*([^:]{1,80})\s*:\s*(.+?)\s*$/);
     if (!m) continue;
-    const key = m[1].trim().toLowerCase();
-    const val = m[2].trim();
+    const key = canonKey(m[1]);
+    let val = cleanVal(m[2]);
     if (!key || !val) continue;
-    // Skip long prose instructions that aren't contact overrides
-    if (key.length > 32 || val.length > 500) continue;
     if (/всегда включай|не выдумывай|переопределения пишите/i.test(key + ' ' + val) && val.length > 80) {
       continue;
     }
-    out[key] = val;
+    if (key === 'telegram') {
+      const hm = val.match(/(?:t\.me\/|@)([A-Za-z0-9_]{4,64})/i) || val.match(/^@?([A-Za-z0-9_]{4,64})$/);
+      if (hm) out.telegram = `@${String(hm[1]).replace(/^@/, '')}`;
+      continue;
+    }
+    if (key === 'email') {
+      const em = val.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+      if (em) out.email = em[0];
+      continue;
+    }
+    if (key.length <= 40 && val.length <= 500) out[key] = val;
+  }
+
+  if (!out.telegram) {
+    const tg =
+      raw.match(/(?:telegram|телеграм|тг)\s*(?:в\s+базе)?\s*[:\-–—]?\s*(?:->|→)?\s*(?:https?:\/\/t\.me\/|@)?([A-Za-z0-9_]{4,64})/i) ||
+      raw.match(/(?:https?:\/\/)?t\.me\/([A-Za-z0-9_]{4,64})/i) ||
+      raw.match(/(?:^|[\s|])@([A-Za-z0-9_]{4,64})\b/);
+    if (tg) out.telegram = `@${tg[1]}`;
+  }
+  if (!out.email) {
+    const em = raw.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+    if (em) out.email = em[0];
   }
   return out;
+}
+
+function formatParsedContactsPreview(contacts) {
+  if (!contacts || typeof contacts !== 'object') return '';
+  const bits = [];
+  for (const k of ['telegram', 'email', 'phone', 'link', 'github', 'linkedin', 'portfolio']) {
+    if (contacts[k]) bits.push(`${k}: ${contacts[k]}`);
+  }
+  for (const [k, v] of Object.entries(contacts)) {
+    if (['telegram', 'email', 'phone', 'link', 'github', 'linkedin', 'portfolio'].includes(k)) continue;
+    if (v) bits.push(`${k}: ${v}`);
+  }
+  return bits.join(' · ');
 }
 
 async function restoreCollapseState() {
@@ -434,7 +489,7 @@ function renderRelevance(data) {
   const matched = (data.matched || []).map((r) => `<li class="relevanceMatched">${escapeHtml(r)}</li>`).join('');
   const missing = (data.missing || []).map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
   const matchedJoined = (data.matched || []).join('\n');
-  const sem = (data.semanticMatches || [])
+  const sem = (data.semanticMatches || data.matchedSemantic || [])
     .slice(0, 8)
     .map((m) => {
       const label = m.label || m.skill || '';
@@ -649,7 +704,11 @@ async function runGenerate(mode) {
     await runRelevanceScore().catch(() => {});
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
     const promptExtra = String(promptExtraEl?.value || '').trim();
-    const profileOverrides = parseProfileOverrides(promptExtra);
+    const ragEditsText = String(ragEditsInput?.value || '').trim();
+    const profileOverrides = {
+      ...parseProfileOverrides(ragEditsText),
+      ...parseProfileOverrides(promptExtra),
+    };
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
@@ -1043,7 +1102,19 @@ if (saveRagEditsBtn) {
       const res = await JR_API.resumePatch({ text });
       const kid = res.knowledgeItemId;
       const action = res.replaced ? 'обновлены' : 'созданы';
-      const summary = `Правки RAG ${action} (id=${kid}). Gemini sync в очереди.`;
+      const parsed =
+        res.parsedContacts && typeof res.parsedContacts === 'object'
+          ? res.parsedContacts
+          : parseProfileOverrides(text);
+      const preview = formatParsedContactsPreview(parsed);
+      const syncNote = res.geminiSync?.awaited
+        ? res.geminiSync?.ok === false
+          ? ' Gemini sync: ошибка (overrides всё равно в prompt).'
+          : ' Gemini sync: ok.'
+        : ' Gemini sync в очереди.';
+      const summary = preview
+        ? `Правки RAG ${action} (id=${kid}). Сохранено: ${preview}.${syncNote}`
+        : `Правки RAG ${action} (id=${kid}).${syncNote}`;
       setSuccess(summary);
       setRagEditsMeta(summary);
       await refreshResumeStatus();
@@ -1052,6 +1123,10 @@ if (saveRagEditsBtn) {
         quiet: true,
       });
       showIngestBanner({ addedCount: 1, summary });
+      // Optional: refresh Gemini RAG status badge after patch sync
+      if (typeof refreshGeminiRagStatus === 'function') {
+        await refreshGeminiRagStatus().catch(() => {});
+      }
     } catch (err) {
       setError(String(err.message || err));
       setRagEditsMeta('');
