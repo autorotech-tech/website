@@ -213,6 +213,8 @@ def create_store(api_key: str, display_name: str) -> Tuple[Optional[str], str]:
 
 
 def ensure_store(pg_connect: Callable[[], Any], workspace_id: int) -> Tuple[Optional[str], str]:
+    import psycopg2.extras
+
     ensure_schema(pg_connect)
     api_key = _first_working_key()
     if not api_key:
@@ -220,7 +222,7 @@ def ensure_store(pg_connect: Callable[[], Any], workspace_id: int) -> Tuple[Opti
 
     conn = pg_connect()
     try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             row = _store_row(cur, workspace_id)
             if row and row.get("store_name"):
                 return str(row["store_name"]), "cached"
