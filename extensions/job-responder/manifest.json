@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Job Responder",
   "description": "Персонализированные отклики: парсинг любой страницы вакансии + Resume RAG (тестовый режим без login)",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs", "identity"],
   "host_permissions": [
     "http://*/*",

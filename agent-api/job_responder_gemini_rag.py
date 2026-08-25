@@ -559,6 +559,7 @@ def build_gemini_rag_user_prompt(
     host: str,
     questions: Optional[List[Any]],
     cover_template: str = "",
+    prompt_extra: str = "",
     host_labels: Optional[Dict[str, str]] = None,
 ) -> str:
     labels = host_labels or {}
@@ -583,7 +584,8 @@ def build_gemini_rag_user_prompt(
         f"SITE: {host_label}",
         f"VACANCY:\n{vacancy_block}",
         "RESUME CONTEXT: use File Search over the candidate documents in the bound store. "
-        "Do not invent facts not supported by retrieved documents.",
+        "Do not invent facts not supported by retrieved documents. "
+        "When present in retrieved docs, include contacts and relevant portfolio/links in the output.",
     ]
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:1200]}")
@@ -592,6 +594,9 @@ def build_gemini_rag_user_prompt(
 
         qlist = normalize_questions(questions if questions is not None else vacancy.questions)
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
+    extra = (prompt_extra or "").strip()
+    if extra:
+        parts.append(f"CUSTOM INSTRUCTIONS:\n{extra[:4000]}")
     return "\n\n".join(parts)
 
 

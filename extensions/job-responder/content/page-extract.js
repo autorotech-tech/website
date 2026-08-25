@@ -298,34 +298,34 @@
     };
   }
 
-  /** Tables with вопрос/question headers or 2-col Q|A layouts. */
+  /** Tables with явный вопрос/ответ header - not vacancy FAQ / filters. */
   function extractTableQuestions() {
     const questions = [];
     const seen = new Set();
     document.querySelectorAll('table').forEach((table, tIdx) => {
+      // skip tables inside nav/aside/footer or tiny filter widgets
+      if (table.closest('nav, aside, footer, [role="navigation"], [class*="filter"], [class*="sidebar"]')) {
+        return;
+      }
       const rows = Array.from(table.querySelectorAll('tr'));
-      if (rows.length < 2) return;
+      if (rows.length < 2 || rows.length > 60) return;
       const headerCells = Array.from(rows[0].querySelectorAll('th, td')).map(textOf);
       const headerJoin = headerCells.join(' ').toLowerCase();
       const looksLikeQa =
-        /вопрос|question|q\b/.test(headerJoin) ||
-        (/ответ|answer|a\b/.test(headerJoin) && headerCells.length >= 2);
+        (/вопрос|question/.test(headerJoin) && /ответ|answer/.test(headerJoin)) ||
+        (/^вопрос$/i.test(headerCells[0] || '') && headerCells.length >= 2);
 
-      const start = looksLikeQa ? 1 : 0;
-      for (let r = start; r < rows.length; r += 1) {
+      // Without clear Q/A headers do not treat random tables as application forms
+      if (!looksLikeQa) return;
+
+      for (let r = 1; r < rows.length; r += 1) {
         const cells = Array.from(rows[r].querySelectorAll('th, td')).map(textOf);
         if (!cells.length) continue;
-        let text = '';
-        if (looksLikeQa) {
-          const qIdx = headerCells.findIndex((h) => /вопрос|question|^q$/i.test(h));
-          text = cells[qIdx >= 0 ? qIdx : 0] || '';
-        } else if (cells.length >= 2 && cells[0].length >= 8 && cells[0].length <= 500) {
-          // Heuristic: first column looks like a question prompt
-          if (/[?？]|^(как|что|где|когда|почему|есть ли|укажите|расскажите|опишите|your |describe|tell )/i.test(cells[0])) {
-            text = cells[0];
-          }
-        }
-        if (!text) continue;
+        const qIdx = headerCells.findIndex((h) => /вопрос|question|^q$/i.test(h));
+        const text = cells[qIdx >= 0 ? qIdx : 0] || '';
+        if (!text || isVacancyMetaFaq(text)) continue;
+        // Skip answer-only / empty prompt rows
+        if (text.length < 8 || text.length > 800) continue;
         pushQuestion(questions, seen, {
           id: `t${tIdx}_${r}`,
           text,
@@ -337,20 +337,262 @@
     return questions.slice(0, 40);
   }
 
+  /**
+   * HH employer questionnaire on /applicant/vacancy_response (and response popup).
+   * Real markup (hh Lux/Magritte): [data-qa="task-question"] + inputs name="task_<id>" / task_<id>_text.
+   * Do NOT scrape vacancy FAQ / chat quick-replies ("Где располагается место работы?").
+   */
+  function isHhVacancyResponsePage() {
+    if (!isHhPage()) return false;
+    const path = String(location.pathname || '');
+    return /\/applicant\/vacancy_response/i.test(path);
+  }
+
+  function cleanTaskQuestionText(raw) {
+    return stripHtml(raw)
+      .replace(/\u200b/g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\bписать тут\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  function isCoverLetterPrompt(text) {
+    const t = String(text || '').toLowerCase();
+    return /сопровод|cover\s*letter|письмо к отклику|письмо работодателя/.test(t) && t.length < 80;
+  }
+
+  function collectTaskOptionLabels(inputs) {
+    const options = [];
+    (inputs || []).forEach((r) => {
+      const label = r.closest('label') || r.closest('[class*="magritte"]') || r.parentElement;
+      let opt =
+        textOf(label?.querySelector('[data-qa="task-option-text"], [data-qa*="option-text"], .task-option-text')) ||
+        textOf(label);
+      opt = cleanTaskQuestionText(opt);
+      if (!opt || opt.length > 200) return;
+      if (/^писать тут$/i.test(opt) || isVacancyMetaFaq(opt)) return;
+      if (!options.includes(opt)) options.push(opt);
+    });
+    return options;
+  }
+
+  function findTaskQuestionText(taskId, index, titleEls) {
+    const radios = document.querySelectorAll(`input[type="radio"][name="task_${taskId}"]`);
+    const checks = document.querySelectorAll(`input[type="checkbox"][name="task_${taskId}"]`);
+    const textEl =
+      document.querySelector(`[name="task_${taskId}_text"]`) ||
+      document.querySelector(`textarea[name="task_${taskId}"]`);
+    const anchor = radios[0] || checks[0] || textEl;
+    if (anchor) {
+      const block =
+        anchor.closest('[data-qa*="task"]') ||
+        anchor.closest('.bloko-form-item') ||
+        anchor.closest('fieldset') ||
+        anchor.closest('[class*="FormItem"]') ||
+        anchor.closest('form > div') ||
+        anchor.parentElement;
+      const tq =
+        block?.querySelector('[data-qa="task-question"]') ||
+        block?.querySelector('[data-qa*="task-question"]') ||
+        block?.querySelector('legend') ||
+        block?.querySelector('h2, h3, h4') ||
+        block?.querySelector('label');
+      const fromBlock = cleanTaskQuestionText(textOf(tq));
+      if (fromBlock && fromBlock.length >= 4) return fromBlock;
+    }
+    if (titleEls[index]) {
+      const fromTitle = cleanTaskQuestionText(textOf(titleEls[index]));
+      if (fromTitle && fromTitle.length >= 4) return fromTitle;
+    }
+    // aria-label / placeholder on textarea as last resort (often empty or "Писать тут")
+    if (textEl) {
+      const aria = cleanTaskQuestionText(
+        textEl.getAttribute('aria-label') || textEl.getAttribute('placeholder') || ''
+      );
+      if (aria && aria.length >= 8 && !/^писать тут$/i.test(aria)) return aria;
+    }
+    return '';
+  }
+
+  function extractHhEmployerTasks() {
+    const questions = [];
+    const seen = new Set();
+    const ids = [];
+    document.querySelectorAll('[name^="task_"]').forEach((el) => {
+      const m = String(el.getAttribute('name') || '').match(/^task_(\d+)/);
+      if (m && !ids.includes(m[1])) ids.push(m[1]);
+    });
+
+    const titleEls = Array.from(
+      document.querySelectorAll(
+        '[data-qa="task-question"], [data-qa*="task-question"], [class*="task-question"]'
+      )
+    );
+
+    ids.forEach((id, i) => {
+      const radios = Array.from(
+        document.querySelectorAll(`input[type="radio"][name="task_${id}"]`)
+      );
+      const checks = Array.from(
+        document.querySelectorAll(`input[type="checkbox"][name="task_${id}"]`)
+      );
+      const textEl =
+        document.querySelector(`[name="task_${id}_text"]`) ||
+        document.querySelector(`textarea[name="task_${id}"]`);
+
+      let qText = findTaskQuestionText(id, i, titleEls);
+      if (!qText || isVacancyMetaFaq(qText) || isCoverLetterPrompt(qText)) return;
+
+      let type = 'text';
+      let options = [];
+      if (radios.length) {
+        type = 'multiple_choice';
+        options = collectTaskOptionLabels(radios);
+      } else if (checks.length) {
+        type = 'checkboxes';
+        options = collectTaskOptionLabels(checks);
+      } else if (textEl && String(textEl.tagName || '').toLowerCase() === 'textarea') {
+        type = 'paragraph';
+      }
+
+      pushQuestion(questions, seen, {
+        id: `task_${id}`,
+        text: qText.slice(0, 4000),
+        type,
+        options,
+      });
+    });
+
+    // Fallback: title nodes without matching task_* (rare Magritte layouts)
+    if (!questions.length && titleEls.length) {
+      titleEls.forEach((el, i) => {
+        const qText = cleanTaskQuestionText(textOf(el));
+        if (!qText || qText.length < 4 || isVacancyMetaFaq(qText) || isCoverLetterPrompt(qText)) return;
+        const block = el.closest('.bloko-form-item, [data-qa*="task"], fieldset, form > div') || el.parentElement;
+        const hasInput = block?.querySelector('textarea, input[type="text"], input[type="radio"], input[type="checkbox"]');
+        if (!hasInput) return;
+        pushQuestion(questions, seen, {
+          id: `hh_q_${i + 1}`,
+          text: qText.slice(0, 4000),
+          type: block.querySelector('textarea') ? 'paragraph' : 'text',
+          options: [],
+        });
+      });
+    }
+
+    // Last resort on vacancy_response: textareas in main form with nearby labels
+    if (!questions.length && isHhVacancyResponsePage()) {
+      const form =
+        document.querySelector('[data-qa*="vacancy-response"]') ||
+        document.querySelector('main form, form') ||
+        document.querySelector('main');
+      if (form) {
+        form.querySelectorAll('textarea').forEach((ta, i) => {
+          const name = String(ta.getAttribute('name') || '');
+          if (/letter|сопровод/i.test(name)) return;
+          const qa = String(ta.getAttribute('data-qa') || '');
+          if (/letter/i.test(qa)) return;
+          if (ta.closest('aside, nav, footer, [class*="sidebar"], [class*="chat"]')) return;
+          const block = ta.closest('.bloko-form-item, fieldset, [class*="FormItem"], label') || ta.parentElement;
+          let qText = cleanTaskQuestionText(
+            textOf(
+              block?.querySelector('[data-qa="task-question"], [data-qa*="task-question"], legend, label, h2, h3')
+            )
+          );
+          if (!qText) {
+            const prev = ta.previousElementSibling;
+            qText = cleanTaskQuestionText(textOf(prev));
+          }
+          if (!qText || qText.length < 8 || isVacancyMetaFaq(qText) || isCoverLetterPrompt(qText)) return;
+          pushQuestion(questions, seen, {
+            id: name || `hh_ta_${i + 1}`,
+            text: qText.slice(0, 4000),
+            type: 'paragraph',
+            options: [],
+          });
+        });
+      }
+    }
+
+    return questions.slice(0, 40);
+  }
+
+  /**
+   * HH questions: employer tasks on vacancy_response / open form only.
+   * Never scrape generic labels or vacancy FAQ widgets.
+   */
   function extractHhQuestions() {
+    if (
+      isHhVacancyResponsePage() ||
+      document.querySelector('[name^="task_"], [data-qa="task-question"], [data-qa*="task-question"]')
+    ) {
+      return extractHhEmployerTasks();
+    }
+
+    // Popup response form on vacancy page (modal) - field blocks only
     const questions = [];
     const seen = new Set();
     const blocks = document.querySelectorAll(
-      '[data-qa="vacancy-response-popup-form-field"], .vacancy-response-popup-form-field, label, legend'
+      [
+        '[data-qa="vacancy-response-popup-form-field"]',
+        '.vacancy-response-popup-form-field',
+        '[data-qa="vacancy-response-popup-form"] [data-qa="task-question"]',
+        '[role="dialog"] [data-qa="task-question"]',
+        '[role="dialog"] [name^="task_"]',
+      ].join(', ')
     );
-    blocks.forEach((block) => {
-      const label = textOf(block.querySelector('[data-qa="label"], .label, label, span'));
-      const q = label || textOf(block);
-      if (q && q.length > 3 && q.length < 500) {
-        pushQuestion(questions, seen, { text: q, type: 'text', options: [] });
-      }
+    if (!blocks.length) return [];
+
+    // If dialog has task_* - use employer task extractor scoped to dialog
+    if (document.querySelector('[role="dialog"] [name^="task_"], [data-qa="vacancy-response-popup-form"] [name^="task_"]')) {
+      return extractHhEmployerTasks();
+    }
+
+    blocks.forEach((block, idx) => {
+      if (block.matches('[name^="task_"]')) return;
+      const label = textOf(block.querySelector('[data-qa="label"], [data-qa="task-question"], .label, label, span'));
+      const q = cleanTaskQuestionText(label || textOf(block));
+      if (!q || q.length < 8 || q.length > 500) return;
+      if (isVacancyMetaFaq(q) || isCoverLetterPrompt(q)) return;
+      pushQuestion(questions, seen, { id: `popup_${idx + 1}`, text: q, type: 'text', options: [] });
     });
     return questions.slice(0, 20);
+  }
+
+  /** Vacancy page FAQ / meta widgets / chat quick-replies - not real application questions. */
+  function isVacancyMetaFaq(text) {
+    const t = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!t) return true;
+    const metaFaq = [
+      /^где располагается место работы\??$/,
+      /^где находится место работы\??$/,
+      /^какой график работы\??$/,
+      /^вакансия открыта\??$/,
+      /^какая оплата труда\??$/,
+      /^какая схема оплаты\??$/,
+      /^как с вами связаться\??$/,
+      /^другой вопрос$/,
+      /^задать вопрос$/,
+      /^спросить у работодателя$/,
+      /^есть ли вопросы\??$/,
+      /^уровень дохода не указан$/,
+      /^где находится/,
+      /^какой адрес/,
+      /^когда откликаться/,
+      /^what is the (salary|location|schedule)/,
+      /^is (this|the) (job|position|vacancy) (still )?open/,
+      /^where (is|are) (the )?(office|workplace|job)/,
+    ];
+    if (metaFaq.some((re) => re.test(t))) return true;
+    if (
+      /^(где|какой|какая|какие|когда|вакансия)\b/.test(t) &&
+      /(место работы|график|оплат|открыта|зарплат|локаци|адрес офиса|схема оплаты)/.test(t) &&
+      t.length < 80
+    ) {
+      return true;
+    }
+    return false;
   }
 
   function siteSpecificSelectors() {
@@ -573,29 +815,51 @@
     }
 
     const host = detectHost(location.hostname);
+    const isResponsePage = isHhVacancyResponsePage();
     const title = extractTitle();
     const company = extractCompany();
     const description = extractMainText();
+    // Only real application Q&A: HH employer tasks (vacancy_response / popup) OR clear Q|A tables.
+    // Do NOT scrape vacancy FAQ widgets ("Где располагается место работы?" etc.).
     const hhQs = isHhPage() ? extractHhQuestions() : [];
-    const tableQs = extractTableQuestions();
+    const tableQs = isResponsePage ? [] : extractTableQuestions().filter((q) => !isVacancyMetaFaq(q.text));
     const questions = [];
     const seen = new Set();
     for (const q of [...hhQs, ...tableQs]) {
+      if (isVacancyMetaFaq(q.text)) continue;
       pushQuestion(questions, seen, q);
     }
     const structured = extractStructured(description);
     const knownSite = JOB_SITE_HINTS.some((s) => siteHost() === s || siteHost().endsWith('.' + s));
-    const pageKind = tableQs.length && !isHhPage() ? 'table_qa' : knownSite ? 'job_board' : 'page';
+    let pageKind = 'page';
+    if (isResponsePage) pageKind = 'hh_vacancy_response';
+    else if (questions.length && tableQs.length && !isHhPage()) pageKind = 'table_qa';
+    else if (knownSite || isHhPage()) pageKind = 'job_board';
+
+    const source = isResponsePage
+      ? 'hh_vacancy_response'
+      : isHhPage()
+        ? 'hh'
+        : pageKind === 'table_qa'
+          ? 'table_qa'
+          : knownSite
+            ? 'job_board'
+            : 'page';
 
     return {
       url: location.href,
       title: title || document.title || 'Vacancy',
       company,
-      description,
+      description:
+        description ||
+        (questions.length
+          ? `Вопросы работодателя (${questions.length}):\n` +
+            questions.map((q, i) => `${i + 1}. ${q.text}`).join('\n')
+          : ''),
       questions,
       structured,
       host,
-      source: isHhPage() ? 'hh' : pageKind === 'table_qa' ? 'table_qa' : knownSite ? 'job_board' : 'page',
+      source,
       siteHost: siteHost(),
       pageKind,
     };

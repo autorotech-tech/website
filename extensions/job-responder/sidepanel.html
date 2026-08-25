@@ -106,6 +106,21 @@
     <section class="card">
       <h2>Генерация</h2>
       <label class="field">
+        <span>Инструкция для генерации (промпт)</span>
+        <textarea
+          id="promptExtra"
+          rows="4"
+          placeholder="Контакты, ссылки, тон, что обязательно включить в ответ…"
+        ></textarea>
+        <div class="row tight">
+          <button type="button" id="resetPromptBtn" class="secondary">Сбросить промпт</button>
+        </div>
+        <p class="hint">
+          Доп. инструкция к системному промпту (RAG / compact). Сохраняется в chrome.storage
+          (jrPromptExtra). По умолчанию: включать контакты и ссылки из профиля.
+        </p>
+      </label>
+      <label class="field">
         <span>Моё сопроводительное (шаблон)</span>
         <textarea
           id="coverTemplate"

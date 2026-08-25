@@ -237,8 +237,16 @@ def normalize_questions(raw: Optional[List[Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def parse_answers_json(raw: str) -> Optional[List[Dict[str, str]]]:
-    """Parse LLM Q&A JSON; tolerate markdown fences and leading prose."""
+def parse_answers_json(
+    raw: str,
+    *,
+    expected_questions: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[List[Dict[str, str]]]:
+    """Parse LLM Q&A JSON; tolerate markdown fences and leading prose.
+
+    Backfill empty `question` fields from expected_questions by index so the
+    side panel never shows blank «Q:».
+    """
     text = (raw or "").strip()
     if not text:
         return None
@@ -258,15 +266,29 @@ def parse_answers_json(raw: str) -> Optional[List[Dict[str, str]]]:
             return None
     if not isinstance(parsed, list):
         return None
+    expected = list(expected_questions or [])
     out: List[Dict[str, str]] = []
-    for item in parsed:
+    for idx, item in enumerate(parsed):
         if not isinstance(item, dict):
             continue
         q = str(item.get("question") or item.get("q") or item.get("text") or "").strip()
         a = hh_format_text(str(item.get("answer") or item.get("a") or "").strip())
+        if not q and idx < len(expected):
+            q = str(expected[idx].get("text") or expected[idx].get("question") or "").strip()
         if not q and not a:
             continue
         out.append({"question": q, "answer": a})
+    # If LLM returned fewer answers than questions, pad with empty answers
+    if expected and len(out) < len(expected):
+        have = {str(x.get("question") or "").strip().lower() for x in out}
+        for eq in expected:
+            et = str(eq.get("text") or eq.get("question") or "").strip()
+            if not et:
+                continue
+            if et.lower() in have:
+                continue
+            out.append({"question": et, "answer": ""})
+            have.add(et.lower())
     return out or None
 
 
@@ -345,6 +367,9 @@ class JobResponderGeneratePayload(BaseModel):
     # User's own cover letter to adapt (not write from scratch). Alias: baseLetter.
     coverTemplate: Optional[str] = Field(default=None, max_length=20000)
     baseLetter: Optional[str] = Field(default=None, max_length=20000)
+    # Extra generation instructions from side panel (contacts, links, tone, etc.)
+    promptExtra: Optional[str] = Field(default=None, max_length=8000)
+    customInstructions: Optional[str] = Field(default=None, max_length=8000)
     # Prefer Gemini File Search RAG when JOB_RESPONDER_GEMINI_RAG=1 and store ready
     useGeminiRag: Optional[bool] = None
 
@@ -1259,18 +1284,42 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
-    base = """Ты помощник кандидата при отклике на вакансии.
+CONTACTS_LINKS_RULE = (
+    "Всегда включай в текст отклика / ответов контакты и релевантные ссылки "
+    "из профиля / RESUME CONTEXT / File Search (email, Telegram, телефон, портфолио, "
+    "GitHub, LinkedIn, сайт и др.), если они есть. Не выдумывай контакты и URL."
+)
+
+
+def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optional[str], *, max_chars: int = 4000) -> str:
+    raw = (prompt_extra or custom_instructions or "").strip()
+    if not raw:
+        return ""
+    return raw[: max(200, int(max_chars))]
+
+
+def build_system_prompt(
+    mode: str,
+    *,
+    has_cover_template: bool = False,
+    prompt_extra: str = "",
+) -> str:
+    base = f"""Ты помощник кандидата при отклике на вакансии.
 
 Правила:
 - Пиши от первого лица кандидата.
-- Используй ТОЛЬКО факты из блока RESUME CONTEXT. Если факта нет - не выдумывай.
+- Используй ТОЛЬКО факты из блока RESUME CONTEXT (или File Search документов). Если факта нет - не выдумывай.
 - Без AI-slop: без "страстно увлечен", "синергия", "динамичная команда", "уникальная возможность".
 - Формат HH: короткое тире "-", стрелки "->", кавычки ASCII ".
 - Язык: русский (если вакансия явно на другом языке - можно на языке вакансии).
 - Не используй markdown-заголовки и списки с буллетами - plain text для поля HH.
 - Учитывай STRUCTURED VACANCY (формат, занятость, навыки) если они есть.
+- {CONTACTS_LINKS_RULE}
 """
+    extra = (prompt_extra or "").strip()
+    if extra:
+        base += f"\nДОП. ИНСТРУКЦИЯ ОТ КАНДИДАТА:\n{extra}\n"
+
     if mode == "question_answers":
         return (
             base
@@ -1279,8 +1328,10 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
 Верни ТОЛЬКО валидный JSON-массив:
 [{"question":"...","answer":"..."}]
 По одному объекту на каждый вопрос из списка QUESTIONS.
+Поле "question" ОБЯЗАТЕЛЬНО: скопируй текст вопроса из QUESTIONS ДОСЛОВНО (не оставляй пустым).
 Если у вопроса есть options - выбери подходящий вариант или кратко обоснуй выбор.
-Ответы 1-4 предложения, конкретно по RESUME CONTEXT."""
+Ответы 1-4 предложения, конкретно по RESUME CONTEXT.
+В ответах при уместности укажи контакты / ссылки из профиля."""
         )
     if has_cover_template:
         return (
@@ -1292,6 +1343,7 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
 - сохрани голос, тон и структуру автора;
 - подставь/уточни факты под требования вакансии (только из RESUME CONTEXT);
 - убери нерелевантное, усили совпадения с вакансией;
+- добавь контакты и релевантные ссылки из профиля, если их ещё нет в шаблоне;
 - длина ориентировочно как у шаблона (или 800-1400 символов).
 Верни ТОЛЬКО текст письма, без пояснений."""
         )
@@ -1300,7 +1352,7 @@ def build_system_prompt(mode: str, *, has_cover_template: bool = False) -> str:
         + """
 Режим: сопроводительное письмо (cover letter).
 Длина: 800-1400 символов.
-Структура: приветствие -> 1-2 релевантных кейса под требования -> стек/формат -> CTA -> имя (если есть в RESUME CONTEXT).
+Структура: приветствие -> 1-2 релевантных кейса под требования -> стек/формат -> контакты/ссылки (если есть в профиле) -> CTA -> имя (если есть в RESUME CONTEXT).
 Верни ТОЛЬКО текст письма, без пояснений."""
     )
 
@@ -1312,6 +1364,7 @@ def build_user_prompt(
     host: str,
     questions: Optional[List[Any]] = None,
     cover_template: str = "",
+    prompt_extra: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
     resume_context = (compact_profile_text or "").strip() or "(empty - do not invent facts)"
@@ -1341,6 +1394,9 @@ def build_user_prompt(
     if mode == "question_answers":
         qlist = normalize_questions(questions if questions is not None else vacancy.questions)
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
+    extra = (prompt_extra or "").strip()
+    if extra:
+        parts.append(f"CUSTOM INSTRUCTIONS:\n{extra}")
     return "\n\n".join(parts)
 
 
@@ -2907,6 +2963,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         if payload.questions:
             merged_questions = list(payload.questions) + merged_questions
         normalized_questions = normalize_questions(merged_questions)
+        prompt_extra = resolve_prompt_extra(payload.promptExtra, payload.customInstructions)
         # Aggressive compact on first try (not only on retry).
         profile_cap = COMPACT_PROFILE_CHARS
         cover_cap = COVER_TEMPLATE_CHARS
@@ -2929,13 +2986,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 payload.coverTemplate, payload.baseLetter, max_chars=cover_cap
             )
             has_template = bool(cover_template_rag) and mode == "cover_letter"
-            system_prompt_rag = build_system_prompt(mode, has_cover_template=has_template)
+            system_prompt_rag = build_system_prompt(
+                mode, has_cover_template=has_template, prompt_extra=prompt_extra
+            )
             user_prompt_rag = jr_gemini_rag.build_gemini_rag_user_prompt(
                 payload.vacancy,
                 mode,
                 payload.host,
                 normalized_questions,
                 cover_template=cover_template_rag if has_template else "",
+                prompt_extra=prompt_extra,
                 host_labels=HOST_LABELS,
             )
             remaining_rag = deadline - time.monotonic()
@@ -2979,7 +3039,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             )
             has_template = bool(cover_template) and mode == "cover_letter"
             compact_text = format_compact_profile(merged, max_chars=profile_max)
-            system_prompt = build_system_prompt(mode, has_cover_template=has_template)
+            system_prompt = build_system_prompt(
+                mode, has_cover_template=has_template, prompt_extra=prompt_extra
+            )
             user_prompt = build_user_prompt(
                 payload.vacancy,
                 compact_text,
@@ -2987,6 +3049,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 payload.host,
                 normalized_questions,
                 cover_template=cover_template if has_template else "",
+                prompt_extra=prompt_extra,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -3130,14 +3193,24 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         answers = None
         if mode == "question_answers":
-            parsed = parse_answers_json(raw_text)
+            parsed = parse_answers_json(raw_text, expected_questions=normalized_questions)
             if parsed:
                 answers = parsed
                 raw_text = "\n\n".join(
                     f"Q: {a.get('question', '')}\nA: {a.get('answer', '')}" for a in parsed
                 )
             else:
-                raw_text = hh_format_text(raw_text)
+                # Fallback: keep question texts even if JSON parse failed
+                if normalized_questions:
+                    answers = [
+                        {"question": str(q.get("text") or ""), "answer": hh_format_text(raw_text) if i == 0 else ""}
+                        for i, q in enumerate(normalized_questions)
+                    ]
+                    raw_text = "\n\n".join(
+                        f"Q: {a['question']}\nA: {a['answer'] or '—'}" for a in answers
+                    )
+                else:
+                    raw_text = hh_format_text(raw_text)
         else:
             raw_text = hh_format_text(raw_text)
 

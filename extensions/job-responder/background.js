@@ -43,6 +43,33 @@ function extractFromTab(tabId, sendResponse) {
   });
 }
 
+/** Notify side panel that the active tab navigated - clear stale Q&A. */
+function broadcastActiveTabUrl(tabId, url) {
+  if (!canInjectIntoUrl(url)) return;
+  chrome.runtime
+    .sendMessage({
+      type: 'JR_TAB_NAVIGATED',
+      tabId,
+      url: String(url || ''),
+    })
+    .catch(() => {});
+}
+
+chrome.tabs.onActivated.addListener((info) => {
+  chrome.tabs.get(info.tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    broadcastActiveTabUrl(tab.id, tab.url);
+  });
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!changeInfo.url && changeInfo.status !== 'complete') return;
+  if (!tab?.active) return;
+  const url = changeInfo.url || tab.url;
+  if (!url) return;
+  broadcastActiveTabUrl(tabId, url);
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'JR_GET_VACANCY') return false;
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

@@ -4,6 +4,13 @@ let lastAddedSourceIds = new Set();
 let lastAddedAt = null;
 let lastIngestSummary = '';
 let geminiRagReady = false;
+let lastTabUrl = '';
+
+/** Default generation instruction - contacts + links from RAG profile. */
+const DEFAULT_PROMPT_EXTRA =
+  'Всегда включай в текст отклика / ответов контакты и релевантные ссылки из профиля ' +
+  '(email, Telegram, телефон, портфолио, GitHub, LinkedIn, сайт и др.), если они есть в Resume RAG / File Search. ' +
+  'Не выдумывай контакты и URL. Если в шаблоне письма уже есть контакты - сохрани их.';
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
@@ -366,6 +373,14 @@ function renderRelevance(data) {
   `;
 }
 
+function clearQaState() {
+  window.__jrQaRows = [];
+  renderQaTable([]);
+  if (currentVacancy) {
+    currentVacancy = { ...currentVacancy, questions: [] };
+  }
+}
+
 function applyVacancy(vacancy) {
   currentVacancy = vacancy;
   const host = vacancy.host || 'web';
@@ -373,32 +388,46 @@ function applyVacancy(vacancy) {
   const kind =
     vacancy.source === 'google_form' || vacancy.pageKind === 'google_form'
       ? ' · Google Form'
-      : vacancy.source === 'table_qa'
-        ? ' · таблица Q&A'
-        : '';
+      : vacancy.source === 'hh_vacancy_response' || vacancy.pageKind === 'hh_vacancy_response'
+        ? ' · HH вопросы работодателя'
+        : vacancy.source === 'table_qa'
+          ? ' · таблица Q&A'
+          : '';
   vacancyMeta.textContent = `${vacancy.title || '-'} | ${vacancy.company || '-'} | ${host}${site}${kind}`;
   if (vacancy.description) vacancyDescription.value = vacancy.description;
   renderStructured(vacancy.structured);
   renderRelevance(null);
   const qs = normalizeQuestionList(vacancy.questions);
-  renderQaTable(qs.map((q) => ({ question: q.text, answer: '' })));
+  // Always reset Q&A block: hide when empty (no stale FAQ across navigations)
+  if (!qs.length) {
+    clearQaState();
+    currentVacancy = { ...vacancy, questions: [] };
+  } else {
+    renderQaTable(qs.map((q) => ({ question: q.text, answer: '' })));
+  }
 }
 
 async function refreshVacancyFromTab() {
   setError('');
   try {
     const vacancy = await JR_API.fetchVacancyFromTab();
+    lastTabUrl = String(vacancy.url || '');
     applyVacancy(vacancy);
     const qn = normalizeQuestionList(vacancy.questions).length;
     setSuccess(
       vacancy.source === 'google_form'
         ? `Google Form прочитана (${qn} вопросов)`
-        : qn
-          ? `Страница прочитана (${qn} вопросов)`
-          : 'Страница прочитана'
+        : vacancy.source === 'hh_vacancy_response' || vacancy.pageKind === 'hh_vacancy_response'
+          ? qn
+            ? `Страница отклика HH: ${qn} вопрос(ов) работодателя`
+            : 'Страница отклика HH: вопросы не найдены (проверьте форму task-question)'
+          : qn
+            ? `Страница прочитана (${qn} вопросов)`
+            : 'Страница прочитана'
     );
     await runRelevanceScore().catch(() => {});
   } catch (err) {
+    clearQaState();
     setError(String(err.message || err));
   }
 }
@@ -536,8 +565,12 @@ async function runGenerate(mode) {
   try {
     await runRelevanceScore().catch(() => {});
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
+    const promptExtra = String(promptExtraEl?.value || '').trim();
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
+    }
+    if (promptExtraEl) {
+      await chrome.storage.local.set({ jrPromptExtra: promptExtra });
     }
     const data = await JR_API.generateResponse({
       mode: isQa ? 'qa' : 'cover_letter',
@@ -545,17 +578,21 @@ async function runGenerate(mode) {
       vacancy,
       selectedSourceIds: getSelectedSourceIds(),
       coverTemplate: !isQa ? coverTemplate : undefined,
+      promptExtra,
       useGeminiRag: geminiRagReady,
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
     if (Array.isArray(data.answers) && data.answers.length) {
-      renderQaTable(
-        data.answers.map((a) => ({
-          question: a.question || a.text || '',
+      const mapped = data.answers.map((a, i) => {
+        let question = String(a.question || a.text || '').trim();
+        if (!question && vacancy.questions[i]) question = vacancy.questions[i].text || '';
+        return {
+          question,
           answer: a.answer || '',
-        }))
-      );
+        };
+      });
+      renderQaTable(mapped);
     } else if (isQa && vacancy.questions.length) {
       // Fallback: keep questions visible even if JSON parse failed
       renderQaTable(vacancy.questions.map((q) => ({ question: q.text, answer: letter || '' })));
@@ -612,6 +649,8 @@ const portfolioFileHint = document.getElementById('portfolioFileHint');
 const ragTextInput = document.getElementById('ragTextInput');
 const ragTextTitle = document.getElementById('ragTextTitle');
 const coverTemplateEl = document.getElementById('coverTemplate');
+const promptExtraEl = document.getElementById('promptExtra');
+const resetPromptBtn = document.getElementById('resetPromptBtn');
 const coverFromRagBtn = document.getElementById('coverFromRagBtn');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
@@ -1107,6 +1146,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.jrCoverTemplate && coverTemplateEl && document.activeElement !== coverTemplateEl) {
     coverTemplateEl.value = String(changes.jrCoverTemplate.newValue || '');
   }
+  if (changes.jrPromptExtra && promptExtraEl && document.activeElement !== promptExtraEl) {
+    promptExtraEl.value = String(changes.jrPromptExtra.newValue || DEFAULT_PROMPT_EXTRA);
+  }
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== 'JR_TAB_NAVIGATED') return;
+  const url = String(message.url || '');
+  if (!url || url === lastTabUrl) return;
+  lastTabUrl = url;
+  // Clear stale form Q&A immediately, then re-extract from the new page
+  clearQaState();
+  refreshVacancyFromTab().catch(() => {});
 });
 
 let coverTemplateSaveTimer = null;
@@ -1116,6 +1168,24 @@ if (coverTemplateEl) {
     coverTemplateSaveTimer = setTimeout(() => {
       chrome.storage.local.set({ jrCoverTemplate: String(coverTemplateEl.value || '') });
     }, 400);
+  });
+}
+
+let promptExtraSaveTimer = null;
+if (promptExtraEl) {
+  promptExtraEl.addEventListener('input', () => {
+    clearTimeout(promptExtraSaveTimer);
+    promptExtraSaveTimer = setTimeout(() => {
+      chrome.storage.local.set({ jrPromptExtra: String(promptExtraEl.value || '') });
+    }, 400);
+  });
+}
+
+if (resetPromptBtn) {
+  resetPromptBtn.addEventListener('click', async () => {
+    if (promptExtraEl) promptExtraEl.value = DEFAULT_PROMPT_EXTRA;
+    await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
+    setSuccess('Промпт сброшен к значению по умолчанию (контакты + ссылки)');
   });
 }
 
@@ -1144,9 +1214,18 @@ if (coverFromRagBtn) {
 
 (async function init() {
   try {
-    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate']);
+    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra']);
     if (coverTemplateEl && savedTpl.jrCoverTemplate) {
       coverTemplateEl.value = String(savedTpl.jrCoverTemplate);
+    }
+    if (promptExtraEl) {
+      promptExtraEl.value =
+        savedTpl.jrPromptExtra != null && String(savedTpl.jrPromptExtra).length
+          ? String(savedTpl.jrPromptExtra)
+          : DEFAULT_PROMPT_EXTRA;
+      if (savedTpl.jrPromptExtra == null || !String(savedTpl.jrPromptExtra).length) {
+        await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
+      }
     }
     await refreshDriveStatus();
     await refreshAuthHint();

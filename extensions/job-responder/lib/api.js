@@ -377,12 +377,15 @@ const JR_API = (() => {
     selectedSourceIds = [],
     coverTemplate,
     baseLetter,
+    promptExtra,
+    customInstructions,
     useGeminiRag,
   }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
     const template = String(coverTemplate || baseLetter || '').trim();
+    const extra = String(promptExtra || customInstructions || '').trim();
     const normalizedMode = mode === 'qa' || mode === 'question_answers' ? 'qa' : 'cover_letter';
     const data = await fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
@@ -398,6 +401,7 @@ const JR_API = (() => {
           ? { questions: vacancy.questions }
           : {}),
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
+        ...(extra ? { promptExtra: extra, customInstructions: extra } : {}),
         ...(useGeminiRag === true ? { useGeminiRag: true } : {}),
         ...(useGeminiRag === false ? { useGeminiRag: false } : {}),
       }),
