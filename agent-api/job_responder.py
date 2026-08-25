@@ -34,10 +34,13 @@ from job_responder_semantic import (
 
 _LOG = logging.getLogger("job-responder")
 
-RESUME_KINDS = ("job_resume", "job_experience", "job_skills")
+RESUME_KINDS = ("job_resume", "job_experience", "job_skills", "job_profile_overrides")
 RESUME_SOURCE = "job_responder"
 RESUME_TAGS = ["job-responder", "hh"]
 PRIMARY_CV_KIND = "job_resume"
+PROFILE_OVERRIDES_KIND = "job_profile_overrides"
+PROFILE_OVERRIDES_CATEGORY = "overrides"
+PROFILE_OVERRIDES_TITLE = "Правки RAG (overrides)"
 JR_PROFILE_MARKER = "---jr_profile---"
 
 HOST_LABELS = {"ru": "hh.ru", "kz": "hh.kz", "uz": "hh.uz", "web": "web"}
@@ -405,6 +408,14 @@ class JobResponderTextCapturePayload(BaseModel):
     category: str = Field(default="notes", max_length=128)
 
 
+class JobResponderResumePatchPayload(BaseModel):
+    """Upsert authoritative RAG fact corrections (kind=job_profile_overrides)."""
+
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    text: str = Field(..., min_length=3, max_length=50000)
+    title: Optional[str] = Field(default=None, max_length=1000)
+
+
 class JobResponderResumeSearchPayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     query: str = Field(..., min_length=1, max_length=4000)
@@ -766,6 +777,12 @@ def _row_profile(row: Dict[str, Any]) -> Dict[str, Any]:
     return prof
 
 
+def _is_profile_overrides_row(row: Dict[str, Any]) -> bool:
+    kind = str(row.get("kind") or "").strip().lower()
+    category = str(row.get("category") or "").strip().lower()
+    return kind == PROFILE_OVERRIDES_KIND or category == PROFILE_OVERRIDES_CATEGORY
+
+
 def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Merge many Resume RAG sources into one workspace-level compact profile."""
     skills: List[str] = []
@@ -785,15 +802,22 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     text_bits: List[str] = []
     seen_link: set = set()
     seen_cover: set = set()
+    override_plains: List[str] = []
 
     for row in resume_rows:
         if str(row.get("kind") or "") == COMPACT_PROFILE_KIND:
             continue
         title = str(row.get("title") or "").strip()
-        if title:
-            source_titles.append(title[:120])
         body = str(row.get("content_text") or row.get("ai_summary") or "")
         plain = strip_profile_wrapper(body)
+        if _is_profile_overrides_row(row):
+            if plain.strip():
+                override_plains.append(plain.strip())
+            if title:
+                source_titles.append(title[:120])
+            continue
+        if title:
+            source_titles.append(title[:120])
         text_bits.append(f"{title} {plain[:2500]}")
         prof = _row_profile(row)
         skills.extend(prof.get("skills") or [])
@@ -853,6 +877,26 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         "source_count": len(resume_rows),
         "_text_blob": blob[:12000],
     }
+    # Authoritative RAG edits (job_profile_overrides) win over conflicting CV facts.
+    if override_plains:
+        rag_edits = "\n\n".join(override_plains)[:4000]
+        profile["rag_edits"] = rag_edits
+        for plain in override_plains:
+            ov = normalize_profile_overrides(plain)
+            if ov:
+                profile = apply_profile_overrides(profile, ov)
+            free_lines = []
+            for line in plain.splitlines():
+                bit = line.strip()
+                if not bit:
+                    continue
+                if re.match(r"^\s*[^:]{1,40}\s*:\s*.+", bit):
+                    continue
+                free_lines.append(bit[:200])
+            if free_lines:
+                contacts = list(profile.get("contact_overrides") or [])
+                contacts.extend(free_lines)
+                profile["contact_overrides"] = list(dict.fromkeys(contacts))[:24]
     # Build once per merge; reused by relevance scoring (no LLM).
     profile["jr_semantic_grid"] = build_semantic_grid(profile)
     return profile
@@ -876,6 +920,10 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
             "UNIFIED RESUME PROFILE (compact, deduped)",
             f"sources_merged: {int(profile.get('source_count') or 0)}",
         ]
+        rag_edits = str(profile.get("rag_edits") or "").strip()
+        if rag_edits:
+            lines.append("RAG EDITS (authoritative corrections - prefer over conflicting data below):")
+            lines.append(rag_edits[:1500])
         overrides = [str(x) for x in (profile.get("contact_overrides") or []) if str(x).strip()]
         if overrides:
             lines.append("PROFILE OVERRIDES (prefer over conflicting contacts/links below):")
@@ -2049,6 +2097,149 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             embedded = _embed_resume_item(cur, kid, title, ai_summary, text)
         return kid, embedded, content_hash, profile
 
+    def _find_profile_overrides_id(cur, workspace_id: int) -> Optional[int]:
+        cur.execute(
+            """
+            select id
+            from public.knowledge_items
+            where workspace_id = %s
+              and source = %s
+              and (kind = %s or lower(coalesce(category, '')) = %s)
+            order by
+              case when kind = %s then 0 else 1 end,
+              updated_at desc
+            limit 1
+            """,
+            (
+                workspace_id,
+                RESUME_SOURCE,
+                PROFILE_OVERRIDES_KIND,
+                PROFILE_OVERRIDES_CATEGORY,
+                PROFILE_OVERRIDES_KIND,
+            ),
+        )
+        row = cur.fetchone() or {}
+        if row.get("id") is None:
+            return None
+        return int(row["id"])
+
+    def _upsert_profile_overrides_text(
+        cur,
+        workspace_id: int,
+        *,
+        text: str,
+        title: Optional[str] = None,
+    ) -> Tuple[int, str, Dict[str, Any], bool]:
+        """Always replace the single overrides source (no length-based merge)."""
+        title_norm = truncate_text(
+            (title or "").strip() or PROFILE_OVERRIDES_TITLE,
+            1000,
+        )
+        text_norm = sanitize_extracted_text(text or "").strip()
+        if len(text_norm) < 3:
+            raise HTTPException(status_code=422, detail="text too short (min 3 chars)")
+        profile = extract_resume_profile(
+            text_norm,
+            title=title_norm,
+            category=PROFILE_OVERRIDES_CATEGORY,
+        )
+        content_text, ai_summary = wrap_content_with_profile(text_norm, profile)
+        tags = profile_tags(
+            profile,
+            [PROFILE_OVERRIDES_CATEGORY, "rag-edits", "overrides"],
+        )
+        content_hash = build_knowledge_content_hash(
+            RESUME_SOURCE,
+            f"jr-overrides:{workspace_id}",
+            content_text,
+        )
+        note_path = truncate_text(
+            resolve_knowledge_obsidian_note_path(
+                workspace_id,
+                content_hash,
+                None,
+                kind=PROFILE_OVERRIDES_KIND,
+            ),
+            4000,
+        )
+        existing_id = _find_profile_overrides_id(cur, workspace_id)
+        replaced = False
+        if existing_id:
+            cur.execute(
+                """
+                update public.knowledge_items set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = coalesce(seen_count, 0) + 1,
+                  title = %s,
+                  content_text = %s,
+                  ai_summary = %s,
+                  category = %s,
+                  tags = %s,
+                  content_hash = %s,
+                  kind = %s,
+                  note_path = coalesce(%s, note_path),
+                  status = 'to_process'
+                where id = %s and workspace_id = %s and source = %s
+                returning id
+                """,
+                (
+                    title_norm,
+                    content_text,
+                    ai_summary,
+                    PROFILE_OVERRIDES_CATEGORY,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    PROFILE_OVERRIDES_KIND,
+                    note_path,
+                    existing_id,
+                    workspace_id,
+                    RESUME_SOURCE,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else existing_id
+            replaced = True
+        else:
+            cur.execute(
+                """
+                insert into public.knowledge_items (
+                  workspace_id, source, title, url, canonical_url,
+                  content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+                ) values (%s, %s, %s, null, null, %s, %s, %s, %s, %s, 'to_process', %s, %s)
+                on conflict (workspace_id, content_hash)
+                do update set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = public.knowledge_items.seen_count + 1,
+                  title = excluded.title,
+                  content_text = excluded.content_text,
+                  ai_summary = excluded.ai_summary,
+                  category = excluded.category,
+                  tags = excluded.tags,
+                  note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+                  kind = excluded.kind,
+                  status = 'to_process'
+                returning id
+                """,
+                (
+                    workspace_id,
+                    RESUME_SOURCE,
+                    title_norm,
+                    content_text,
+                    ai_summary,
+                    PROFILE_OVERRIDES_CATEGORY,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    note_path,
+                    PROFILE_OVERRIDES_KIND,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else -1
+        profile["_ingest"] = {"merged": replaced, "reason": "overrides-upsert"}
+        return kid, content_hash, profile, replaced
+
     def _find_resume_item_by_url(cur, workspace_id: int, url: str) -> Optional[int]:
         canonical = normalize_url(url) if url else ""
         if not canonical:
@@ -2583,6 +2774,57 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "merged": bool(ingest_meta.get("merged")),
                 "workspaceId": str(workspace_id),
             }
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    @app.post("/api/v1/job-responder/resume/patch")
+    async def job_responder_resume_patch(
+        payload: JobResponderResumePatchPayload,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """Upsert authoritative RAG fact corrections (Postgres + Gemini sync)."""
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+
+        text = str(payload.text or "").strip()
+        if len(text) < 3:
+            raise HTTPException(status_code=422, detail="text too short (min 3 chars)")
+
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                kid, content_hash, profile, replaced = _upsert_profile_overrides_text(
+                    cur,
+                    workspace_id,
+                    text=text,
+                    title=payload.title,
+                )
+            conn.commit()
+            ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
+            _queue_embed(background_tasks, kid, PROFILE_OVERRIDES_TITLE, text)
+            _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+            return {
+                "ok": True,
+                "knowledgeItemId": kid,
+                "kind": PROFILE_OVERRIDES_KIND,
+                "category": PROFILE_OVERRIDES_CATEGORY,
+                "contentHash": content_hash,
+                "profile": profile,
+                "replaced": replaced,
+                "merged": bool(ingest_meta.get("merged")),
+                "workspaceId": str(workspace_id),
+                "geminiSyncQueued": True,
+            }
+        except HTTPException:
+            conn.rollback()
+            raise
         except Exception:
             conn.rollback()
             raise

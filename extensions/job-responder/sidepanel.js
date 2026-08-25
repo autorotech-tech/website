@@ -14,6 +14,16 @@ const DEFAULT_PROMPT_EXTRA =
 /** Keys expanded after generate / with answers (not forced closed by restore). */
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
 
+/** Default-open sections when no saved collapse state for the key. */
+const JR_DEFAULT_OPEN = new Set([
+  'sync',
+  'ragEdits',
+  'vacancy',
+  'relevance',
+  'description',
+  'generate',
+]);
+
 /**
  * Parse free-text overrides: "Telegram: @x | email: a@b | ссылка: https://…"
  * @returns {Record<string, string>}
@@ -48,6 +58,8 @@ async function restoreCollapseState() {
       if (!key || JR_SKIP_COLLAPSE_RESTORE.has(key)) return;
       if (Object.prototype.hasOwnProperty.call(state, key)) {
         el.open = Boolean(state[key]);
+      } else if (JR_DEFAULT_OPEN.has(key)) {
+        el.open = true;
       }
     });
   } catch (_) {
@@ -727,6 +739,9 @@ const coverTemplateEl = document.getElementById('coverTemplate');
 const promptExtraEl = document.getElementById('promptExtra');
 const resetPromptBtn = document.getElementById('resetPromptBtn');
 const coverFromRagBtn = document.getElementById('coverFromRagBtn');
+const ragEditsInput = document.getElementById('ragEditsInput');
+const saveRagEditsBtn = document.getElementById('saveRagEditsBtn');
+const ragEditsMeta = document.getElementById('ragEditsMeta');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
 const driveFolderInput = document.getElementById('driveFolderInput');
@@ -925,6 +940,41 @@ if (uploadPortfolioFilesBtn) {
   });
 }
 
+function stripJrProfileWrapper(text) {
+  const raw = String(text || '');
+  const marker = '---jr_profile---';
+  const idx = raw.indexOf(marker);
+  if (idx < 0) return raw.trim();
+  return raw.slice(0, idx).trim();
+}
+
+function findOverridesSourceText(items) {
+  const list = Array.isArray(items) ? items : [];
+  const hit = list.find((s) => {
+    const kind = String(s?.kind || '').toLowerCase();
+    const category = String(s?.category || '').toLowerCase();
+    return kind === 'job_profile_overrides' || category === 'overrides';
+  });
+  if (!hit) return '';
+  return stripJrProfileWrapper(
+    hit.contentSnippet ||
+      hit.content_snippet ||
+      hit.contentText ||
+      hit.content_text ||
+      hit.preview ||
+      hit.aiSummary ||
+      ''
+  );
+}
+
+function setRagEditsMeta(msg) {
+  if (ragEditsMeta) ragEditsMeta.textContent = msg || '';
+}
+
+async function persistRagEditsLocal(text) {
+  await chrome.storage.local.set({ jrRagEdits: String(text || '') });
+}
+
 if (addRagTextBtn) {
   addRagTextBtn.addEventListener('click', async () => {
     setError('');
@@ -956,6 +1006,57 @@ if (addRagTextBtn) {
       setError(String(err.message || err));
     } finally {
       setButtonBusy(addRagTextBtn, false, 'Добавить в RAG');
+    }
+  });
+}
+
+let ragEditsSaveTimer = null;
+if (ragEditsInput) {
+  ragEditsInput.addEventListener('input', () => {
+    clearTimeout(ragEditsSaveTimer);
+    ragEditsSaveTimer = setTimeout(() => {
+      persistRagEditsLocal(ragEditsInput.value).catch(() => {});
+    }, 400);
+  });
+  ragEditsInput.addEventListener('focus', () => {
+    ragEditsInput.classList.add('isFocused');
+  });
+  ragEditsInput.addEventListener('blur', () => {
+    ragEditsInput.classList.remove('isFocused');
+    persistRagEditsLocal(ragEditsInput.value).catch(() => {});
+  });
+}
+
+if (saveRagEditsBtn) {
+  saveRagEditsBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    const text = String(ragEditsInput?.value || '').trim();
+    if (text.length < 3) {
+      setError('Введите правки (мин. 3 символа), например: Telegram: @autoro_tech');
+      return;
+    }
+    setButtonBusy(saveRagEditsBtn, true, 'Сохранить в RAG', 'Сохранение…');
+    try {
+      await JR_API.ensureWorkspace();
+      await persistRagEditsLocal(text);
+      const res = await JR_API.resumePatch({ text });
+      const kid = res.knowledgeItemId;
+      const action = res.replaced ? 'обновлены' : 'созданы';
+      const summary = `Правки RAG ${action} (id=${kid}). Gemini sync в очереди.`;
+      setSuccess(summary);
+      setRagEditsMeta(summary);
+      await refreshResumeStatus();
+      await refreshSources({
+        highlightIds: kid ? [kid] : [],
+        quiet: true,
+      });
+      showIngestBanner({ addedCount: 1, summary });
+    } catch (err) {
+      setError(String(err.message || err));
+      setRagEditsMeta('');
+    } finally {
+      setButtonBusy(saveRagEditsBtn, false, 'Сохранить в RAG');
     }
   });
 }
@@ -1224,6 +1325,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.jrPromptExtra && promptExtraEl && document.activeElement !== promptExtraEl) {
     promptExtraEl.value = String(changes.jrPromptExtra.newValue || DEFAULT_PROMPT_EXTRA);
   }
+  if (changes.jrRagEdits && ragEditsInput && document.activeElement !== ragEditsInput) {
+    ragEditsInput.value = String(changes.jrRagEdits.newValue || '');
+  }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -1300,7 +1404,7 @@ if (coverFromRagBtn) {
   try {
     await restoreCollapseState();
     bindCollapsePersistence();
-    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra']);
+    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra', 'jrRagEdits']);
     if (coverTemplateEl && savedTpl.jrCoverTemplate) {
       coverTemplateEl.value = String(savedTpl.jrCoverTemplate);
     }
@@ -1313,11 +1417,22 @@ if (coverFromRagBtn) {
         await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
       }
     }
+    if (ragEditsInput) {
+      ragEditsInput.value = String(savedTpl.jrRagEdits || '');
+    }
     await refreshDriveStatus();
     await refreshAuthHint();
     await JR_API.ensureWorkspace();
     await refreshResumeStatus();
-    await refreshSources({ quiet: true });
+    const items = await refreshSources({ quiet: true });
+    if (ragEditsInput && !String(ragEditsInput.value || '').trim()) {
+      const fromRag = findOverridesSourceText(items);
+      if (fromRag) {
+        ragEditsInput.value = fromRag;
+        await persistRagEditsLocal(fromRag);
+        setRagEditsMeta('Подтянуто из Resume RAG (overrides)');
+      }
+    }
   } catch (err) {
     setError(String(err.message || err));
   }

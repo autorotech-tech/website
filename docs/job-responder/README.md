@@ -27,6 +27,7 @@ Chrome MV3 extension: персонализированные отклики с R
 - CV files (можно несколько) -> `kind=job_resume`
 - Portfolio files / скриншоты (png/jpg/webp, multiple) -> `kind=job_experience`, category `screenshot` при vision OCR
 - Текст для RAG (textarea) -> `POST .../resume/text-capture`, category `notes`
+- **Правки RAG** -> `POST .../resume/patch`, kind=`job_profile_overrides`, category=`overrides` (upsert одного source, always replace)
 - URL links -> fetch + index (`category=link`)
 - Ссылки из текста файлов/OCR/Drive/paste -> автоизвлечение http(s) **после** ответа ingest (не блокирует Cloudflare 524)
 - Кнопка **Удалить** у каждого source
@@ -47,6 +48,13 @@ Chrome MV3 extension: персонализированные отклики с R
 - **Semantic grid** (`jr_semantic_grid`): synonym clusters + evidence из RAG (ROAS/GMV/PPC…) без LLM
 - Matching: exact → synonym → fuzzy/token; «Не хватает» только если нет семантического покрытия
 - rationale + matched / missing / `semanticMatches` в side panel
+
+## v0.6.2
+
+- **Правки RAG**: блок в side panel + `POST /api/v1/job-responder/resume/patch` (kind=`job_profile_overrides`, category=`overrides`). Пишет в Postgres и ставит Gemini File Search sync в очередь. Локально: `jrRagEdits` в chrome.storage.
+- Overrides участвуют в unified compact profile как authoritative corrections (Telegram/email/links + свободный текст).
+- **Все блоки сворачиваемые** (`<details>`): Синхрон, Sources, Правки RAG, Вакансия, Описание, Релевантность, Генерация, инструкции, шаблон, результат.
+- По умолчанию открыты: Синхрон, Правки RAG, Вакансия (+ описание/релевантность), Генерация (кнопки). Остальное свёрнуто.
 
 ## v0.6.1
 
@@ -118,6 +126,7 @@ Chrome MV3 extension: персонализированные отклики с R
 | GET | `/api/v1/job-responder/resume/sources` |
 | POST | `/api/v1/job-responder/resume/capture` |
 | POST | `/api/v1/job-responder/resume/text-capture` |
+| POST | `/api/v1/job-responder/resume/patch` (правки фактов: `job_profile_overrides`) |
 | POST | `/api/v1/job-responder/resume/file-capture` |
 | DELETE | `/api/v1/job-responder/resume/sources/{id}?workspaceId=` |
 | POST | `/api/v1/job-responder/resume/sources/delete` (`knowledgeItemIds` / `titles`) |

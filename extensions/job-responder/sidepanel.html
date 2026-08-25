@@ -13,9 +13,9 @@
       <p class="success banner" id="success" role="status"></p>
     </header>
 
-    <section class="card syncCard" id="syncSection">
+    <details class="card collapsible" id="syncSection" data-jr-collapse="sync" open>
+      <summary>Синхрон</summary>
       <div class="syncBar">
-        <span class="syncTitle">Синхрон</span>
         <button type="button" id="refreshSourcesBtn" class="secondary btnCompact" title="Обновить sources">
           Обновить
         </button>
@@ -26,7 +26,7 @@
       <p class="hint tight" id="resumeStatus">—</p>
       <p class="hint tight" id="geminiRagStatus">Gemini RAG: …</p>
       <div class="ingestBanner" id="ingestBanner" hidden></div>
-    </section>
+    </details>
 
     <details class="card collapsible" id="sourcesDetails" data-jr-collapse="sources">
       <summary>Источники Resume RAG</summary>
@@ -103,28 +103,52 @@
       </details>
     </details>
 
-    <section class="card" id="vacancySection">
-      <h2>Вакансия</h2>
+    <details class="card collapsible" id="ragEditsDetails" data-jr-collapse="ragEdits" open>
+      <summary>Правки RAG</summary>
+      <p class="hint">
+        Исправляет факты в базе Resume RAG (Postgres + Gemini sync), не только промпт генерации.
+        Пример: Telegram: @autoro_tech
+      </p>
+      <label class="field">
+        <span>Корректировки (пишутся в knowledge base)</span>
+        <textarea
+          id="ragEditsInput"
+          class="growOnFocus"
+          rows="3"
+          placeholder="Telegram: @autoro_tech&#10;email: you@example.com&#10;Город: Москва / remote"
+        ></textarea>
+      </label>
+      <div class="row tight">
+        <button type="button" id="saveRagEditsBtn">Сохранить в RAG</button>
+      </div>
+      <p class="hint tight" id="ragEditsMeta"></p>
+    </details>
+
+    <details class="card collapsible" id="vacancySection" data-jr-collapse="vacancy" open>
+      <summary>Вакансия</summary>
       <p class="hint" id="vacancyMeta">Откройте страницу вакансии и нажмите «Обновить с страницы»</p>
       <div id="vacancyStructured" class="structuredBox" hidden></div>
       <div class="row">
         <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
         <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
       </div>
-      <div id="relevanceBox" class="relevanceBox" hidden></div>
-      <label class="field">
-        <span>Описание</span>
+      <details class="nested" id="relevanceDetails" data-jr-collapse="relevance" open>
+        <summary>Релевантность</summary>
+        <div id="relevanceBox" class="relevanceBox" hidden></div>
+      </details>
+      <details class="nested" id="descriptionDetails" data-jr-collapse="description" open>
+        <summary>Описание</summary>
         <textarea
           id="vacancyDescription"
           rows="5"
           readonly
           placeholder="Подтянется со страницы кнопкой «Обновить с страницы»"
         ></textarea>
-      </label>
-    </section>
+      </details>
+    </details>
 
-    <section class="card" id="qaSection" hidden>
-      <h2>Вопросы формы</h2>
+    <details class="card collapsible" id="qaSection" data-jr-collapse="qa" hidden>
+      <summary>Вопросы формы</summary>
       <p class="hint" id="qaMeta">Google Form / таблица Q&A</p>
       <details class="nested openWhenQa" id="qaResultsDetails" data-jr-collapse="qaResults">
         <summary>Результаты Q&A</summary>
@@ -133,12 +157,12 @@
           <button type="button" id="copyAllQaBtn" class="secondary">Копировать все</button>
         </div>
       </details>
-    </section>
+    </details>
 
-    <section class="card" id="generateSection">
-      <h2>Генерация</h2>
-      <label class="field">
-        <span>Переопределения профиля / инструкции</span>
+    <details class="card collapsible" id="generateSection" data-jr-collapse="generate" open>
+      <summary>Генерация</summary>
+      <details class="nested" id="promptExtraDetails" data-jr-collapse="promptExtra">
+        <summary>Инструкции генерации (не в RAG)</summary>
         <textarea
           id="promptExtra"
           class="growOnFocus"
@@ -149,10 +173,11 @@
           <button type="button" id="resetPromptBtn" class="secondary btnCompact">Сбросить</button>
         </div>
         <p class="hint">
-          Контакты и ссылки поверх RAG (Telegram, email, URL). Сохраняется в chrome.storage
-          (jrPromptExtra) и уходит как promptExtra + profileOverrides.
+          Контакты и ссылки только на время генерации. Сохраняется в chrome.storage
+          (jrPromptExtra) и уходит как promptExtra + profileOverrides. Чтобы поправить базу -
+          используйте блок «Правки RAG».
         </p>
-      </label>
+      </details>
 
       <details class="nested" id="coverTemplateDetails" data-jr-collapse="coverTemplate">
         <summary>Моё сопроводительное (шаблон)</summary>
@@ -180,7 +205,7 @@
         </div>
         <p class="hint" id="genMeta"></p>
       </details>
-    </section>
+    </details>
 
     <footer class="footer">
       <button type="button" id="loginBtn" class="link" hidden>Вход</button>

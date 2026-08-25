@@ -40,11 +40,20 @@ header h1 {
   padding: 8px 10px;
 }
 
+details.card.collapsible {
+  padding: 10px;
+}
+
+details.card.collapsible > summary {
+  font-size: 14px;
+}
+
 .syncBar {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
 .syncTitle {

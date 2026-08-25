@@ -50,7 +50,7 @@ const JR_API = (() => {
 
   function inferErrorKind(url) {
     const u = String(url || '');
-    if (/file-capture|drive-import|text-capture|link-capture|\/capture/i.test(u)) return 'upload';
+    if (/file-capture|drive-import|text-capture|link-capture|\/patch|\/capture/i.test(u)) return 'upload';
     if (/\/generate/i.test(u)) return 'generate';
     if (/\/relevance/i.test(u)) return 'relevance';
     return 'generic';
@@ -306,6 +306,27 @@ const JR_API = (() => {
     });
   }
 
+  async function resumePatch({ text, title } = {}) {
+    const body = String(text || '').trim();
+    if (body.length < 3) {
+      throw new Error('Текст слишком короткий (мин. 3 символа)');
+    }
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/patch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        workspaceId,
+        text: body,
+        title: title || undefined,
+      }),
+      timeoutMs: 45000,
+      errorKind: 'upload',
+    });
+  }
+
   async function resumeLinkCapture({ url, title, kind = 'job_experience', category = 'link' }) {
     if (!url) throw new Error('url is required');
     const apiBase = await getApiBase();
@@ -497,6 +518,7 @@ const JR_API = (() => {
     resumeCapture,
     resumeStatus,
     resumeFileCapture,
+    resumePatch,
     resumeTextCapture,
     resumeLinkCapture,
     scoreRelevance,

@@ -16,5 +16,6 @@ Question answers (mode qa): JSON-массив [{"question":"...","answer":"..."}
 Учитывай type/options у вопросов Google Form / таблицы.
 
 ДОП. ИНСТРУКЦИЯ / ПЕРЕОПРЕДЕЛЕНИЯ: side panel поле (jrPromptExtra) -> promptExtra + profileOverrides.
+ПРАВКИ RAG (постоянные факты): side panel «Правки RAG» (jrRagEdits) -> POST /resume/patch (kind=job_profile_overrides) в knowledge base.
 Пример: Telegram: @autoro_tech | email: you@example.com
 Backend: overrides win over conflicting RAG contacts/links.
