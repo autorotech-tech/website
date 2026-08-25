@@ -133,6 +133,10 @@ npm run deploy:job-responder-api
 
 **Кратко:** MVP = compact profile; opt-in позже = Gemini File Search на `gemini_keys`. NotebookLM Enterprise и `notebooklm-py` — не для JR MVP.
 
+## Маршрутизация моделей / token economy
+
+Tier-схема (Tier 0 без LLM → ultra-cheap → flash generate → quality), task routing, caps и roadmap: [model-routing.md](./model-routing.md).
+
 ## Фаза 2
 
 См. [phase2-autofill.md](./phase2-autofill.md)
