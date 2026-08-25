@@ -421,12 +421,21 @@ function renderRelevance(data) {
   const bullets = (data.rationale || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
   const matched = (data.matched || []).map((r) => `<li class="relevanceMatched">${escapeHtml(r)}</li>`).join('');
   const missing = (data.missing || []).map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
+  const matchedJoined = (data.matched || []).join('\n');
+  const sem = (data.semanticMatches || [])
+    .slice(0, 8)
+    .map((m) => {
+      const label = m.label || m.skill || '';
+      return `<li class="relevanceMatched">${escapeHtml(label)}</li>`;
+    })
+    .join('');
   relevanceBox.hidden = false;
   relevanceBox.innerHTML = `
     <div class="relevanceScore">${Number(data.score)} / 100</div>
     <div>Релевантность Resume ↔ вакансия</div>
     ${bullets ? `<ul>${bullets}</ul>` : ''}
     ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
+    ${sem && !/семантика/i.test(matchedJoined) ? `<div><b>Совпало (семантика)</b><ul>${sem}</ul></div>` : ''}
     ${missing ? `<div><b>Не хватает в RAG</b><ul>${missing}</ul></div>` : ''}
   `;
 }

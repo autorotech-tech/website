@@ -25,6 +25,12 @@ from pydantic import BaseModel, Field
 import os
 
 from kb_file_ingest import MAX_FILE_BYTES, sanitize_extracted_text
+from job_responder_semantic import (
+    build_semantic_grid,
+    format_semantic_hit,
+    match_skills,
+    semantic_matched_lines,
+)
 
 _LOG = logging.getLogger("job-responder")
 
@@ -829,7 +835,7 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     blob = " ".join(text_bits).lower()
     tools = _uniq_lower([*tools, *[t for t in _KNOWN_TOOLS if t in blob]], 40)
 
-    return {
+    profile = {
         "skills": _uniq_lower(skills, 40),
         "tools": tools,
         "roles": _uniq_lower(roles, 16),
@@ -847,6 +853,9 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         "source_count": len(resume_rows),
         "_text_blob": blob[:12000],
     }
+    # Build once per merge; reused by relevance scoring (no LLM).
+    profile["jr_semantic_grid"] = build_semantic_grid(profile)
+    return profile
 
 
 def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_PROFILE_CHARS) -> str:
@@ -962,7 +971,12 @@ def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> 
         tags.append(f"seniority:{profile['seniority']}")
     if profile.get("geo_remote"):
         tags.append(f"format:{profile['geo_remote']}")
-    return list(dict.fromkeys(tags))[:24]
+    grid = profile.get("jr_semantic_grid")
+    if isinstance(grid, dict) and grid.get("clusters"):
+        tags.append("jr_semantic_grid")
+        for cid in list((grid.get("clusters") or {}).keys())[:8]:
+            tags.append(f"jr_sg:{cid}"[:40])
+    return list(dict.fromkeys(tags))[:32]
 
 
 def vacancy_to_match_blob(vacancy: JobResponderVacancyPayload) -> Dict[str, Any]:
@@ -1114,37 +1128,66 @@ def score_resume_vs_vacancy(
     tool_hits: List[str] = []
     tool_miss: List[str] = []
 
-    # --- Tools (0–28) ---
-    tool_hits = sorted(vac_tools & merged_tools)
-    tool_miss = sorted(vac_tools - merged_tools)
+    # Semantic grid (cached on merged profile; deterministic, no LLM)
+    grid = profile.get("jr_semantic_grid")
+    if not isinstance(grid, dict) or not grid.get("clusters"):
+        grid = build_semantic_grid(profile)
+    resume_exact = merged_skills | merged_tools | merged_roles | merged_domains
+
+    # --- Tools (0–28) — exact first, then semantic ---
+    tool_hit_maps, tool_miss_raw = match_skills(
+        sorted(vac_tools),
+        grid,
+        resume_blob=resume_text_blob,
+        resume_exact=resume_exact,
+    )
+    tool_hits = [
+        format_semantic_hit(m) if m.get("tier") != "exact" else str(m.get("normalized") or m.get("skill"))
+        for m in tool_hit_maps
+    ]
+    tool_miss = tool_miss_raw
     if vac_tools:
-        ratio = len(tool_hits) / max(len(vac_tools), 1)
+        ratio = len(tool_hit_maps) / max(len(vac_tools), 1)
         pts = int(28 * min(1.0, ratio))
         score += pts
-        if tool_hits:
-            matched.append(f"Инструменты: {', '.join(tool_hits[:10])}")
-            rationale.append(f"Инструменты +{pts}: {', '.join(tool_hits[:8])}")
+        if tool_hit_maps:
+            label_bits = [format_semantic_hit(m) for m in tool_hit_maps[:10]]
+            matched.append(f"Инструменты: {', '.join(label_bits)}")
+            rationale.append(f"Инструменты +{pts}: {', '.join(label_bits[:8])}")
         if tool_miss:
             missing.append(f"Инструменты: {', '.join(tool_miss[:8])}")
     else:
         score += 6
         rationale.append("В вакансии мало явных tool-keywords - мягкий бонус")
 
-    # --- Skills (0–30), excluding pure tools already counted ---
+    # --- Skills (0–30), semantic grid: exact -> synonym -> fuzzy ---
     skill_pool = vac_skills - vac_tools
-    resume_skill_pool = merged_skills | merged_tools
-    skill_hits = sorted(skill_pool & resume_skill_pool) if skill_pool else sorted(vac_skills & resume_skill_pool)
-    skill_miss = sorted(skill_pool - resume_skill_pool) if skill_pool else sorted(vac_skills - resume_skill_pool)
+    skill_candidates = skill_pool if skill_pool else vac_skills
+    skill_hit_maps, skill_miss = match_skills(
+        sorted(skill_candidates),
+        grid,
+        resume_blob=resume_text_blob,
+        resume_exact=resume_exact,
+    )
+    skill_hits = [str(m.get("skill") or m.get("normalized")) for m in skill_hit_maps]
+    semantic_lines = semantic_matched_lines(skill_hit_maps, limit=8)
     if vac_skills or skill_pool:
-        denom = max(len(skill_pool or vac_skills), 1)
-        ratio = len(skill_hits) / denom
+        denom = max(len(skill_candidates), 1)
+        ratio = len(skill_hit_maps) / denom
         pts = int(30 * min(1.0, ratio))
         score += pts
-        if skill_hits:
-            matched.append(f"Навыки: {', '.join(skill_hits[:10])}")
-            rationale.append(f"Навыки +{pts}: {', '.join(skill_hits[:8])}")
+        if skill_hit_maps:
+            exact_labels = [str(m.get("skill")) for m in skill_hit_maps if m.get("tier") == "exact"][:10]
+            if exact_labels:
+                matched.append(f"Навыки: {', '.join(exact_labels)}")
+            for line in semantic_lines:
+                matched.append(line)
+            rationale.append(
+                f"Навыки +{pts}: {len(skill_hit_maps)}/{denom} "
+                f"(exact/synonym/fuzzy), grid clusters={int(grid.get('clusterCount') or 0)}"
+            )
         else:
-            rationale.append("Прямых совпадений навыков мало")
+            rationale.append("Прямых и семантических совпадений навыков мало")
             score = max(0, score - 4)
         if skill_miss:
             missing.append(f"Навыки: {', '.join(skill_miss[:8])}")
@@ -1164,8 +1207,14 @@ def score_resume_vs_vacancy(
         else:
             rationale.append("Мало пересечений по навыкам/заголовку")
 
-    # --- Role / title (0–18) ---
-    role_hits = sorted(vac_roles & merged_roles)
+    # --- Role / title (0–18) — exact + semantic ---
+    role_hit_maps, role_miss_raw = match_skills(
+        sorted(vac_roles),
+        grid,
+        resume_blob=resume_text_blob,
+        resume_exact=resume_exact,
+    )
+    role_hits = [str(m.get("skill") or m.get("normalized")) for m in role_hit_maps]
     title_l = (vacancy.title or "").lower()
     resume_lower = resume_text_blob
     title_in_resume = any(
@@ -1180,19 +1229,26 @@ def score_resume_vs_vacancy(
         role_pts += 8
         matched.append("Заголовок вакансии отражён в compact profile")
     elif vac_roles and not role_hits:
-        missing.append(f"Роли: {', '.join(sorted(vac_roles)[:4])}")
+        miss_roles = role_miss_raw or sorted(vac_roles)
+        missing.append(f"Роли: {', '.join(miss_roles[:4])}")
     score += min(18, role_pts)
     if role_pts:
         rationale.append(f"Роль/title +{min(18, role_pts)}")
 
-    # --- Domains (0–8) ---
-    domain_hits = sorted(vac_domains & merged_domains)
+    # --- Domains (0–8) — semantic ---
+    domain_hit_maps, domain_miss = match_skills(
+        sorted(vac_domains),
+        grid,
+        resume_blob=resume_text_blob,
+        resume_exact=resume_exact,
+    )
+    domain_hits = [str(m.get("skill") or m.get("normalized")) for m in domain_hit_maps]
     if domain_hits:
         score += min(8, 4 * len(domain_hits))
         matched.append(f"Домены: {', '.join(domain_hits[:4])}")
         rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
     elif vac_domains:
-        missing.append(f"Домены: {', '.join(sorted(vac_domains)[:4])}")
+        missing.append(f"Домены: {', '.join(domain_miss[:4] or sorted(vac_domains)[:4])}")
 
     # --- Work format (0–10) ---
     if vac_format:
@@ -1240,16 +1296,35 @@ def score_resume_vs_vacancy(
     if not rationale:
         rationale.append("Оценка по пересечению compact profile и вакансии")
 
+    semantic_matches = [
+        {
+            "skill": m.get("skill"),
+            "tier": m.get("tier"),
+            "cluster": m.get("cluster"),
+            "evidence": list(m.get("evidence") or [])[:5],
+            "label": format_semantic_hit(m),
+        }
+        for m in (skill_hit_maps + tool_hit_maps + role_hit_maps + domain_hit_maps)
+        if m.get("tier") and m.get("tier") != "exact"
+    ]
+
     return {
         "score": score,
         "rationale": rationale[:10],
-        "matched": matched[:12],
+        "matched": matched[:14],
         "missing": missing[:12],
         "vacancyProfile": vac_profile,
         "matchedSkills": skill_hits[:12],
         "matchedTools": tool_hits[:12],
         "missingSkills": skill_miss[:12],
         "missingTools": tool_miss[:12],
+        "semanticMatches": semantic_matches[:16],
+        "semanticGrid": {
+            "fingerprint": grid.get("fingerprint"),
+            "clusterCount": grid.get("clusterCount"),
+            "termCount": grid.get("termCount"),
+            "clusters": sorted((grid.get("clusters") or {}).keys()),
+        },
         "compactProfile": {
             "sourceCount": int(profile.get("source_count") or 0),
             "skills": list(profile.get("skills") or [])[:16],

@@ -44,7 +44,14 @@ Chrome MV3 extension: персонализированные отклики с R
 `POST /api/v1/job-responder/relevance` и кнопка «Оценка релевантности» в panel:
 
 - score 0–100 по **тому же** unified compact profile (tools / skills / role / format / experience)
-- rationale + списки matched / missing в side panel
+- **Semantic grid** (`jr_semantic_grid`): synonym clusters + evidence из RAG (ROAS/GMV/PPC…) без LLM
+- Matching: exact → synonym → fuzzy/token; «Не хватает» только если нет семантического покрытия
+- rationale + matched / missing / `semanticMatches` в side panel
+
+## v0.6.1
+
+- Semantic relevance: `agent-api/job_responder_semantic.py` + cache grid on merge
+- UI: подсказки «Совпало (семантика): b2c маркетинг <- growth marketing, ROAS»
 
 ## LLM (generate)
 

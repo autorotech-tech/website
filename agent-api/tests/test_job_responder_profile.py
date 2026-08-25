@@ -18,6 +18,8 @@ from job_responder import (
     strip_profile_wrapper,
     wrap_content_with_profile,
 )
+from job_responder_semantic import build_semantic_grid, match_skills
+
 
 
 def test_profile_slots_and_links():
@@ -128,3 +130,68 @@ def test_parse_answers_json_fence_and_hh():
     assert ans is not None
     assert ans[0]["question"] == "Q1"
     assert ans[0]["answer"] == 'A - test -> "ok"'
+
+
+def test_semantic_marketing_skills_not_false_missing():
+    """HH phrases like 'b2c маркетинг' must match Growth/ROAS/GMV evidence."""
+    vacancy = JobResponderVacancyPayload(
+        url="https://hh.ru/vacancy/1",
+        title="Маркетолог B2C",
+        company="Shop",
+        description="Ищем маркетолога",
+        structured=JobResponderVacancyStructured(
+            keySkills=[
+                "b2c маркетинг",
+                "анализ эффективности маркетинговых кампаний",
+                "маркетинговые метрики",
+                "маркетинговый анализ",
+                "планирование бюджета",
+            ],
+            workFormat="удалённо",
+        ),
+    )
+    resume_rows = [
+        {
+            "id": 1,
+            "title": "CV Growth Marketing",
+            "kind": "job_resume",
+            "content_text": (
+                "Skills: Growth Marketing, Performance Marketing, PPC, SEO, CRM. "
+                "Metrics: GMV, GP, ROAS, CPA. Campaign analysis and A/B tests. "
+                "Media budget planning. Remote."
+            ),
+            "ai_summary": "",
+        }
+    ]
+    out = score_resume_vs_vacancy(vacancy, resume_rows)
+    missing_joined = " ".join(out.get("missing") or []).lower()
+    assert "b2c" not in missing_joined
+    assert "маркетинговые метрики" not in missing_joined
+    assert "планирование бюджета" not in missing_joined
+    assert out["score"] >= 50
+    assert out.get("semanticMatches") or any("семантика" in m.lower() for m in (out.get("matched") or []))
+    assert out.get("semanticGrid", {}).get("clusterCount", 0) >= 1
+
+
+def test_semantic_grid_evidence_from_blob():
+    profile = {
+        "skills": ["growth marketing", "ppc", "seo"],
+        "tools": [],
+        "roles": ["marketer"],
+        "domains": ["marketing"],
+        "experience_bullets": ["Grew GMV and ROAS via paid acquisition"],
+        "source_titles": ["CV"],
+        "source_count": 1,
+        "_text_blob": "growth marketing ppc seo crm gmv gp roas media budget campaign analysis remote",
+    }
+    grid = build_semantic_grid(profile)
+    assert "marketing" in grid["clusters"]
+    assert "marketing_metrics" in grid["clusters"]
+    hits, miss = match_skills(
+        ["b2c маркетинг", "маркетинговые метрики", "планирование бюджета", "quantum physics"],
+        grid,
+        resume_blob=profile["_text_blob"],
+        resume_exact=profile["skills"],
+    )
+    assert len(hits) >= 3
+    assert any("quantum" in m.lower() for m in miss)
