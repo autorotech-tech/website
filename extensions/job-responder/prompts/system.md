@@ -15,4 +15,6 @@ Cover letter: 800-1400 символов.
 Question answers (mode qa): JSON-массив [{"question":"...","answer":"..."}].
 Учитывай type/options у вопросов Google Form / таблицы.
 
-ДОП. ИНСТРУКЦИЯ: редактируется в side panel (chrome.storage jrPromptExtra) и уходит как promptExtra.
+ДОП. ИНСТРУКЦИЯ / ПЕРЕОПРЕДЕЛЕНИЯ: side panel поле (jrPromptExtra) -> promptExtra + profileOverrides.
+Пример: Telegram: @autoro_tech | email: you@example.com
+Backend: overrides win over conflicting RAG contacts/links.

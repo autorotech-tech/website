@@ -8,9 +8,67 @@ let lastTabUrl = '';
 
 /** Default generation instruction - contacts + links from RAG profile. */
 const DEFAULT_PROMPT_EXTRA =
-  'Всегда включай в текст отклика / ответов контакты и релевантные ссылки из профиля ' +
-  '(email, Telegram, телефон, портфолио, GitHub, LinkedIn, сайт и др.), если они есть в Resume RAG / File Search. ' +
-  'Не выдумывай контакты и URL. Если в шаблоне письма уже есть контакты - сохрани их.';
+  'Всегда включай контакты и релевантные ссылки из профиля (email, Telegram, телефон, портфолио, GitHub, LinkedIn). ' +
+  'Не выдумывай. Для переопределения добавьте строки вида ключ: значение (см. placeholder).';
+
+/** Keys expanded after generate / with answers (not forced closed by restore). */
+const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
+
+/**
+ * Parse free-text overrides: "Telegram: @x | email: a@b | ссылка: https://…"
+ * @returns {Record<string, string>}
+ */
+function parseProfileOverrides(text) {
+  const out = {};
+  const raw = String(text || '').trim();
+  if (!raw) return out;
+  const chunks = raw.split(/[|\n]+/);
+  for (const chunk of chunks) {
+    const m = String(chunk).match(/^\s*([^:]{1,40})\s*:\s*(.+?)\s*$/);
+    if (!m) continue;
+    const key = m[1].trim().toLowerCase();
+    const val = m[2].trim();
+    if (!key || !val) continue;
+    // Skip long prose instructions that aren't contact overrides
+    if (key.length > 32 || val.length > 500) continue;
+    if (/всегда включай|не выдумывай|переопределения пишите/i.test(key + ' ' + val) && val.length > 80) {
+      continue;
+    }
+    out[key] = val;
+  }
+  return out;
+}
+
+async function restoreCollapseState() {
+  try {
+    const saved = await chrome.storage.local.get(['jrCollapseState']);
+    const state = saved.jrCollapseState && typeof saved.jrCollapseState === 'object' ? saved.jrCollapseState : {};
+    document.querySelectorAll('[data-jr-collapse]').forEach((el) => {
+      const key = el.getAttribute('data-jr-collapse');
+      if (!key || JR_SKIP_COLLAPSE_RESTORE.has(key)) return;
+      if (Object.prototype.hasOwnProperty.call(state, key)) {
+        el.open = Boolean(state[key]);
+      }
+    });
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function bindCollapsePersistence() {
+  document.querySelectorAll('[data-jr-collapse]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      const key = el.getAttribute('data-jr-collapse');
+      if (!key || JR_SKIP_COLLAPSE_RESTORE.has(key)) return;
+      chrome.storage.local.get(['jrCollapseState'], (saved) => {
+        const prev = saved.jrCollapseState && typeof saved.jrCollapseState === 'object' ? saved.jrCollapseState : {};
+        chrome.storage.local.set({
+          jrCollapseState: { ...prev, [key]: Boolean(el.open) },
+        });
+      });
+    });
+  });
+}
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
@@ -177,7 +235,7 @@ function renderSources(items) {
   if (!sourcesListEl) return;
   if (!currentSources.length) {
     sourcesListEl.innerHTML =
-      '<div class="hint">Список пуст. Проверьте workspaceId (test = 1), затем «Обновить sources».</div>';
+      '<div class="hint">Список пуст. Проверьте workspaceId (test = 1), затем «Обновить».</div>';
     return;
   }
   sourcesListEl.innerHTML = currentSources
@@ -284,7 +342,7 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
   if (ids.length) ids.forEach((id) => lastAddedSourceIds.add(id));
   sourcesListEl?.classList.add('isLoading');
   if (!quiet) {
-    setButtonBusy(refreshBtn, true, 'Обновить sources', 'Обновляю…');
+    setButtonBusy(refreshBtn, true, 'Обновить', '…');
   }
   try {
     const data = await JR_API.listSources();
@@ -318,7 +376,7 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
     throw err;
   } finally {
     sourcesListEl?.classList.remove('isLoading');
-    if (!quiet) setButtonBusy(refreshBtn, false, 'Обновить sources');
+    if (!quiet) setButtonBusy(refreshBtn, false, 'Обновить');
   }
 }
 
@@ -469,6 +527,10 @@ function renderQaTable(rows) {
     return;
   }
   section.hidden = false;
+  const qaDetails = document.getElementById('qaResultsDetails');
+  if (qaDetails && list.some((r) => String(r.answer || '').trim())) {
+    qaDetails.open = true;
+  }
   if (meta) {
     const answered = list.filter((r) => String(r.answer || '').trim()).length;
     meta.textContent =
@@ -551,7 +613,7 @@ async function runGenerate(mode) {
   const vacancy = buildVacancyPayload();
   const isQa = mode === 'question_answers' || mode === 'qa';
   if (!vacancy.description || vacancy.description.length < 20) {
-    setError('Нужно описание вакансии (обновите со страницы или вставьте вручную)');
+    setError('Нужно описание вакансии - нажмите «Обновить с страницы»');
     return;
   }
   if (isQa && (!vacancy.questions || !vacancy.questions.length)) {
@@ -566,6 +628,7 @@ async function runGenerate(mode) {
     await runRelevanceScore().catch(() => {});
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
     const promptExtra = String(promptExtraEl?.value || '').trim();
+    const profileOverrides = parseProfileOverrides(promptExtra);
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
@@ -579,10 +642,13 @@ async function runGenerate(mode) {
       selectedSourceIds: getSelectedSourceIds(),
       coverTemplate: !isQa ? coverTemplate : undefined,
       promptExtra,
+      profileOverrides: Object.keys(profileOverrides).length ? profileOverrides : undefined,
       useGeminiRag: geminiRagReady,
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
+    const resultDetails = document.getElementById('resultDetails');
+    if (resultDetails && letter) resultDetails.open = true;
     if (Array.isArray(data.answers) && data.answers.length) {
       const mapped = data.answers.map((a, i) => {
         let question = String(a.question || a.text || '').trim();
@@ -1033,7 +1099,7 @@ refreshSourcesBtn.addEventListener('click', () => {
 if (geminiRagSyncBtn) {
   geminiRagSyncBtn.addEventListener('click', async () => {
     setError('');
-    setButtonBusy(geminiRagSyncBtn, true, 'Синхронизировать Gemini RAG', 'Синхронизация…');
+    setButtonBusy(geminiRagSyncBtn, true, 'Gemini', '…');
     if (geminiRagStatusEl) geminiRagStatusEl.textContent = 'Синхронизация с Gemini…';
     try {
       const res = await JR_API.geminiRagSync({ poll: true });
@@ -1047,7 +1113,7 @@ if (geminiRagSyncBtn) {
       setError(String(err.message || err));
       await refreshGeminiRagStatus({ quiet: true });
     } finally {
-      setButtonBusy(geminiRagSyncBtn, false, 'Синхронизировать Gemini RAG');
+      setButtonBusy(geminiRagSyncBtn, false, 'Gemini');
     }
   });
 }
@@ -1185,7 +1251,16 @@ if (resetPromptBtn) {
   resetPromptBtn.addEventListener('click', async () => {
     if (promptExtraEl) promptExtraEl.value = DEFAULT_PROMPT_EXTRA;
     await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
-    setSuccess('Промпт сброшен к значению по умолчанию (контакты + ссылки)');
+    setSuccess('Инструкции сброшены (контакты + подсказка по переопределениям)');
+  });
+}
+
+if (promptExtraEl) {
+  promptExtraEl.addEventListener('focus', () => {
+    promptExtraEl.classList.add('isFocused');
+  });
+  promptExtraEl.addEventListener('blur', () => {
+    promptExtraEl.classList.remove('isFocused');
   });
 }
 
@@ -1214,6 +1289,8 @@ if (coverFromRagBtn) {
 
 (async function init() {
   try {
+    await restoreCollapseState();
+    bindCollapsePersistence();
     const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra']);
     if (coverTemplateEl && savedTpl.jrCoverTemplate) {
       coverTemplateEl.value = String(savedTpl.jrCoverTemplate);

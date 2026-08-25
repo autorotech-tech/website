@@ -1,6 +1,6 @@
 body {
   margin: 0;
-  padding: 12px;
+  padding: 10px;
   font-family: Arial, sans-serif;
   background: #f8fafc;
   color: #0f172a;
@@ -9,7 +9,7 @@ body {
 
 header h1 {
   margin: 0 0 4px;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .card {
@@ -17,7 +17,7 @@ header h1 {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   padding: 10px;
-  margin: 10px 0;
+  margin: 8px 0;
 }
 
 .card h2 {
@@ -30,6 +30,98 @@ header h1 {
   font-size: 11px;
   line-height: 1.35;
   margin: 0 0 8px;
+}
+
+.hint.tight {
+  margin: 0 0 2px;
+}
+
+.syncCard {
+  padding: 8px 10px;
+}
+
+.syncBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.syncTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  margin-right: auto;
+}
+
+.btnCompact {
+  flex: 0 0 auto !important;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.collapsible > summary,
+.nested > summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  list-style: none;
+}
+
+.collapsible > summary::-webkit-details-marker,
+.nested > summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible > summary::before,
+.nested > summary::before {
+  content: '▸ ';
+  color: #64748b;
+  font-weight: 400;
+}
+
+.collapsible[open] > summary::before,
+.nested[open] > summary::before {
+  content: '▾ ';
+}
+
+.collapsible > summary {
+  margin: 0;
+}
+
+.collapsible[open] > summary {
+  margin-bottom: 8px;
+}
+
+.nested {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.nested[open] > summary {
+  margin-bottom: 6px;
+}
+
+textarea.growOnFocus {
+  min-height: 34px;
+  max-height: 180px;
+  resize: vertical;
+  transition: min-height 0.12s ease;
+}
+
+textarea.growOnFocus:focus {
+  min-height: 96px;
+}
+
+textarea[readonly] {
+  background: #f1f5f9;
+  color: #334155;
+  cursor: default;
 }
 
 .field {

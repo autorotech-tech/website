@@ -379,6 +379,7 @@ const JR_API = (() => {
     baseLetter,
     promptExtra,
     customInstructions,
+    profileOverrides,
     useGeminiRag,
   }) {
     const apiBase = await getApiBase();
@@ -386,6 +387,10 @@ const JR_API = (() => {
     const workspaceId = await getWorkspaceId();
     const template = String(coverTemplate || baseLetter || '').trim();
     const extra = String(promptExtra || customInstructions || '').trim();
+    const overrides =
+      profileOverrides && typeof profileOverrides === 'object' && !Array.isArray(profileOverrides)
+        ? profileOverrides
+        : null;
     const normalizedMode = mode === 'qa' || mode === 'question_answers' ? 'qa' : 'cover_letter';
     const data = await fetchJson(`${apiBase}/api/v1/job-responder/generate`, {
       method: 'POST',
@@ -402,6 +407,7 @@ const JR_API = (() => {
           : {}),
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
         ...(extra ? { promptExtra: extra, customInstructions: extra } : {}),
+        ...(overrides && Object.keys(overrides).length ? { profileOverrides: overrides } : {}),
         ...(useGeminiRag === true ? { useGeminiRag: true } : {}),
         ...(useGeminiRag === false ? { useGeminiRag: false } : {}),
       }),

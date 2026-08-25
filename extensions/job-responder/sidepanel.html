@@ -13,75 +13,99 @@
       <p class="success banner" id="success" role="status"></p>
     </header>
 
-    <section class="card">
-      <h2>Sources (Resume RAG)</h2>
-      <p class="hint">Отклик / релевантность используют unified compact profile: все отмеченные sources сливаются на сервере (не полные PDF). Можно держать много галочек.</p>
-      <p class="hint" id="resumeStatus">—</p>
-      <p class="hint" id="geminiRagStatus">Gemini RAG: …</p>
-      <div class="row tight">
-        <button type="button" id="geminiRagSyncBtn" class="secondary">Синхронизировать Gemini RAG</button>
+    <section class="card syncCard" id="syncSection">
+      <div class="syncBar">
+        <span class="syncTitle">Синхрон</span>
+        <button type="button" id="refreshSourcesBtn" class="secondary btnCompact" title="Обновить sources">
+          Обновить
+        </button>
+        <button type="button" id="geminiRagSyncBtn" class="secondary btnCompact" title="Синхронизировать Gemini RAG">
+          Gemini
+        </button>
       </div>
+      <p class="hint tight" id="resumeStatus">—</p>
+      <p class="hint tight" id="geminiRagStatus">Gemini RAG: …</p>
       <div class="ingestBanner" id="ingestBanner" hidden></div>
+    </section>
+
+    <details class="card collapsible" id="sourcesDetails" data-jr-collapse="sources">
+      <summary>Источники Resume RAG</summary>
+      <p class="hint">Отмеченные sources сливаются в unified compact profile на сервере.</p>
       <div class="field">
-        <span>workspaceId (test default = 1)</span>
+        <span>workspaceId</span>
         <div class="row tight">
           <input id="workspaceIdInput" type="text" placeholder="1" />
-          <button type="button" id="saveWorkspaceBtn" class="secondary">Сохранить</button>
+          <button type="button" id="saveWorkspaceBtn" class="secondary btnCompact">OK</button>
         </div>
-      </div>
-      <div class="row">
-        <button type="button" id="refreshSourcesBtn" class="secondary">Обновить sources</button>
       </div>
       <div class="sourcesList" id="sourcesList" aria-live="polite"></div>
 
-      <div class="field">
-        <span>CV файлы (primary, можно несколько)</span>
-        <input id="resumeFile" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
-        <p class="hint" id="resumeFileHint">Файлов не выбрано</p>
-        <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
-      </div>
+      <details class="nested" data-jr-collapse="cvUpload">
+        <summary>CV / portfolio файлы</summary>
+        <div class="field">
+          <span>CV (primary)</span>
+          <input
+            id="resumeFile"
+            type="file"
+            multiple
+            accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp"
+          />
+          <p class="hint" id="resumeFileHint">Файлов не выбрано</p>
+          <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
+        </div>
+        <div class="field">
+          <span>Portfolio / скриншоты</span>
+          <input
+            id="portfolioFiles"
+            type="file"
+            multiple
+            accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp"
+          />
+          <p class="hint" id="portfolioFileHint">Файлов не выбрано</p>
+          <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
+        </div>
+      </details>
 
-      <div class="field">
-        <span>Portfolio файлы / скриншоты (несколько)</span>
-        <input id="portfolioFiles" type="file" multiple accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp" />
-        <p class="hint" id="portfolioFileHint">Файлов не выбрано</p>
-        <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
-      </div>
+      <details class="nested" data-jr-collapse="ragText">
+        <summary>Текст / ссылка → RAG</summary>
+        <div class="field">
+          <span>Текст для RAG</span>
+          <textarea id="ragTextInput" rows="3" placeholder="Опыт, кейсы, заметки…"></textarea>
+          <input id="ragTextTitle" type="text" placeholder="Название (необязательно)" />
+          <button type="button" id="addRagTextBtn" class="secondary">Добавить в RAG</button>
+        </div>
+        <div class="field">
+          <span>Ссылка (URL)</span>
+          <input id="linkUrl" type="url" placeholder="https://..." />
+          <input id="linkTitle" type="text" placeholder="Название (необязательно)" />
+          <button type="button" id="addLinkBtn" class="secondary">Добавить ссылку</button>
+        </div>
+      </details>
 
-      <div class="field">
-        <span>Текст для RAG</span>
-        <textarea id="ragTextInput" rows="4" placeholder="Вставьте свободный текст (опыт, кейсы, заметки) - попадёт в Resume RAG"></textarea>
-        <input id="ragTextTitle" type="text" placeholder="Название (необязательно)" />
-        <button type="button" id="addRagTextBtn" class="secondary">Добавить в RAG</button>
-      </div>
-
-      <div class="field">
-        <span>Ссылка (URL)</span>
-        <input id="linkUrl" type="url" placeholder="https://..." />
-        <input id="linkTitle" type="text" placeholder="Название (необязательно)" />
-        <button type="button" id="addLinkBtn" class="secondary">Добавить ссылку</button>
-      </div>
-
-      <div class="field">
-        <span>Google Drive</span>
+      <details class="nested" data-jr-collapse="drive">
+        <summary>Google Drive</summary>
         <p class="hint" id="driveStatus">Drive: загрузка…</p>
         <div class="row tight">
-          <button type="button" id="driveConnectBtn" class="secondary">Подключить Google Drive</button>
+          <button type="button" id="driveConnectBtn" class="secondary">Подключить</button>
           <button type="button" id="driveDisconnectBtn" class="secondary" hidden>Отключить</button>
         </div>
         <input id="driveFolderInput" type="text" placeholder="https://drive.google.com/drive/folders/..." />
         <button type="button" id="driveImportBtn" class="secondary">Импорт из Drive</button>
-        <details id="driveManualDetails" class="driveManual">
-          <summary>Ручной token (fallback)</summary>
-          <input id="driveTokenInput" type="password" placeholder="OAuth access token (drive.readonly)" autocomplete="off" />
-          <p class="hint">Нужен только если client_id ещё не настроен. См. docs/job-responder/drive.md</p>
+        <details id="driveManualDetails" class="driveManual" data-jr-collapse="driveManual">
+          <summary>Ручной token</summary>
+          <input
+            id="driveTokenInput"
+            type="password"
+            placeholder="OAuth access token (drive.readonly)"
+            autocomplete="off"
+          />
         </details>
-      </div>
-    </section>
+      </details>
+    </details>
 
-    <section class="card">
+    <section class="card" id="vacancySection">
       <h2>Вакансия</h2>
-      <p class="hint" id="vacancyMeta">Откройте любую страницу вакансии и нажмите «Обновить с страницы»</p>
+      <p class="hint" id="vacancyMeta">Откройте страницу вакансии и нажмите «Обновить с страницы»</p>
       <div id="vacancyStructured" class="structuredBox" hidden></div>
       <div class="row">
         <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
@@ -89,64 +113,73 @@
       </div>
       <div id="relevanceBox" class="relevanceBox" hidden></div>
       <label class="field">
-        <span>Описание (можно править вручную)</span>
-        <textarea id="vacancyDescription" rows="5" placeholder="Если парсер не сработал - вставьте текст вручную"></textarea>
+        <span>Описание</span>
+        <textarea
+          id="vacancyDescription"
+          rows="5"
+          readonly
+          placeholder="Подтянется со страницы кнопкой «Обновить с страницы»"
+        ></textarea>
       </label>
     </section>
 
     <section class="card" id="qaSection" hidden>
       <h2>Вопросы формы</h2>
-      <p class="hint" id="qaMeta">Google Form / таблица Q&A - ответы в формате Вопрос | Ответ</p>
-      <div id="qaTable" class="qaTable" role="table" aria-label="Вопросы и ответы"></div>
-      <div class="row">
-        <button type="button" id="copyAllQaBtn" class="secondary">Копировать все</button>
-      </div>
+      <p class="hint" id="qaMeta">Google Form / таблица Q&A</p>
+      <details class="nested openWhenQa" id="qaResultsDetails" data-jr-collapse="qaResults">
+        <summary>Результаты Q&A</summary>
+        <div id="qaTable" class="qaTable" role="table" aria-label="Вопросы и ответы"></div>
+        <div class="row">
+          <button type="button" id="copyAllQaBtn" class="secondary">Копировать все</button>
+        </div>
+      </details>
     </section>
 
-    <section class="card">
+    <section class="card" id="generateSection">
       <h2>Генерация</h2>
       <label class="field">
-        <span>Инструкция для генерации (промпт)</span>
+        <span>Переопределения профиля / инструкции</span>
         <textarea
           id="promptExtra"
-          rows="4"
-          placeholder="Контакты, ссылки, тон, что обязательно включить в ответ…"
+          class="growOnFocus"
+          rows="1"
+          placeholder="Telegram: @autoro_tech | email: you@example.com | ссылка: https://…"
         ></textarea>
         <div class="row tight">
-          <button type="button" id="resetPromptBtn" class="secondary">Сбросить промпт</button>
+          <button type="button" id="resetPromptBtn" class="secondary btnCompact">Сбросить</button>
         </div>
         <p class="hint">
-          Доп. инструкция к системному промпту (RAG / compact). Сохраняется в chrome.storage
-          (jrPromptExtra). По умолчанию: включать контакты и ссылки из профиля.
+          Контакты и ссылки поверх RAG (Telegram, email, URL). Сохраняется в chrome.storage
+          (jrPromptExtra) и уходит как promptExtra + profileOverrides.
         </p>
       </label>
-      <label class="field">
-        <span>Моё сопроводительное (шаблон)</span>
+
+      <details class="nested" id="coverTemplateDetails" data-jr-collapse="coverTemplate">
+        <summary>Моё сопроводительное (шаблон)</summary>
         <textarea
           id="coverTemplate"
           rows="5"
-          placeholder="Вставьте своё письмо - генерация адаптирует его под вакансию (не пишет с нуля)"
+          placeholder="Вставьте своё письмо - генерация адаптирует его под вакансию"
         ></textarea>
         <div class="row tight">
           <button type="button" id="coverFromRagBtn" class="secondary">Взять из RAG</button>
         </div>
-        <p class="hint">
-          Сохраняется локально (chrome.storage). Пусто = письмо с нуля по источникам. Если в Resume RAG есть
-          сопроводительное - подставится само (при пустом поле).
-        </p>
-      </label>
+        <p class="hint">Пусто = письмо с нуля. Если в RAG есть сопроводительное - подставится при пустом поле.</p>
+      </details>
+
       <div class="row">
         <button type="button" id="genCoverBtn">Отклик</button>
         <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>
       </div>
-      <label class="field">
-        <span>Результат (можно править)</span>
-        <textarea id="resultText" rows="12"></textarea>
-      </label>
-      <div class="row">
-        <button type="button" id="copyBtn" class="secondary">Копировать</button>
-      </div>
-      <p class="hint" id="genMeta"></p>
+
+      <details class="nested" id="resultDetails" data-jr-collapse="result">
+        <summary>Результат</summary>
+        <textarea id="resultText" rows="10"></textarea>
+        <div class="row">
+          <button type="button" id="copyBtn" class="secondary">Копировать</button>
+        </div>
+        <p class="hint" id="genMeta"></p>
+      </details>
     </section>
 
     <footer class="footer">

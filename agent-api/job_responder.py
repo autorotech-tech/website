@@ -370,6 +370,8 @@ class JobResponderGeneratePayload(BaseModel):
     # Extra generation instructions from side panel (contacts, links, tone, etc.)
     promptExtra: Optional[str] = Field(default=None, max_length=8000)
     customInstructions: Optional[str] = Field(default=None, max_length=8000)
+    # Contact/profile overrides (Telegram, email, links) - win over conflicting RAG data
+    profileOverrides: Optional[Dict[str, Any]] = None
     # Prefer Gemini File Search RAG when JOB_RESPONDER_GEMINI_RAG=1 and store ready
     useGeminiRag: Optional[bool] = None
 
@@ -865,6 +867,17 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
             "UNIFIED RESUME PROFILE (compact, deduped)",
             f"sources_merged: {int(profile.get('source_count') or 0)}",
         ]
+        overrides = [str(x) for x in (profile.get("contact_overrides") or []) if str(x).strip()]
+        if overrides:
+            lines.append("PROFILE OVERRIDES (prefer over conflicting contacts/links below):")
+            for bit in overrides[:16]:
+                lines.append(f"- {bit[:200]}")
+        if profile.get("telegram"):
+            lines.append(f"telegram: {profile['telegram']}")
+        if profile.get("email"):
+            lines.append(f"email: {profile['email']}")
+        if profile.get("phone"):
+            lines.append(f"phone: {profile['phone']}")
         titles = list(profile.get("source_titles") or [])[:title_n]
         if titles:
             lines.append("source_titles: " + "; ".join(str(t)[:80] for t in titles))
@@ -1296,6 +1309,136 @@ def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optio
     if not raw:
         return ""
     return raw[: max(200, int(max_chars))]
+
+
+def normalize_profile_overrides(raw: Optional[Any]) -> Dict[str, str]:
+    """Normalize client profileOverrides into a flat key->value map."""
+    if not raw:
+        return {}
+    out: Dict[str, str] = {}
+    if isinstance(raw, str):
+        for chunk in re.split(r"[|\n]+", raw):
+            m = re.match(r"^\s*([^:]{1,40})\s*:\s*(.+?)\s*$", chunk)
+            if not m:
+                continue
+            key = m.group(1).strip().lower()
+            val = m.group(2).strip()
+            if key and val and len(key) <= 32 and len(val) <= 500:
+                out[key] = val
+        return out
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            key = str(k or "").strip().lower()
+            if not key or key.startswith("_"):
+                continue
+            if isinstance(v, (list, tuple)):
+                val = ", ".join(str(x).strip() for x in v if str(x).strip())
+            else:
+                val = str(v or "").strip()
+            if key and val and len(key) <= 40 and len(val) <= 500:
+                out[key[:40]] = val[:500]
+        return out
+    return {}
+
+
+def format_profile_overrides_block(overrides: Dict[str, str]) -> str:
+    if not overrides:
+        return ""
+    lines = [f"{k}: {v}" for k, v in overrides.items()]
+    return (
+        "Use these contact/profile overrides instead of conflicting RAG data:\n"
+        + "\n".join(lines)
+    )
+
+
+_TG_OVERRIDE_KEYS = ("telegram", "tg", "телеграм", "тг")
+_EMAIL_OVERRIDE_KEYS = ("email", "e-mail", "mail", "почта")
+_PHONE_OVERRIDE_KEYS = ("phone", "tel", "телефон", "мобильный")
+_LINK_OVERRIDE_KEYS = (
+    "ссылка",
+    "link",
+    "url",
+    "portfolio",
+    "портфолио",
+    "github",
+    "linkedin",
+    "сайт",
+    "website",
+    "site",
+)
+
+
+def apply_profile_overrides(merged: Dict[str, Any], overrides: Dict[str, str]) -> Dict[str, Any]:
+    """Merge contact/profile overrides into compact profile (overrides win)."""
+    if not overrides:
+        return merged
+    profile = dict(merged or {})
+    contacts: List[str] = list(profile.get("contact_overrides") or [])
+    links: List[Dict[str, str]] = [
+        dict(lk) for lk in (profile.get("links") or []) if isinstance(lk, dict)
+    ]
+
+    def _upsert_link(url: str, title: str) -> None:
+        url_l = url.lower().rstrip("/")
+        for lk in links:
+            existing = str(lk.get("url") or "").lower().rstrip("/")
+            title_l = str(lk.get("title") or "").lower()
+            if existing == url_l or (title and title.lower() in title_l):
+                lk["url"] = url[:400]
+                if title:
+                    lk["title"] = title[:120]
+                return
+        # Also replace by channel name in title/url for telegram/email
+        links.insert(0, {"url": url[:400], "title": title[:120], "summary": "profile override"})
+
+    for key, val in overrides.items():
+        contacts.append(f"{key}: {val}")
+        if key in _TG_OVERRIDE_KEYS:
+            handle = val if val.startswith("@") or val.startswith("http") else f"@{val.lstrip('@')}"
+            url = handle if handle.startswith("http") else f"https://t.me/{handle.lstrip('@')}"
+            # Drop conflicting telegram links from RAG
+            links = [
+                lk
+                for lk in links
+                if "t.me/" not in str(lk.get("url") or "").lower()
+                and "telegram" not in str(lk.get("title") or "").lower()
+            ]
+            _upsert_link(url, "Telegram")
+            profile["telegram"] = handle
+        elif key in _EMAIL_OVERRIDE_KEYS:
+            email = val.replace("mailto:", "").strip()
+            links = [
+                lk
+                for lk in links
+                if "mailto:" not in str(lk.get("url") or "").lower()
+                and "@" not in str(lk.get("url") or "")
+            ]
+            _upsert_link(f"mailto:{email}", "email")
+            profile["email"] = email
+        elif key in _PHONE_OVERRIDE_KEYS:
+            profile["phone"] = val
+        elif key in _LINK_OVERRIDE_KEYS or val.startswith("http://") or val.startswith("https://"):
+            title = key if key not in _LINK_OVERRIDE_KEYS else key
+            if val.startswith("http://") or val.startswith("https://"):
+                _upsert_link(val, title)
+            else:
+                contacts.append(f"{key}: {val}")
+
+    profile["contact_overrides"] = list(dict.fromkeys(contacts))[:24]
+    profile["links"] = links[:14]
+    return profile
+
+
+def inject_overrides_into_prompt_extra(prompt_extra: str, overrides: Dict[str, str]) -> str:
+    block = format_profile_overrides_block(overrides)
+    if not block:
+        return prompt_extra
+    extra = (prompt_extra or "").strip()
+    if block in extra:
+        return extra
+    if extra:
+        return f"{extra}\n\n{block}"
+    return block
 
 
 def build_system_prompt(
@@ -2964,6 +3107,10 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             merged_questions = list(payload.questions) + merged_questions
         normalized_questions = normalize_questions(merged_questions)
         prompt_extra = resolve_prompt_extra(payload.promptExtra, payload.customInstructions)
+        overrides = normalize_profile_overrides(payload.profileOverrides)
+        if overrides:
+            merged = apply_profile_overrides(merged, overrides)
+            prompt_extra = inject_overrides_into_prompt_extra(prompt_extra, overrides)
         # Aggressive compact on first try (not only on retry).
         profile_cap = COMPACT_PROFILE_CHARS
         cover_cap = COVER_TEMPLATE_CHARS
