@@ -102,6 +102,9 @@ GEMINI_RAG_COOLDOWN_SEC = 120.0
 JR_GEMINI_MODEL = "gemini-3.5-flash"
 # Process-local: skip File Search briefly after a hang so cascade stays fast.
 _gemini_rag_last_timeout_mono = 0.0
+# Debounce background KB optimize so ingest bursts don't starve generate workers.
+_optimize_last_mono_by_ws: Dict[int, float] = {}
+_OPTIMIZE_DEBOUNCE_SEC = 45.0
 _COVER_SNIPPET_RE = re.compile(
     r"сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|шаблон\s*отклик",
     re.I,
@@ -4101,24 +4104,25 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         kid = int(result.get("knowledgeItemId") or -1)
         if sync_gemini and kid > 0 and jr_gemini_rag.is_enabled():
             try:
+                # Sync only the master compact doc - full workspace sync is too heavy
+                # on the hot path and can starve generate (CF/nginx 502 under load).
                 gemini = jr_gemini_rag.sync_knowledge_item(
                     pg_connect, workspace_id, kid, poll=False
                 )
             except Exception as exc:
                 gemini = {"ok": False, "error": str(exc)[:200]}
-            # Also refresh store docs for other sources (best-effort, non-blocking poll)
-            try:
-                gemini["workspaceSync"] = jr_gemini_rag.sync_workspace(
-                    pg_connect, workspace_id, poll=False
-                )
-            except Exception as exc:
-                gemini["workspaceSyncError"] = str(exc)[:160]
         result["gemini"] = gemini
         result["ok"] = True
         result["optimized"] = True
         return result
 
     def _queue_optimize_kb(background_tasks: BackgroundTasks, workspace_id: int) -> None:
+        now = time.monotonic()
+        last = float(_optimize_last_mono_by_ws.get(int(workspace_id)) or 0.0)
+        if last and (now - last) < _OPTIMIZE_DEBOUNCE_SEC:
+            return
+        _optimize_last_mono_by_ws[int(workspace_id)] = now
+
         def _job() -> None:
             try:
                 _run_optimize_workspace(workspace_id, sync_gemini=True)
@@ -5515,6 +5519,43 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
     ):
         started = time.monotonic()
         deadline = started + GENERATE_BUDGET_SEC
+        workspace_id_out = str(getattr(payload, "workspaceId", "") or "")
+        try:
+            return await _job_responder_generate_impl(
+                payload=payload,
+                request=request,
+                x_api_key=x_api_key,
+                authorization=authorization,
+                started=started,
+                deadline=deadline,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _LOG.exception("generate crashed: %s", exc)
+            return {
+                "ok": False,
+                "error": "generate_crashed",
+                "message": (
+                    "Генерация прервалась на сервере. Нажмите «Отклик» ещё раз - "
+                    "обычно помогает."
+                ),
+                "text": "",
+                "timedOut": False,
+                "elapsedSec": round(time.monotonic() - started, 2),
+                "workspaceId": workspace_id_out,
+                "detail": f"{type(exc).__name__}: {exc}"[:240],
+            }
+
+    async def _job_responder_generate_impl(
+        *,
+        payload: JobResponderGeneratePayload,
+        request: Request,
+        x_api_key: Optional[str],
+        authorization: Optional[str],
+        started: float,
+        deadline: float,
+    ):
         auth_ctx = _auth(request, x_api_key, authorization)
         workspace_id = _parse_workspace_id(payload.workspaceId)
         _guard_workspace(auth_ctx, workspace_id)
