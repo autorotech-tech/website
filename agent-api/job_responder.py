@@ -12,7 +12,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Tuple
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
@@ -163,7 +163,44 @@ _KNOWN_TOOLS = {
     "whatsapp",
     "notion",
     "obsidian",
+    "amocrm",
+    "bitrix24",
+    "manychat",
+    "bitrix",
+    "crm",
 }
+
+# Canonical display labels for tools recovered from HH chrome / glued blobs
+_TOOL_DISPLAY: Dict[str, str] = {
+    "amocrm": "amoCRM",
+    "amo crm": "amoCRM",
+    "bitrix24": "Bitrix24",
+    "bitrix 24": "Bitrix24",
+    "битрикс24": "Bitrix24",
+    "битрикс 24": "Bitrix24",
+    "manychat": "ManyChat",
+    "many chat": "ManyChat",
+    "n8n": "n8n",
+    "comfyui": "ComfyUI",
+    "chatgpt": "ChatGPT",
+}
+
+# HH page chrome / meta that must never appear in "Не хватает в профиле"
+_VACANCY_SKILL_JUNK_RE = re.compile(
+    r"(?:смотр|челове|рабочие\s*часы|формат\s*работы|уровень\s*дохода|"
+    r"не\s*указан|прямо\s*сейчас\s*трансформ|сейчас\s*эту\s*вакансию|"
+    r"вакансию\s*смотр|опыт\s*работы\s*:\s*\d|тип\s*занятости|"
+    r"график\s*работы|ключевые\s*навыки\s*:?\s*\d)",
+    re.I,
+)
+_VACANCY_SKILL_GLUE_RE = re.compile(
+    r"(?:\d(?:рабоч|формат|опыт|час|человек)|"
+    r"(?:удал\w*|гибрид\w*|офис\w*)сейчас|"
+    r"не\s*указан\w*опыт|"
+    r"человеко\s*\d)",
+    re.I,
+)
+_MAX_VACANCY_SKILL_LEN = 80
 
 _ROLE_HINTS = (
     "engineer",
@@ -586,6 +623,24 @@ _CONTACT_ORDER = [k for k, _ in _CONTACT_LABELS]
 _CONTACT_KEYS_ALLOWED = frozenset(_CONTACT_ORDER)
 # Channels that stay under ## Контакты (not ## Ссылки)
 _CONTACT_CHANNEL_KEYS = frozenset({"telegram", "email", "phone"})
+# Cover-letter ## Контакты: only real contact channels (LinkedIn/GitHub -> ## Ссылки)
+_CONTACT_LETTER_KEYS = frozenset({"telegram", "email", "phone"})
+
+_EMAIL_EXTRACT_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+# t.me/ only — bare @ is handled by parse_telegram_handle (never youtube.com/@…)
+_TG_HANDLE_EXTRACT_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?t\.me/([A-Za-z0-9_]{4,64})",
+    re.I,
+)
+_TG_CONTEXT_RE = re.compile(
+    r"(?is)(?:telegram|телеграм|\bтг\b|\btg\b)\s*(?:в\s+базе)?\s*[:\-–—]?\s*(?:->|→)?\s*"
+    r"(?:https?://(?:www\.)?t\.me/|@)?([A-Za-z0-9_]{4,64})",
+)
+_TG_BARE_HANDLE_RE = re.compile(r"^@?([A-Za-z0-9_]{4,64})$")
+_NON_TELEGRAM_URL_RE = re.compile(
+    r"(?i)https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|"
+    r"linkedin\.com|github\.com|facebook\.com|x\.com|twitter\.com|blackhatworld\.com)/"
+)
 
 # Smoke / placeholder / local URLs must never appear under ## Контакты / ## Ссылки
 _JUNK_CONTACT_URL_RE = re.compile(
@@ -641,6 +696,29 @@ _GENERIC_LINK_LABELS = frozenset(
 
 def is_junk_contact_url(url: str) -> bool:
     return bool(_JUNK_CONTACT_URL_RE.search(url or ""))
+
+
+def parse_telegram_handle(value: str) -> str:
+    """Extract Telegram handle. Never map YouTube/social @handles to Telegram.
+
+    Allowed: explicit t.me/USER, bare `@user` / `user` as the whole value,
+    or Telegram:/Тг: context (via _TG_CONTEXT_RE callers). Not youtube.com/@…
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    # Any non-Telegram http(s) URL must not yield a handle (youtube.com/@iq_boosted)
+    if _NON_TELEGRAM_URL_RE.search(v) and "t.me/" not in v.lower():
+        return ""
+    if re.search(r"(?i)https?://", v) and "t.me/" not in v.lower():
+        return ""
+    m = _TG_HANDLE_EXTRACT_RE.search(v)
+    if m:
+        return f"@{m.group(1).lstrip('@')}"
+    m = _TG_BARE_HANDLE_RE.fullmatch(v)
+    if m:
+        return f"@{m.group(1).lstrip('@')}"
+    return ""
 
 
 def is_junk_profile_link_url(url: str) -> bool:
@@ -728,11 +806,10 @@ def filter_contact_dict(contacts: Optional[Dict[str, str]]) -> Dict[str, str]:
                 continue
             val = em.group(0)
         elif key == "telegram":
-            hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", val)
-            if not hm:
+            handle = parse_telegram_handle(val)
+            if not handle:
                 continue
-            handle = hm.group(1) if hm.lastindex else hm.group(0)
-            val = f"@{str(handle).lstrip('@')}"
+            val = handle
         elif key == "phone":
             if len(val) > 40:
                 continue
@@ -758,7 +835,11 @@ def is_contact_bullet_line(line: str) -> bool:
         return True
     if _EMAIL_EXTRACT_RE.search(s) and len(s) < 120:
         return True
-    if _TG_HANDLE_EXTRACT_RE.search(s) and len(s) < 100:
+    if "t.me/" in s.lower() and len(s) < 100:
+        return True
+    if re.search(r"(?i)telegram|телеграм|\bтг\b", s) and parse_telegram_handle(
+        re.sub(r"(?i)^[-*•]?\s*(?:telegram|телеграм|тг)\s*[:：]\s*", "", s).strip()
+    ):
         return True
     if _KNOWN_CONTACT_HOST_RE.search(s):
         return True
@@ -782,43 +863,66 @@ def _upsert_labeled_link(
     *,
     label: str,
     url: str,
+    value: str = "",
     require_meaningful_label: bool = True,
 ) -> None:
+    """Upsert by URL. Prefer longer/richer `value` (title text + URL) when colliding."""
     if not is_relevant_link_url(url):
         return
     lab = _normalize_link_label(label)
     if require_meaningful_label and not _is_meaningful_link_label(lab):
         return
     clean_url = url.strip()[:500]
+    # Preserve "Title text https://..." when present; else plain URL
+    raw_val = (value or "").strip()
+    if raw_val and extract_http_url(raw_val) == clean_url:
+        display = re.sub(r"\s+", " ", raw_val).strip()[:500]
+    else:
+        display = clean_url
     key = _link_url_key(clean_url)
     for item in bucket:
         if _link_url_key(str(item.get("url") or "")) == key:
             if _is_meaningful_link_label(lab):
-                item["label"] = lab
+                prev_lab = str(item.get("label") or "")
+                # Never downgrade a specific label (LinkedIn) to Portfolio/Ссылка
+                if prev_lab.lower() not in _GENERIC_LINK_LABELS and lab.lower() in _GENERIC_LINK_LABELS | {
+                    "portfolio",
+                    "портфолио",
+                }:
+                    pass
+                elif len(lab) >= len(prev_lab) or prev_lab.lower() in _GENERIC_LINK_LABELS:
+                    item["label"] = lab
             item["url"] = clean_url
+            prev_val = str(item.get("value") or "")
+            if len(display) > len(prev_val):
+                item["value"] = display
             return
-    bucket.append({"label": lab, "url": clean_url})
+    bucket.append({"label": lab, "url": clean_url, "value": display})
 
 
 def extract_labeled_links_from_text(text: str) -> List[Dict[str, str]]:
-    """Parse ONLY labeled links (label: url). Never bare/footer crawl URLs."""
+    """Parse ONLY labeled links (label: value). Keep title text before URL in value."""
     raw = (text or "").strip()
     if not raw:
         return []
     out: List[Dict[str, str]] = []
 
-    def _consume_block(block: str, *, labeled_only: bool = True) -> None:
+    def _consume_block(block: str) -> None:
         for line in (block or "").splitlines():
             s = line.strip()
             if not s or s.startswith("#") or s.startswith("["):
                 continue
-            # "- label: url" or "label: optional text https://..."
             m = re.match(r"^\s*[-*•]?\s*([^:]{1,120})\s*[:：]\s*(.+?)\s*$", s)
             if not m:
-                # Never harvest bare http lines (YouTube footer dumps)
-                continue
-            label = m.group(1).strip()
-            val = m.group(2).strip()
+                # Also: "видео-демо о тестирование гипотезы https://youtu.be/…" (no colon)
+                m2 = re.match(r"^\s*[-*•]?\s*(.{2,120}?)\s+(https?://\S+)\s*$", s)
+                if not m2:
+                    continue
+                label = m2.group(1).strip().rstrip(":")
+                val = m2.group(2).strip()
+            else:
+                label = m.group(1).strip()
+                val = m.group(2).strip()
             ck = _canonical_override_key(label)
             if ck in _CONTACT_CHANNEL_KEYS:
                 continue
@@ -826,22 +930,26 @@ def extract_labeled_links_from_text(text: str) -> List[Dict[str, str]]:
                 continue
             url = extract_http_url(val)
             if url:
-                _upsert_labeled_link(out, label=label, url=url, require_meaningful_label=True)
+                _upsert_labeled_link(
+                    out,
+                    label=label,
+                    url=url,
+                    value=val,
+                    require_meaningful_label=True,
+                )
 
-    # Prefer ## Ссылки / Relevant links sections
+    # Prefer ## Ссылки sections first (canonical order)
     for m in _LINKS_HEADING_RE.finditer(raw):
         rest = raw[m.end() :]
         next_h = re.search(r"(?m)^#{1,6}\s+\S", rest)
         block = rest[: next_h.start()] if next_h else rest
         _consume_block(block)
 
-    # [CONTACTS] / [LINKS] template blocks (URLs that are not TG/email)
-    for tag in ("CONTACTS", "LINKS", "ССЫЛКИ"):
+    for tag in ("LINKS", "ССЫЛКИ", "CONTACTS"):
         cm = re.search(rf"(?is)\[{tag}\]\s*(.*?)(?=\n\s*\[[A-ZА-Я_]+\]|\Z)", raw)
         if cm:
             _consume_block(cm.group(1))
 
-    # Whole text: labeled lines only (Правки профиля / инструкции)
     _consume_block(raw)
     return out[:24]
 
@@ -852,11 +960,119 @@ def extract_contacts_from_cover_template(template: str) -> Dict[str, str]:
     if not raw:
         return {}
     section = raw
-    m = re.search(r"(?is)\[CONTACTS\]\s*(.*?)(?=\n\s*\[[A-Z_]+\]|\Z)", raw)
+    # Stop at next [TAG] or markdown ## (so ## Ссылки LinkedIn stays out of Контакты)
+    m = re.search(
+        r"(?is)\[CONTACTS\]\s*(.*?)(?=\n\s*\[[A-ZА-Я_]+\]|\n\s*#{1,6}\s+\S|\Z)",
+        raw,
+    )
     if m:
         section = m.group(1).strip()
     parsed = extract_contacts_from_rag_edits(section) or extract_contacts_from_rag_edits(raw)
     return filter_contact_dict(parsed)
+
+
+def _vacancy_skill_looks_like_junk(text: str) -> bool:
+    s = re.sub(r"\s+", " ", (text or "").strip())
+    if not s:
+        return True
+    if len(s) > _MAX_VACANCY_SKILL_LEN:
+        return True
+    if _VACANCY_SKILL_JUNK_RE.search(s):
+        return True
+    if _VACANCY_SKILL_GLUE_RE.search(s):
+        return True
+    # Multiple meta-style "label: value" fragments glued together
+    if s.count(":") >= 2 and len(s) > 40:
+        return True
+    # Sentence-like requirement prose (keep short skill phrases)
+    if len(s) > 55 and re.search(r"\b(?:опыт|или|аналогичн|платформ|ежедневн)\b", s, re.I):
+        return True
+    return False
+
+
+def _recover_known_tools_from_text(text: str) -> List[str]:
+    """Pull clean tool tokens (amoCRM, Bitrix24, …) out of glued HH chrome."""
+    low = (text or "").lower()
+    found: List[str] = []
+    # Longer keys first so "bitrix24" wins over "bitrix"
+    keys = sorted(_TOOL_DISPLAY.keys(), key=len, reverse=True)
+    for key in keys:
+        if key in low:
+            found.append(_TOOL_DISPLAY[key])
+            continue
+        # Word-ish match for compact tokens already in _KNOWN_TOOLS
+    for tool in ("amocrm", "bitrix24", "manychat", "n8n", "comfyui"):
+        if tool in low:
+            found.append(_TOOL_DISPLAY.get(tool, tool))
+    # Dedupe preserving order
+    out: List[str] = []
+    seen: Set[str] = set()
+    for item in found:
+        k = item.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(item)
+    return out
+
+
+def sanitize_vacancy_skills(
+    raw_skills: Optional[Iterable[str]],
+    *,
+    extra_blob: str = "",
+) -> List[str]:
+    """Clean vacancy skill chips for relevance UI — never HH chrome blobs.
+
+    Splits commas/semicolons, drops смотр/часы/формат/… junk, rejects glued
+    concatenations, recovers amoCRM / Bitrix24 / ManyChat as clean tokens.
+    """
+    out: List[str] = []
+    seen: Set[str] = set()
+
+    def _push(label: str) -> None:
+        lab = re.sub(r"\s+", " ", (label or "").strip(" .;-•*|\t"))
+        if not lab or len(lab) < 2:
+            return
+        low = lab.lower().replace("ё", "е")
+        # Known tool -> canonical display
+        for key, display in sorted(_TOOL_DISPLAY.items(), key=lambda kv: -len(kv[0])):
+            if low == key or low.replace(" ", "") == key.replace(" ", ""):
+                lab = display
+                low = display.lower()
+                break
+        if low in seen:
+            return
+        if _vacancy_skill_looks_like_junk(lab):
+            for tool in _recover_known_tools_from_text(lab):
+                tk = tool.lower()
+                if tk not in seen:
+                    seen.add(tk)
+                    out.append(tool)
+            return
+        seen.add(low)
+        out.append(lab[:_MAX_VACANCY_SKILL_LEN])
+
+    for raw in raw_skills or []:
+        chunk = str(raw or "").strip()
+        if not chunk:
+            continue
+        # Prefer splitting glued meta; also recover tools from whole chunk first
+        if _vacancy_skill_looks_like_junk(chunk):
+            for tool in _recover_known_tools_from_text(chunk):
+                _push(tool)
+            # Still try comma pieces in case mixed clean+junk
+            for part in _SKILL_SPLIT.split(chunk):
+                p = part.strip()
+                if p and not _vacancy_skill_looks_like_junk(p):
+                    _push(p)
+            continue
+        for part in _SKILL_SPLIT.split(chunk):
+            _push(part.strip())
+
+    if extra_blob:
+        for tool in _recover_known_tools_from_text(extra_blob):
+            _push(tool)
+
+    return out[:40]
 
 
 def collect_generate_contacts(
@@ -883,10 +1099,13 @@ def collect_generate_contacts(
         title = str(lk.get("title") or "").strip().lower()
         if not url or is_junk_profile_link_url(url):
             continue
-        if "t.me/" in url.lower() or title == "telegram":
-            hm = _TG_HANDLE_EXTRACT_RE.search(url)
-            if hm:
-                out.setdefault("telegram", f"@{hm.group(1).lstrip('@')}")
+        if "t.me/" in url.lower():
+            handle = parse_telegram_handle(url)
+            if handle:
+                out.setdefault("telegram", handle)
+            continue
+        if title == "telegram":
+            # Title says telegram but URL might be wrong host — only t.me
             continue
         if url.lower().startswith("mailto:") or ("@" in url and "://" not in url):
             em = _EMAIL_EXTRACT_RE.search(url.replace("mailto:", ""))
@@ -917,9 +1136,9 @@ def collect_generate_contacts(
         ):
             continue
         if ck == "telegram":
-            hm = _TG_HANDLE_EXTRACT_RE.search(v) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", v)
-            if hm:
-                out["telegram"] = f"@{hm.group(1).lstrip('@')}"
+            handle = parse_telegram_handle(v)
+            if handle:
+                out["telegram"] = handle
             continue
         if ck == "email":
             em = _EMAIL_EXTRACT_RE.search(v)
@@ -954,30 +1173,32 @@ def collect_generate_links(
     merged: Optional[Dict[str, Any]] = None,
     prompt_extra: str = "",
 ) -> List[Dict[str, str]]:
-    """Collect ## Ссылки from authoritative labeled sources only.
+    """Collect ## Ссылки ONLY from cover_template + profile overrides (+ promptExtra).
 
-    Allowed: cover_template [CONTACTS]/## Ссылки, profileOverrides / rag_edits labeled
-    lines, promptExtra labeled lines, structured profile links WITH a real title.
-    Never: vacancy HTML, YouTube footer crawl, unlabeled regex dumps from RAG blobs.
+    Never vacancy HTML, YouTube footer crawl, or unlabeled profile.links dumps.
+    Preserves Russian labels and optional title text before the URL.
+    Priority: cover_template > rag_edits/overrides > promptExtra.
     """
     out: List[Dict[str, str]] = []
     profile = merged or {}
 
-    # 1) Authoritative text blocks first (template / overrides / instructions)
-    for blob in (
-        cover_template or "",
-        str(profile.get("rag_edits") or ""),
-        prompt_extra or "",
-    ):
+    def _ingest_blob(blob: str) -> None:
         for item in extract_labeled_links_from_text(blob):
             _upsert_labeled_link(
                 out,
                 label=item.get("label") or "",
                 url=item.get("url") or "",
+                value=str(item.get("value") or item.get("url") or ""),
                 require_meaningful_label=True,
             )
 
-    # 2) Explicit overrides dict keys (Russian labels preserved)
+    # 1) Cover template first (canonical ## Ссылки / [CONTACTS] labeled URLs)
+    _ingest_blob(cover_template or "")
+
+    # 2) KB profile overrides (Правки профиля / rag_edits)
+    _ingest_blob(str(profile.get("rag_edits") or ""))
+
+    # 3) Explicit overrides dict (keys = labels, values may include title + URL)
     for key, val in (overrides or {}).items():
         ck = str(key or "").strip()
         if not ck or ck.startswith("_") or ck == "rag_edits":
@@ -990,34 +1211,71 @@ def collect_generate_links(
         if not url:
             continue
         if canon in ("github", "linkedin", "portfolio", "website", "site"):
-            label = {
+            # Keep user-facing label casing when they wrote LinkedIn / Portfolio
+            label = ck if ck[:1].isupper() or any(c.isupper() for c in ck[1:]) else {
                 "github": "GitHub",
                 "linkedin": "LinkedIn",
                 "portfolio": "Portfolio",
                 "website": "Сайт",
                 "site": "Сайт",
             }.get(canon, ck)
+            if canon == "linkedin" and ck.lower() == "linkedin":
+                label = "LinkedIn"
         elif canon == "link":
-            # Generic "link" key without specific label - skip unless URL is clearly personal
             continue
         else:
             label = ck
-        _upsert_labeled_link(out, label=label, url=url, require_meaningful_label=True)
+        _upsert_labeled_link(out, label=label, url=url, value=v, require_meaningful_label=True)
 
-    # 3) Structured profile links ONLY when they carry a meaningful user title
-    #    (skip empty-title crawl dumps from YouTube/Jina page HTML)
-    for lk in profile.get("links") or []:
-        if not isinstance(lk, dict):
-            continue
-        url = str(lk.get("url") or "").strip()
-        title = str(lk.get("title") or lk.get("label") or "").strip()
-        if not title or not _is_meaningful_link_label(title):
-            continue
-        if not is_relevant_link_url(url):
-            continue
-        _upsert_labeled_link(out, label=title, url=url, require_meaningful_label=True)
+    # 4) Generation instructions (also accept labeled ## Ссылки there)
+    _ingest_blob(prompt_extra or "")
 
     return out[:20]
+
+
+def format_links_block(links: List[Dict[str, str]]) -> str:
+    """Emit ## Ссылки with original labels and value (title text + URL when present)."""
+    if not links:
+        return ""
+    lines = ["## Ссылки"]
+    for item in links:
+        url = str(item.get("url") or "").strip()
+        if not is_relevant_link_url(url):
+            continue
+        label = _normalize_link_label(str(item.get("label") or ""))
+        if not _is_meaningful_link_label(label):
+            continue
+        value = str(item.get("value") or "").strip()
+        if value and extract_http_url(value):
+            display = re.sub(r"\s+", " ", value).strip()
+        else:
+            display = url
+        lines.append(f"{label}: {display}")
+    if len(lines) <= 1:
+        return ""
+    return "\n".join(lines)
+
+
+def ensure_links_in_cover_letter(text: str, links: List[Dict[str, str]]) -> str:
+    """Replace any LLM ## Ссылки with the canonical labeled list from template/overrides."""
+    body = strip_empty_markdown_headings(text or "")
+    clean: List[Dict[str, str]] = []
+    for item in links or []:
+        _upsert_labeled_link(
+            clean,
+            label=str(item.get("label") or item.get("title") or ""),
+            url=str(item.get("url") or "").strip(),
+            value=str(item.get("value") or item.get("url") or ""),
+            require_meaningful_label=True,
+        )
+    body = strip_links_section(body)
+    body = strip_empty_markdown_headings(body)
+    if not clean:
+        return body
+    block = format_links_block(clean)
+    if not block:
+        return body
+    return (body.rstrip() + "\n\n" + block).strip()
 
 
 def _contact_needle(key: str, value: str) -> str:
@@ -1054,33 +1312,133 @@ def strip_empty_markdown_headings(text: str) -> str:
 
 
 def format_contacts_block(contacts: Dict[str, str]) -> str:
+    """## Контакты: only Telegram/Email/phone. LinkedIn/GitHub stay in ## Ссылки."""
     clean = filter_contact_dict(contacts)
     if not clean:
         return ""
     labels = dict(_CONTACT_LABELS)
     lines = ["## Контакты"]
-    for key in _CONTACT_ORDER:
+    for key in ("telegram", "email", "phone"):
         val = clean.get(key)
         if not val:
             continue
         label = labels.get(key, key.capitalize())
         lines.append(f"- {label}: {val}")
-    return "\n".join(lines)
-
-
-def format_links_block(links: List[Dict[str, str]]) -> str:
-    if not links:
-        return ""
-    lines = ["## Ссылки"]
-    for item in links:
-        url = str(item.get("url") or "").strip()
-        if not is_relevant_link_url(url):
-            continue
-        label = _normalize_link_label(str(item.get("label") or "Ссылка"))
-        lines.append(f"{label}: {url}")
     if len(lines) <= 1:
         return ""
     return "\n".join(lines)
+
+
+def url_fields_as_links(contacts: Dict[str, str]) -> List[Dict[str, str]]:
+    """Promote LinkedIn/GitHub/portfolio/website from contact dict into ## Ссылки."""
+    mapping = (
+        ("linkedin", "LinkedIn"),
+        ("github", "GitHub"),
+        ("portfolio", "Portfolio"),
+        ("website", "Сайт"),
+        # Generic "link" only if URL is clearly LinkedIn/GitHub; else Portfolio
+    )
+    out: List[Dict[str, str]] = []
+    for key, label in mapping:
+        url = str((contacts or {}).get(key) or "").strip()
+        if url and is_relevant_link_url(url):
+            _upsert_labeled_link(out, label=label, url=url, value=url, require_meaningful_label=True)
+    generic = str((contacts or {}).get("link") or "").strip()
+    if generic and is_relevant_link_url(generic):
+        low = generic.lower()
+        if "linkedin.com" in low:
+            lab = "LinkedIn"
+        elif "github.com" in low:
+            lab = "GitHub"
+        else:
+            lab = "Portfolio"
+        _upsert_labeled_link(out, label=lab, url=generic, value=generic, require_meaningful_label=True)
+    return out
+
+
+def validate_and_rewrite_cover_letter_v1(
+    text: str,
+    *,
+    contacts: Dict[str, str],
+    links: List[Dict[str, str]],
+) -> Tuple[str, Dict[str, Any]]:
+    """V1 generation validator: authoritative ## Контакты / ## Ссылки rewrite.
+
+    - Replace LLM blocks entirely from template/overrides sources
+    - Telegram only from parse_telegram_handle (never YouTube @)
+    - Ensure every canonical link URL is present
+    - Drop LinkedIn/etc from Контакты (prefer ## Ссылки)
+    """
+    fixes: List[str] = []
+    channel_contacts = {
+        k: v for k, v in filter_contact_dict(contacts).items() if k in _CONTACT_LETTER_KEYS
+    }
+    # Drop telegram if it matches a youtube.com/@handle from links
+    tg = channel_contacts.get("telegram") or ""
+    tg_h = tg.lstrip("@").lower()
+    for item in links or []:
+        url = str(item.get("url") or "").lower()
+        if tg_h and f"youtube.com/@{tg_h}" in url:
+            channel_contacts.pop("telegram", None)
+            fixes.append("dropped_telegram_youtube_handle")
+            break
+
+    merged_links: List[Dict[str, str]] = []
+    for item in links or []:
+        _upsert_labeled_link(
+            merged_links,
+            label=str(item.get("label") or ""),
+            url=str(item.get("url") or ""),
+            value=str(item.get("value") or item.get("url") or ""),
+            require_meaningful_label=True,
+        )
+    for item in url_fields_as_links(contacts):
+        _upsert_labeled_link(
+            merged_links,
+            label=item.get("label") or "",
+            url=item.get("url") or "",
+            value=item.get("value") or item.get("url") or "",
+            require_meaningful_label=True,
+        )
+
+    body = ensure_contacts_in_cover_letter(text, channel_contacts)
+    body = ensure_links_in_cover_letter(body, merged_links)
+    fixes.append("rewrote_contacts")
+    fixes.append("rewrote_links")
+
+    # Ensure all canonical URLs present
+    missing_urls: List[str] = []
+    for item in merged_links:
+        url = str(item.get("url") or "")
+        if not url:
+            continue
+        if url not in body and url.rstrip("/") not in body:
+            missing_urls.append(url)
+    if missing_urls:
+        body = ensure_links_in_cover_letter(strip_links_section(body), merged_links)
+        fixes.append(f"ensured_urls:{len(missing_urls)}")
+
+    # Reject hallucinated telegram in body if not in allowlist
+    m = re.search(r"(?im)^[-*•]?\s*Telegram:\s*(@?[A-Za-z0-9_]{4,64})", body)
+    if m:
+        got = parse_telegram_handle(m.group(1))
+        want = channel_contacts.get("telegram") or ""
+        if got and want and got.lower() != want.lower():
+            body = ensure_contacts_in_cover_letter(body, channel_contacts)
+            fixes.append("fixed_telegram_mismatch")
+        elif got and not want:
+            body = ensure_contacts_in_cover_letter(strip_contacts_section(body), channel_contacts)
+            fixes.append("stripped_unauthorized_telegram")
+
+    return body, {
+        "ok": True,
+        "version": 1,
+        "fixes": fixes,
+        "rewroteContacts": True,
+        "rewroteLinks": True,
+        "contactKeys": sorted(channel_contacts.keys()),
+        "linkCount": len(merged_links),
+    }
 
 
 def strip_markdown_section(text: str, heading_re: re.Pattern) -> str:
@@ -1138,34 +1496,19 @@ def ensure_contacts_in_cover_letter(text: str, contacts: Dict[str, str]) -> str:
     return sanitize_contacts_section_inplace(body)
 
 
-def ensure_links_in_cover_letter(text: str, links: List[Dict[str, str]]) -> str:
-    """Rebuild ## Ссылки from authoritative labeled links only (never LLM/crawl dumps)."""
-    body = strip_empty_markdown_headings(text or "")
-    clean: List[Dict[str, str]] = []
-    for item in links or []:
-        url = str(item.get("url") or "").strip()
-        label = str(item.get("label") or item.get("title") or "").strip()
-        _upsert_labeled_link(clean, label=label, url=url, require_meaningful_label=True)
-    # Always strip any LLM/crawl ## Ссылки section, then append authoritative block only
-    body = strip_links_section(body)
-    body = strip_empty_markdown_headings(body)
-    if not clean:
-        return body
-    block = format_links_block(clean)
-    if not block:
-        return body
-    return (body.rstrip() + "\n\n" + block).strip()
-
-
 def finalize_cover_letter_contacts_and_links(
     text: str,
     *,
     contacts: Dict[str, str],
     links: List[Dict[str, str]],
+    profile_blob: str = "",
 ) -> str:
-    """Post-process: ## Контакты then ## Ссылки."""
-    body = ensure_contacts_in_cover_letter(text, contacts)
-    return ensure_links_in_cover_letter(body, links)
+    """Post-process: anti-embellish + authoritative ## Контакты / ## Ссылки (V1)."""
+    body = text or ""
+    if profile_blob:
+        body, _emb = strip_embellished_language_claims(body, profile_blob)
+    body, _meta = validate_and_rewrite_cover_letter_v1(body, contacts=contacts, links=links)
+    return body
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
     """Heuristic structured params for RAG matching touchpoints."""
@@ -1704,26 +2047,33 @@ def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> 
 
 def vacancy_to_match_blob(vacancy: JobResponderVacancyPayload) -> Dict[str, Any]:
     st = vacancy.structured
-    skills = list(st.keySkills) if st and st.keySkills else []
+    raw_skills = list(st.keySkills) if st and st.keySkills else []
+    # Match blob: do NOT feed sidebar meta (workingHours / viewers chrome) into skill regex
     blob = " ".join(
         p
         for p in (
             vacancy.title,
             vacancy.company or "",
             vacancy.description[:3000],
-            (st.salary if st else None) or "",
-            (st.experience if st else None) or "",
-            (st.employmentType if st else None) or "",
-            (st.schedule if st else None) or "",
-            (st.workingHours if st else None) or "",
-            (st.workFormat if st else None) or "",
-            " ".join(skills),
+            " ".join(raw_skills),
         )
         if p
     )
     profile = extract_resume_profile(blob, title=vacancy.title)
-    if skills:
-        profile["skills"] = _uniq_lower([*skills, *profile.get("skills", [])], 50)
+    # Authoritative skills = sanitized chips (+ tools recovered from description)
+    clean_skills = sanitize_vacancy_skills(
+        [*raw_skills, *(profile.get("skills") or [])],
+        extra_blob=f"{vacancy.title}\n{vacancy.description[:4000]}",
+    )
+    profile["skills"] = clean_skills
+    # Keep tools aligned with cleaned skills + known tool scan on description only
+    desc_low = f"{vacancy.title} {vacancy.description[:4000]}".lower()
+    tools = [t for t in _KNOWN_TOOLS if t in desc_low]
+    for sk in clean_skills:
+        low = sk.lower().replace(" ", "")
+        if low in _KNOWN_TOOLS or any(k.replace(" ", "") == low for k in _TOOL_DISPLAY):
+            tools.append(sk.lower())
+    profile["tools"] = _uniq_lower([*(profile.get("tools") or []), *tools], 40)
     if st:
         if st.workFormat:
             wf = st.workFormat.lower()
@@ -1771,8 +2121,15 @@ def score_resume_vs_vacancy(
 ) -> Dict[str, Any]:
     """Deterministic 0–100 score with explainable matched/missing bullets."""
     vac_profile = vacancy_to_match_blob(vacancy)
-    vac_skills = {s.lower() for s in (vac_profile.get("skills") or [])}
+    # Defense in depth: never surface HH chrome in missing/matched skill lines
+    vac_skills_list = sanitize_vacancy_skills(
+        vac_profile.get("skills") or [],
+        extra_blob=f"{vacancy.title}\n{(vacancy.description or '')[:2000]}",
+    )
+    vac_profile["skills"] = vac_skills_list
+    vac_skills = {s.lower() for s in vac_skills_list}
     vac_tools = {s.lower() for s in (vac_profile.get("tools") or [])}
+    vac_tools |= {s.lower() for s in vac_skills_list if s.lower().replace(" ", "") in _KNOWN_TOOLS}
     vac_roles = {s.lower() for s in (vac_profile.get("roles") or [])}
     vac_domains = {s.lower() for s in (vac_profile.get("domains") or [])}
     vac_prefs = {s.lower() for s in (vac_profile.get("employment_preferences") or [])}
@@ -2105,8 +2462,9 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
-4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, демо, форум…). Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
-5. ASCII " и дефис -. Русский, если не просили иначе.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
+5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
+6. ASCII " и дефис -. Русский, если не просили иначе.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -2144,10 +2502,56 @@ youtube: https://...
 [OUT qa] [{"question":"...","answer":"..."}]"""
 
 CONTACTS_LINKS_RULE = (
-    "## Контакты: email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт). "
-    "## Ссылки: все релевантные URL с подписями из template/contacts/profile. "
+    "## Контакты: только email/Telegram/телефон. "
+    "## Ссылки: все релевантные URL с подписями из template. "
+    "YouTube @ ≠ Telegram. Без приукрашивания уровней (Proficient ≠ C1). "
     "Без опыта, навыков, smoke URL. Не выдумывай."
 )
+
+_CEFR_EMBELLISH_RE = re.compile(
+    r"(?i)\b(?:C1|C2|B2|B1|A2|A1|CEFR|IELTS|TOEFL)\b|"
+    r"свободно\s+владею|на\s+продвинут\w+\s+уровн|native[- ]?like|"
+    r"экспертн\w+\s+уровн|fluently?\s+(?:speak|master)"
+)
+
+
+def strip_embellished_language_claims(letter: str, profile_blob: str) -> Tuple[str, List[str]]:
+    """Drop/soften bullets that invent CEFR/fluency not present in profile/RAG."""
+    src = (profile_blob or "").lower()
+    src_has_cefr = bool(re.search(r"\b(?:c1|c2|b2|b1|a2|a1|cefr|ielts|toefl)\b", src))
+    if src_has_cefr:
+        return letter, []
+    fixes: List[str] = []
+    out_lines: List[str] = []
+    for ln in (letter or "").splitlines():
+        if not _CEFR_EMBELLISH_RE.search(ln):
+            out_lines.append(ln)
+            continue
+        # Invented CEFR / "свободно" / advanced fluency
+        if re.search(r"(?i)english|английск", ln) and "proficient" in src:
+            replacement = (
+                "3. **English (Proficient)** - Английский на уровне Proficient "
+                "(формулировка как в профиле; без CEFR)."
+            )
+            # Keep list numbering if present
+            num = re.match(r"^(\s*\d+\.\s*)", ln)
+            if num:
+                replacement = num.group(1) + replacement.split(". ", 1)[-1]
+            out_lines.append(replacement)
+            fixes.append("rewrote_proficient_no_cefr")
+            continue
+        if re.search(r"(?i)english|английск|язык", ln):
+            fixes.append("dropped_embellished_language_bullet")
+            continue
+        # Non-language CEFR noise — strip tokens only
+        soft = _CEFR_EMBELLISH_RE.sub("", ln)
+        soft = re.sub(r"\s{2,}", " ", soft).strip(" -–—*")
+        if soft:
+            out_lines.append(soft)
+            fixes.append("stripped_cefr_tokens")
+        else:
+            fixes.append("dropped_embellished_line")
+    return "\n".join(out_lines), fixes
 
 
 def _norm_prompt_blob(text: str) -> str:
@@ -2169,15 +2573,6 @@ def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optio
     return raw[: max(200, int(max_chars))]
 
 
-_EMAIL_EXTRACT_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-_TG_HANDLE_EXTRACT_RE = re.compile(
-    r"(?:(?:https?://)?t\.me/|@)([A-Za-z0-9_]{4,64})",
-    re.I,
-)
-_TG_CONTEXT_RE = re.compile(
-    r"(?is)(?:telegram|телеграм|тг)\s*(?:в\s+базе)?\s*[:\-–—]?\s*(?:->|→)?\s*"
-    r"(?:https?://t\.me/|@)?([A-Za-z0-9_]{4,64})",
-)
 _URL_EXTRACT_RE = re.compile(r"https?://[^\s|>,\"']+")
 
 _TG_OVERRIDE_KEYS = ("telegram", "tg", "телеграм", "тг")
@@ -2212,7 +2607,8 @@ def _canonical_override_key(key: str) -> str:
         return "email"
     if any(x in k for x in _PHONE_OVERRIDE_KEYS):
         return "phone"
-    for lk in _LINK_OVERRIDE_KEYS:
+    # Longer keys first so "linkedin" wins over substring "link"
+    for lk in sorted(_LINK_OVERRIDE_KEYS, key=len, reverse=True):
         if lk in k:
             return lk if lk in ("github", "linkedin", "portfolio", "website", "site") else "link"
     return k[:40]
@@ -2241,10 +2637,9 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
         if not key or not val or key.startswith("_"):
             continue
         if key == "telegram":
-            hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(r"^([A-Za-z0-9_]{4,64})$", val.lstrip("@"))
-            if hm:
-                handle = hm.group(1) if hm.lastindex else hm.group(0)
-                out["telegram"] = f"@{str(handle).lstrip('@')}"
+            handle = parse_telegram_handle(val)
+            if handle:
+                out["telegram"] = handle
             continue
         if key == "email":
             em = _EMAIL_EXTRACT_RE.search(val)
@@ -2270,23 +2665,17 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
             if label.lower() not in ("контакты", "contacts", "ссылки"):
                 link_extras[label] = url[:500]
 
-    # 2) Free-form Telegram near Russian/English labels
+    # 2) Free-form Telegram ONLY near Telegram/телеграм/тг labels — never bare youtube.com/@
     if "telegram" not in out:
         m = _TG_CONTEXT_RE.search(raw)
         if m:
-            out["telegram"] = f"@{m.group(1).lstrip('@')}"
+            handle = parse_telegram_handle(f"@{m.group(1).lstrip('@')}")
+            if handle:
+                out["telegram"] = handle
         else:
-            for hm in _TG_HANDLE_EXTRACT_RE.finditer(raw):
-                handle = hm.group(1)
-                start = hm.start()
-                window = raw[max(0, start - 40) : hm.end() + 40]
-                if _EMAIL_EXTRACT_RE.search(window) and "@" + handle in window:
-                    em = _EMAIL_EXTRACT_RE.search(window)
-                    if em and handle.lower() in em.group(0).lower():
-                        continue
-                if hm.group(0).startswith("http") or hm.group(0).startswith("@") or "t.me/" in hm.group(0).lower():
-                    out["telegram"] = f"@{handle}"
-                    break
+            for tm in re.finditer(r"(?i)(?:https?://)?(?:www\.)?t\.me/([A-Za-z0-9_]{4,64})", raw):
+                out["telegram"] = f"@{tm.group(1)}"
+                break
 
     # 3) Email anywhere
     if "email" not in out:
@@ -2347,11 +2736,9 @@ def normalize_profile_overrides(raw: Optional[Any]) -> Dict[str, str]:
             if not val:
                 continue
             if key == "telegram":
-                hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(
-                    r"^@?([A-Za-z0-9_]{4,64})$", val
-                )
-                if hm:
-                    out["telegram"] = f"@{hm.group(1).lstrip('@')}"
+                handle = parse_telegram_handle(val)
+                if handle:
+                    out["telegram"] = handle
                 continue
             if key == "email":
                 em = _EMAIL_EXTRACT_RE.search(val)
@@ -4871,10 +5258,19 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 merged=merged,
                 prompt_extra=prompt_extra,
             )
+            profile_blob = "\n".join(
+                [
+                    str(compact_text or ""),
+                    str((merged or {}).get("rag_edits") or ""),
+                    str((merged or {}).get("_text_blob") or ""),
+                    " ".join(str(x) for x in ((merged or {}).get("languages") or [])),
+                ]
+            )
             raw_text = finalize_cover_letter_contacts_and_links(
                 raw_text,
                 contacts=known_contacts,
                 links=known_links,
+                profile_blob=profile_blob,
             )
 
         sources = [

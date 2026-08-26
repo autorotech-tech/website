@@ -712,24 +712,86 @@
     return '';
   }
 
+  function isJunkSkillToken(t) {
+    const s = String(t || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!s || s.length < 2 || s.length > 60) return true;
+    if (
+      /смотр|челове|рабочие\s*часы|формат\s*работы|уровень\s*дохода|не\s*указан|прямо\s*сейчас\s*трансформ|сейчас\s*эту\s*вакансию|опыт\s*работы\s*:|тип\s*занятости|график\s*работы/i.test(
+        s
+      )
+    ) {
+      return true;
+    }
+    if (/\d(?:рабоч|формат|опыт|час|человек)|(?:удал\w*|гибрид\w*)сейчас|не\s*указан\w*опыт/i.test(s)) {
+      return true;
+    }
+    if ((s.match(/:/g) || []).length >= 2) return true;
+    return false;
+  }
+
+  function normalizeSkillChip(t) {
+    const s = String(t || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const low = s.toLowerCase();
+    if (low === 'amocrm' || low === 'amo crm') return 'amoCRM';
+    if (low === 'bitrix24' || low === 'bitrix 24' || low === 'битрикс24' || low === 'битрикс 24') {
+      return 'Bitrix24';
+    }
+    if (low === 'manychat' || low === 'many chat') return 'ManyChat';
+    return s;
+  }
+
   function extractKeySkills(rootText) {
     const skills = [];
-    const skillNodes = document.querySelectorAll(
-      '[data-qa="skills-element"], [data-qa="bloko-tag__text"], .bloko-tag__section_text, .skill, .tag, [class*="skill"]'
-    );
-    skillNodes.forEach((el) => {
-      const t = textOf(el);
-      if (t && t.length >= 2 && t.length <= 60 && !skills.includes(t)) skills.push(t);
-    });
+    const push = (raw) => {
+      const t = normalizeSkillChip(raw);
+      if (!t || isJunkSkillToken(t)) return;
+      if (!skills.includes(t)) skills.push(t);
+    };
 
-    const block = matchLine(rootText, [
-      /(?:ключевые навыки|key skills|skills|required skills|требования к навыкам)[:\s]+(.{5,400})/i,
-    ]);
-    if (block) {
-      block.split(/[,;/|•·]/).forEach((p) => {
-        const s = p.trim();
-        if (s && s.length >= 2 && s.length <= 60 && !skills.includes(s)) skills.push(s);
+    // HH skill chips only — NOT broad .tag / [class*="skill"] (sidebar/meta chrome)
+    const chipSelectors = [
+      '[data-qa="skills-element"]',
+      '[data-qa="bloko-tag__text"]',
+      '.vacancy-skill-list .bloko-tag__section_text',
+      '.bloko-tag__section_text',
+      '[data-qa="vacancy-skills"] .bloko-tag__section_text',
+      '[class*="vacancy-skill"] [data-qa="bloko-tag__text"]',
+    ];
+    const seenEl = new Set();
+    for (const sel of chipSelectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (seenEl.has(el)) return;
+        // Skip tags outside skills / description areas (footer, related, viewers)
+        const near = el.closest(
+          '[data-qa="skills-element"], [data-qa="vacancy-skills"], .vacancy-section, ' +
+            '[data-qa="vacancy-description"], .vacancy-description, .g-user-content, main, article'
+        );
+        if (!near && !el.matches('[data-qa="skills-element"], [data-qa="bloko-tag__text"]')) {
+          return;
+        }
+        // Reject chips that sit in salary / experience / viewers blocks
+        const ban = el.closest(
+          '[data-qa="vacancy-salary"], [data-qa="vacancy-experience"], ' +
+            '[data-qa*="viewer"], footer, nav, [data-qa="vacancy-view-fav-button"]'
+        );
+        if (ban) return;
+        seenEl.add(el);
+        push(textOf(el));
       });
+    }
+
+    // Fallback: only the "Ключевые навыки" line — stop before HH meta chrome
+    if (skills.length < 2) {
+      const block = matchLine(rootText, [
+        /(?:ключевые навыки|key skills)[:\s]+(.{5,240}?)(?=(?:рабочие часы|формат работы|уровень дохода|опыт работы|сейчас эту вакансию|$))/i,
+      ]);
+      if (block) {
+        block.split(/[,;/|•·]+/).forEach((p) => push(p));
+      }
     }
     return skills.slice(0, 30);
   }

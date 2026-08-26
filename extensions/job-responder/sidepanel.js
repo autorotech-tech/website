@@ -89,8 +89,9 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
-4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок (резюме, youtube, демо…). Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
-5. ASCII " и дефис -. Русский, если не просили иначе.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок (резюме, youtube, LinkedIn, демо…). YouTube @handle ≠ Telegram. Не выдумывай URL.
+5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
+6. ASCII " и дефис -. Русский, если не просили иначе.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -139,9 +140,15 @@ CTA: Готов обсудить детали в удобном формате.
 [CONTACTS]
 Telegram: @autoro_tech
 Email: autoro.tech@gmail.com
-Portfolio:
-LinkedIn:
-GitHub:`;
+
+## Ссылки
+резюме: https://autoro.tech/resume/
+youtube: https://www.youtube.com/@iq_boosted
+LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/
+профиль на форуме по интернет маркетингу: https://www.blackhatworld.com/members/vlad_x.1811065/
+видео-демо процессов e-commerce: https://youtu.be/v2_zmJrlMks
+видео-демо о тестирование гипотезы: https://youtu.be/AJtcYfItspM
+`;
 
 /** Legacy default contact line - migrate storage to ultra-short on load. */
 const LEGACY_PROMPT_EXTRA =

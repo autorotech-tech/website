@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Autoro Hunt",
   "description": "Персонализированные отклики: парсинг страницы вакансии + база резюме (тестовый режим без login)",
-  "version": "0.9.0",
+  "version": "0.9.2",
   "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs", "identity"],
   "host_permissions": [
     "http://*/*",
