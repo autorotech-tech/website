@@ -214,8 +214,34 @@ _METRIC_RE = re.compile(
 _PROJECT_LINE_RE = re.compile(
     r"(?im)^(?:[-*•]\s*)?(?:проект|project|кейс|case|продукт|product|платформ\w*)[:\s]+(.{8,220})$"
 )
+_JOB_HEADER_RE = re.compile(
+    r"(?im)^(?:[-*•]\s*)?"
+    r"(?:"
+    r"(?:компания|company|employer|работодатель)\s*[:\-]\s*.+|"
+    r"(?:должность|role|position|title)\s*[:\-]\s*.+|"
+    r"[A-ZА-ЯЁ][\w\s&.'-]{2,48}\s*[\|·]\s*.+\d{4}|"
+    r".+\d{4}\s*[-–—]\s*(?:\d{4}|н\.?\s*в\.?|present|current|наст\.?\s*вр\.?)"
+    r")"
+)
+_EDUCATION_LINE_RE = re.compile(
+    r"(?im)^(?:[-*•]\s*)?"
+    r"(?:образование|education|университет|university|institute|институт|"
+    r"college|бакалавр|магистр|master|bachelor|mba|phd|к\.?\s*н\.?)\b"
+)
+_EXPERIENCE_SECTION_RE = re.compile(
+    r"(?im)^(?:опыт\s*работы|experience|work\s*history|employment|карьера)\s*:?\s*$"
+)
+_EDUCATION_SECTION_RE = re.compile(r"(?im)^(?:образование|education)\s*:?\s*$")
+_PROJECT_SECTION_RE = re.compile(
+    r"(?im)^(?:проекты|projects|portfolio|портфолио|кейсы|cases)\s*:?\s*$"
+)
+_DATE_RANGE_RE = re.compile(
+    r"(?i)\b(19|20)\d{2}\s*[-–—]\s*((19|20)\d{2}|н\.?\s*в\.?|present|current|наст\.?\s*вр\.?)\b"
+)
 _URL_RE = re.compile(r"https?://[^\s<>\"'`)\]]+", re.I)
 _BULLET_SPLIT_RE = re.compile(r"[\n\r]+|(?<=[.;])\s+(?=[A-ZА-ЯЁ])")
+
+EVIDENCE_UNIT_TYPES = ("job", "project", "education")
 
 
 def _norm(s: str) -> str:
@@ -323,6 +349,126 @@ def extract_projects_from_text(text: str, *, title: str = "") -> List[Dict[str, 
     return projects[:16]
 
 
+def prefix_evidence(unit_type: str, text: str) -> str:
+    """Career-unit prefix for semantic grid (job:/project:/education:)."""
+    kind = (unit_type or "job").strip().lower()
+    if kind not in EVIDENCE_UNIT_TYPES:
+        kind = "job"
+    bit = re.sub(r"\s+", " ", (text or "").strip())
+    if not bit:
+        return ""
+    prefix = f"{kind}:"
+    if bit.lower().startswith(prefix):
+        return bit[:220]
+    return f"{prefix} {bit}"[:220]
+
+
+def extract_evidence_units(text: str, *, title: str = "") -> List[Dict[str, str]]:
+    """Parse experience blocks into career units with typed evidence strings."""
+    raw = text or ""
+    units: List[Dict[str, str]] = []
+    seen: Set[str] = set()
+
+    def add(unit_type: str, heading: str, body: str, *, source: str = "parse") -> None:
+        heading = re.sub(r"\s+", " ", (heading or "").strip())
+        body = re.sub(r"\s+", " ", (body or "").strip())
+        content = " - ".join(x for x in (heading, body) if x).strip()
+        if len(content) < 12:
+            return
+        ev = prefix_evidence(unit_type, content)
+        key = ev.lower()[:100]
+        if key in seen:
+            return
+        seen.add(key)
+        units.append(
+            {
+                "unit_type": unit_type,
+                "title": heading[:120],
+                "content": content[:220],
+                "evidence": ev,
+                "source": source,
+            }
+        )
+
+    section = "body"
+    job_heading = ""
+    job_lines: List[str] = []
+
+    def flush_job() -> None:
+        nonlocal job_heading, job_lines
+        if job_heading or job_lines:
+            body = " ".join(job_lines[:6])
+            add("job", job_heading, body, source="experience")
+        job_heading = ""
+        job_lines = []
+
+    for line in raw.splitlines():
+        s = re.sub(r"\s+", " ", line).strip(" -•*\t")
+        if not s:
+            continue
+
+        if _EXPERIENCE_SECTION_RE.match(s):
+            flush_job()
+            section = "experience"
+            continue
+        if _EDUCATION_SECTION_RE.match(s):
+            flush_job()
+            section = "education"
+            continue
+        if _PROJECT_SECTION_RE.match(s):
+            flush_job()
+            section = "project"
+            continue
+
+        if section == "education" or _EDUCATION_LINE_RE.match(s):
+            add("education", s[:80], s, source="education")
+            continue
+
+        if section == "project" or _PROJECT_LINE_RE.match(s):
+            m = _PROJECT_LINE_RE.match(s)
+            proj = m.group(1).strip() if m else s
+            add("project", proj[:80], proj, source="project")
+            continue
+
+        is_job_header = bool(_JOB_HEADER_RE.match(s) or _DATE_RANGE_RE.search(s))
+        if is_job_header and (section in {"experience", "body"} or job_heading):
+            flush_job()
+            job_heading = s[:120]
+            continue
+
+        if section == "experience" or job_heading:
+            if len(s) >= 16:
+                job_lines.append(s[:200])
+            continue
+
+        # Fallback: long factual lines become job units
+        if len(s) >= 24 and not s.lower().startswith(("skills:", "навыки:")):
+            add("job", title[:60] if title else "experience", s, source="line")
+
+    flush_job()
+
+    # Projects from structured extractor (URLs / product hints)
+    for proj in extract_projects_from_text(raw, title=title):
+        name = str(proj.get("name") or "")
+        summary = str(proj.get("summary") or "")
+        url = str(proj.get("url") or "")
+        bit = " - ".join(x for x in (name, summary, url) if x)
+        add("project", name, bit, source="project_extract")
+
+    return units[:32]
+
+
+def evidence_strings_from_units(units: Sequence[Dict[str, str]]) -> List[str]:
+    out: List[str] = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        ev = str(unit.get("evidence") or "").strip()
+        if ev:
+            out.append(ev[:220])
+    return _uniq(out, 24)
+
+
 def extract_metrics_from_text(text: str) -> List[str]:
     out: List[str] = []
     for line in (text or "").splitlines():
@@ -418,6 +564,14 @@ def enrich_resume_profile(
     metrics.extend(extract_metrics_from_text(blob))
     out["metrics"] = _uniq([str(x) for x in metrics], 12)
 
+    # Career-unit chunking (job / project / education) for semantic grid boundaries
+    units = extract_evidence_units(text, title=title)
+    if units:
+        out["evidence_units"] = units[:24]
+        prefixed = evidence_strings_from_units(units)
+        exp = list(out.get("experience_bullets") or [])
+        out["experience_bullets"] = _uniq([*prefixed, *[str(x) for x in exp]], 20)
+
     # Domain-tagged evidence bullets (permanent, not vacancy-specific)
     evidence = list(out.get("domain_evidence") or [])
     evidence.extend(extract_domain_evidence_bullets(blob, out["domains"], limit=10))
@@ -448,6 +602,32 @@ def dedupe_profile_slots(profile: Dict[str, Any]) -> Dict[str, Any]:
     ):
         if key in out:
             out[key] = _uniq([str(x) for x in (out.get(key) or [])], lim)
+    eu = out.get("evidence_units")
+    if isinstance(eu, list):
+        clean_units: List[Dict[str, str]] = []
+        seen_u: Set[str] = set()
+        for unit in eu:
+            if not isinstance(unit, dict):
+                continue
+            ut = str(unit.get("unit_type") or "job").lower()
+            if ut not in EVIDENCE_UNIT_TYPES:
+                ut = "job"
+            content = str(unit.get("content") or unit.get("title") or "").strip()
+            ev = prefix_evidence(ut, content or str(unit.get("evidence") or ""))
+            key = ev.lower()[:80]
+            if not ev or key in seen_u:
+                continue
+            seen_u.add(key)
+            clean_units.append(
+                {
+                    "unit_type": ut,
+                    "title": str(unit.get("title") or "")[:120],
+                    "content": content[:220],
+                    "evidence": ev,
+                    "source": str(unit.get("source") or "merge")[:40],
+                }
+            )
+        out["evidence_units"] = clean_units[:24]
     # Near-hash dedupe for long bullets
     bullets = out.get("experience_bullets") or []
     if bullets:
@@ -741,6 +921,7 @@ def build_master_compact_document(profile: Dict[str, Any]) -> str:
         "education": list(profile.get("education") or [])[:6],
         "projects": list(profile.get("projects") or [])[:12],
         "links": list(profile.get("links") or [])[:12],
+        "evidence_units": list(profile.get("evidence_units") or [])[:20],
         "source_titles": list(profile.get("source_titles") or [])[:20],
         "semantic_clusters": sorted((grid.get("clusters") or {}).keys())[:24],
         "semantic_fingerprint": grid.get("fingerprint"),
@@ -759,6 +940,13 @@ def build_master_compact_document(profile: Dict[str, Any]) -> str:
     ]
     for b in payload["experience_bullets"]:
         lines.append(f"- {b}")
+    if payload["evidence_units"]:
+        lines.append("")
+        lines.append("## evidence_units")
+        for unit in payload["evidence_units"]:
+            if not isinstance(unit, dict):
+                continue
+            lines.append(f"- {unit.get('evidence') or unit.get('content') or ''}")
     if payload["projects"]:
         lines.append("")
         lines.append("## projects")

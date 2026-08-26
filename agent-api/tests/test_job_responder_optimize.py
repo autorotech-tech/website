@@ -14,8 +14,10 @@ from job_responder import (
 )
 from job_responder_optimize import (
     extract_domains_from_text,
+    extract_evidence_units,
     format_vacancy_aware_compact,
     pin_domain_facts,
+    prefix_evidence,
     vacancy_domains_from_text,
 )
 
@@ -92,6 +94,43 @@ def test_saas_vacancy_pins_saas_not_tourism_only():
     assert "saas" in vac
     # May or may not match if saas tagged; at least vacancy extraction works
     assert "saas" in vac
+
+
+def test_extract_evidence_units_job_project_education():
+    text = (
+        "Опыт работы\n"
+        "Acme Corp | Performance Lead | 2019-2024\n"
+        "Grew ROAS 2x via Google Ads and Meta\n"
+        "Project: pquoc.com travel platform for Phu Quoc tourism\n"
+        "Образование\n"
+        "МГУ, бакалавр экономики, 2015\n"
+    )
+    units = extract_evidence_units(text, title="CV")
+    types = {u["unit_type"] for u in units}
+    assert "job" in types
+    assert "project" in types
+    assert "education" in types
+    assert all(str(u.get("evidence") or "").startswith(("job:", "project:", "education:")) for u in units)
+
+
+def test_prefix_evidence_idempotent():
+    assert prefix_evidence("job", "Acme - ROAS growth").startswith("job:")
+    assert prefix_evidence("job", "job: already prefixed") == "job: already prefixed"
+
+
+def test_enrich_profile_persists_evidence_units():
+    text = (
+        "Опыт работы\n"
+        "Elbrus Travel | Head of Marketing | 2020-2023\n"
+        "Tourism GTM for Phu Quoc, 785 hotels SEO\n"
+        "Project: pquoc.com - travel platform\n"
+    )
+    prof = extract_resume_profile(text, title="Marketing CV", category="cv")
+    units = prof.get("evidence_units") or []
+    assert len(units) >= 2
+    bullets = prof.get("experience_bullets") or []
+    assert any(str(b).startswith("job:") for b in bullets)
+    assert any(str(b).startswith("project:") for b in bullets)
 
 
 def test_hh_format_fixes_broken_company_header():

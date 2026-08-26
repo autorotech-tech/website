@@ -425,8 +425,14 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
         return cached
 
     blob = normalize_phrase(str(profile.get("_text_blob") or ""))
-    # Collect candidate terms from slots
+    # Collect candidate terms from slots (prefer career-unit boundaries)
     seed_terms: List[str] = []
+    for unit in profile.get("evidence_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        ev = str(unit.get("evidence") or unit.get("content") or "").strip()
+        if ev:
+            seed_terms.append(ev[:160])
     for key in ("skills", "tools", "roles", "domains"):
         for item in profile.get(key) or []:
             seed_terms.append(str(item))
@@ -501,7 +507,10 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
         aliases.add(n)
         cid = cluster_for_phrase(n)
         if cid:
-            touch_cluster(cid, n, source="profile")
+            src = "profile"
+            if n.startswith(("job:", "project:", "education:")):
+                src = n.split(":", 1)[0]
+            touch_cluster(cid, n, source=src)
 
     # Auto-evidence from resume blob (metrics / tools)
     for pattern, cid in _EVIDENCE_PATTERNS:
