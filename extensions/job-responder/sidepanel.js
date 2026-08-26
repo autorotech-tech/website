@@ -42,7 +42,7 @@ function isJrSystemPromptText(text) {
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
 
 /** Default-open sections when no saved collapse state for the key. */
-const JR_DEFAULT_OPEN = new Set(['vacancy', 'generate']);
+const JR_DEFAULT_OPEN = new Set(['generate']);
 /**
  * Parse free-text overrides: "Telegram: @x | email: a@b" and free-form RU
  * ("Поменяй контакты… Telegram: @autoro_tech").
@@ -163,6 +163,7 @@ const ingestBanner = document.getElementById('ingestBanner');
 const vacancyMeta = document.getElementById('vacancyMeta');
 const vacancyDescription = document.getElementById('vacancyDescription');
 const vacancyStructuredEl = document.getElementById('vacancyStructured');
+const vacancyStatusDot = document.getElementById('vacancyStatusDot');
 const relevanceBox = document.getElementById('relevanceBox');
 const resultText = document.getElementById('resultText');
 const genMeta = document.getElementById('genMeta');
@@ -170,19 +171,63 @@ const errorEl = document.getElementById('error');
 const successEl = document.getElementById('success');
 const sourcesListEl = document.getElementById('sourcesList');
 const workspaceIdInput = document.getElementById('workspaceIdInput');
+const workBarEl = document.getElementById('workBar');
+const workBarTextEl = document.getElementById('workBarText');
+
+let processBusyCount = 0;
+let processBusyLabel = '';
+let lastToast = { kind: '', text: '' };
+
+function scrollRoot() {
+  return document.scrollingElement || document.documentElement;
+}
+
+function withPreservedScroll(fn) {
+  const root = scrollRoot();
+  const top = root.scrollTop;
+  fn();
+  root.scrollTop = top;
+}
+
+function renderWorkBar() {
+  if (!workBarEl || !workBarTextEl) return;
+  workBarEl.classList.remove('isBusy', 'isOk', 'isError');
+  if (processBusyCount > 0) {
+    workBarEl.classList.add('isBusy');
+    workBarEl.setAttribute('aria-busy', 'true');
+    workBarTextEl.textContent = processBusyLabel || 'Работаю…';
+    return;
+  }
+  workBarEl.setAttribute('aria-busy', 'false');
+  if (lastToast.kind === 'error') {
+    workBarEl.classList.add('isError');
+    workBarTextEl.textContent = lastToast.text;
+    return;
+  }
+  if (lastToast.kind === 'ok') {
+    workBarEl.classList.add('isOk');
+    workBarTextEl.textContent = lastToast.text;
+    return;
+  }
+  workBarTextEl.textContent = 'Готово к работе';
+}
 
 function setError(msg) {
-  errorEl.textContent = msg || '';
-  if (msg) {
-    errorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+  withPreservedScroll(() => {
+    errorEl.textContent = msg || '';
+    if (msg) successEl.textContent = '';
+    lastToast = msg ? { kind: 'error', text: msg } : { kind: '', text: '' };
+    renderWorkBar();
+  });
 }
 
 function setSuccess(msg) {
-  successEl.textContent = msg || '';
-  if (msg) {
-    successEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+  withPreservedScroll(() => {
+    successEl.textContent = msg || '';
+    if (msg) errorEl.textContent = '';
+    lastToast = msg ? { kind: 'ok', text: msg } : { kind: '', text: '' };
+    renderWorkBar();
+  });
 }
 
 function showIngestBanner({ addedCount = 0, total = currentSources.length, summary = '' } = {}) {
@@ -200,13 +245,22 @@ function showIngestBanner({ addedCount = 0, total = currentSources.length, summa
 
 function setButtonBusy(btn, busy, idleLabel, busyLabel) {
   if (!btn) return;
+  const wasBusy = btn.dataset.busy === '1';
   btn.disabled = Boolean(busy);
   if (busy) {
+    btn.dataset.busy = '1';
     if (idleLabel) btn.dataset.idleLabel = idleLabel;
     else if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
-    btn.innerHTML = `<span class="btnSpinner" aria-hidden="true"></span>${busyLabel || 'Загрузка…'}`;
+    const label = busyLabel || 'Загрузка…';
+    btn.innerHTML = `<span class="btnSpinner" aria-hidden="true"></span>${label}`;
+    processBusyLabel = label;
+    if (!wasBusy) processBusyCount += 1;
+    renderWorkBar();
   } else {
+    btn.dataset.busy = '0';
     btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
+    if (wasBusy) processBusyCount = Math.max(0, processBusyCount - 1);
+    renderWorkBar();
   }
 }
 
@@ -452,9 +506,6 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
     } else if (!quiet && !ids.length && !prefilled) {
       setSuccess(`Список обновлён: ${items.length} источник(ов)`);
     }
-    if (ids.length) {
-      sourcesListEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
     return items;
   } catch (err) {
     renderSources([]);
@@ -534,6 +585,17 @@ function clearQaState() {
   }
 }
 
+/** Green/red pulsing dot on vacancy summary - visible while section is collapsed. */
+function setVacancyPageStatus(ok, title) {
+  if (!vacancyStatusDot) return;
+  vacancyStatusDot.hidden = false;
+  vacancyStatusDot.classList.remove('isOk', 'isFail');
+  vacancyStatusDot.classList.add(ok ? 'isOk' : 'isFail');
+  vacancyStatusDot.title = title || (ok ? 'Страница прочитана' : 'Не удалось прочитать страницу');
+  vacancyStatusDot.setAttribute('aria-label', vacancyStatusDot.title);
+  vacancyStatusDot.setAttribute('aria-hidden', 'false');
+}
+
 function applyVacancy(vacancy) {
   currentVacancy = vacancy;
   const host = vacancy.host || 'web';
@@ -558,11 +620,21 @@ function applyVacancy(vacancy) {
   } else {
     renderQaTable(qs.map((q) => ({ question: q.text, answer: '' })));
   }
+  const descOk = String(vacancy.description || '').trim().length >= 20 || qs.length > 0;
+  setVacancyPageStatus(
+    descOk,
+    descOk ? 'Страница прочитана' : 'Страница пустая или мало текста'
+  );
 }
 
-async function refreshVacancyFromTab() {
+async function refreshVacancyFromTab({ fromClick = false } = {}) {
   setError('');
+  const vacancyBtn = document.getElementById('refreshVacancyBtn');
+  if (fromClick) {
+    setButtonBusy(vacancyBtn, true, 'Обновить с страницы', 'Читаю…');
+  }
   try {
+    // Client-side DOM extract only - no /generate, /relevance, or Gemini (zero tokens).
     const vacancy = await JR_API.fetchVacancyFromTab();
     lastTabUrl = String(vacancy.url || '');
     applyVacancy(vacancy);
@@ -578,10 +650,14 @@ async function refreshVacancyFromTab() {
             ? `Страница прочитана (${qn} вопросов)`
             : 'Страница прочитана'
     );
-    await runRelevanceScore().catch(() => {});
   } catch (err) {
     clearQaState();
+    setVacancyPageStatus(false, 'Не удалось прочитать страницу');
     setError(String(err.message || err));
+  } finally {
+    if (fromClick) {
+      setButtonBusy(vacancyBtn, false, 'Обновить с страницы');
+    }
   }
 }
 
@@ -717,10 +793,12 @@ async function runGenerate(mode) {
   }
   const btn = isQa ? genAnswersBtn : genCoverBtn;
   const idle = isQa ? 'Ответы на вопросы' : 'Отклик';
+  const busyLabel = isQa ? 'Готовлю ответы…' : 'Пишу отклик…';
   setButtonBusy(btn, true, idle, 'Генерация…');
   genMeta.textContent = 'Генерация…';
+  setResultGenerating(true, busyLabel);
   try {
-    await runRelevanceScore().catch(() => {});
+    // Relevance comes back with /generate (deterministic, no LLM). Do not pre-call /relevance.
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
     const promptExtraRaw = String(promptExtraEl?.value || '').trim();
     const ragEditsText = String(ragEditsInput?.value || '').trim();
@@ -784,6 +862,7 @@ async function runGenerate(mode) {
     genMeta.textContent = '';
     setError(String(err.message || err));
   } finally {
+    setResultGenerating(false);
     setButtonBusy(btn, false, idle);
   }
 }
@@ -911,11 +990,18 @@ async function refreshDriveStatus() {
 if (saveWorkspaceBtn) {
   saveWorkspaceBtn.addEventListener('click', async () => {
     setError('');
-    const id = await JR_API.setWorkspaceId(workspaceIdInput?.value || JR_API.DEFAULT_TEST_WORKSPACE_ID);
-    await refreshAuthHint();
-    await refreshResumeStatus();
-    await refreshSources();
-    setSuccess(`workspaceId = ${id}`);
+    setButtonBusy(saveWorkspaceBtn, true, 'OK', 'Сохранение…');
+    try {
+      const id = await JR_API.setWorkspaceId(workspaceIdInput?.value || JR_API.DEFAULT_TEST_WORKSPACE_ID);
+      await refreshAuthHint();
+      await refreshResumeStatus();
+      await refreshSources();
+      setSuccess(`workspaceId = ${id}`);
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setButtonBusy(saveWorkspaceBtn, false, 'OK');
+    }
   });
 }
 
@@ -1046,6 +1132,44 @@ async function persistRagEditsLocal(text) {
   await chrome.storage.local.set({ jrRagEdits: String(text || '') });
 }
 
+/** Focus result area + overlay spinner while /generate runs. */
+function setResultGenerating(busy, label) {
+  const wrap = document.getElementById('resultWrap');
+  const busyEl = document.getElementById('resultBusy');
+  const busyText = document.getElementById('resultBusyText');
+  const genSection = document.getElementById('generateSection');
+  if (genSection) genSection.open = true;
+  if (wrap) wrap.classList.toggle('isGenerating', Boolean(busy));
+  if (busyEl) {
+    busyEl.hidden = !busy;
+    busyEl.setAttribute('aria-hidden', busy ? 'false' : 'true');
+  }
+  if (busyText) busyText.textContent = label || 'Генерация…';
+  if (!resultText) return;
+  resultText.classList.toggle('isGenerating', Boolean(busy));
+  resultText.classList.add('isExpanded');
+  if (busy) {
+    resultText.setAttribute('aria-busy', 'true');
+    try {
+      resultText.focus({ preventScroll: true });
+    } catch (_) {
+      resultText.focus();
+    }
+    try {
+      resultText.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (_) {
+      resultText.scrollIntoView();
+    }
+  } else {
+    resultText.removeAttribute('aria-busy');
+    try {
+      resultText.focus({ preventScroll: true });
+    } catch (_) {
+      resultText.focus();
+    }
+  }
+}
+
 if (addRagTextBtn) {
   addRagTextBtn.addEventListener('click', async () => {
     setError('');
@@ -1128,7 +1252,6 @@ if (saveRagEditsBtn) {
         ? `Правки профиля ${action}. Сохранено: ${preview}.${syncNote}`
         : `Правки профиля ${action}.${syncNote}`;
       setSuccess(summary);
-      setRagEditsMeta(summary);
       await refreshResumeStatus();
       await refreshSources({
         highlightIds: kid ? [kid] : [],
@@ -1138,6 +1261,10 @@ if (saveRagEditsBtn) {
       if (typeof refreshGeminiRagStatus === 'function') {
         await refreshGeminiRagStatus().catch(() => {});
       }
+      // Draft cleared after successful save - facts stay in knowledge base.
+      if (ragEditsInput) ragEditsInput.value = '';
+      await persistRagEditsLocal('');
+      setRagEditsMeta(`${summary} Поле очищено - правки уже в базе.`);
     } catch (err) {
       setError(String(err.message || err));
       setRagEditsMeta('');
@@ -1185,8 +1312,7 @@ if (driveConnectBtn) {
   driveConnectBtn.addEventListener('click', async () => {
     setError('');
     setSuccess('');
-    driveConnectBtn.disabled = true;
-    driveConnectBtn.textContent = 'Подключение…';
+    setButtonBusy(driveConnectBtn, true, 'Подключить', 'Подключение…');
     try {
       await JR_DRIVE_AUTH.connectInteractive();
       await refreshDriveStatus();
@@ -1195,8 +1321,7 @@ if (driveConnectBtn) {
       setError(String(err.message || err));
       await refreshDriveStatus();
     } finally {
-      driveConnectBtn.disabled = false;
-      driveConnectBtn.textContent = 'Подключить Google Drive';
+      setButtonBusy(driveConnectBtn, false, 'Подключить');
     }
   });
 }
@@ -1225,8 +1350,7 @@ if (driveImportBtn) {
       setError('Укажите URL или ID папки Google Drive');
       return;
     }
-    driveImportBtn.disabled = true;
-    driveImportBtn.textContent = 'Импорт…';
+    setButtonBusy(driveImportBtn, true, 'Импорт из Drive', 'Импорт…');
     try {
       await JR_DRIVE_AUTH.saveFolder(folderUrlOrId);
       if (manualToken) await JR_DRIVE_AUTH.saveManualToken(manualToken);
@@ -1280,13 +1404,12 @@ if (driveImportBtn) {
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      driveImportBtn.disabled = false;
-      driveImportBtn.textContent = 'Импорт из Drive';
+      setButtonBusy(driveImportBtn, false, 'Импорт из Drive');
     }
   });
 }
 
-refreshVacancyBtn.addEventListener('click', refreshVacancyFromTab);
+refreshVacancyBtn.addEventListener('click', () => refreshVacancyFromTab({ fromClick: true }));
 refreshSourcesBtn.addEventListener('click', () => {
   setError('');
   refreshSources({ quiet: false }).catch(() => {});
@@ -1325,7 +1448,7 @@ if (sourcesListEl) {
     if (!window.confirm(`Удалить «${title}» из базы резюме?`)) return;
     setError('');
     setSuccess('');
-    btn.disabled = true;
+    setButtonBusy(btn, true, '×', '…');
     try {
       await JR_API.deleteSources({ knowledgeItemIds: [id] });
       lastAddedSourceIds.delete(id);
@@ -1334,7 +1457,7 @@ if (sourcesListEl) {
       setSuccess(`Удалено: ${title}`);
     } catch (err) {
       setError(String(err.message || err));
-      btn.disabled = false;
+      setButtonBusy(btn, false, '×');
     }
   });
 }
@@ -1421,7 +1544,7 @@ chrome.runtime.onMessage.addListener((message) => {
   const url = String(message.url || '');
   if (!url || url === lastTabUrl) return;
   lastTabUrl = url;
-  // Clear stale form Q&A immediately, then re-extract from the new page
+  // Clear stale form Q&A, then DOM-only re-extract (no LLM / no relevance API).
   clearQaState();
   refreshVacancyFromTab().catch(() => {});
 });
@@ -1515,21 +1638,14 @@ if (coverFromRagBtn) {
       }
     }
     if (ragEditsInput) {
+      // Local draft only - do not re-fill from KB (saved overrides stay in knowledge base).
       ragEditsInput.value = String(savedTpl.jrRagEdits || '');
     }
     await refreshDriveStatus();
     await refreshAuthHint();
     await JR_API.ensureWorkspace();
     await refreshResumeStatus();
-    const items = await refreshSources({ quiet: true });
-    if (ragEditsInput && !String(ragEditsInput.value || '').trim()) {
-      const fromRag = findOverridesSourceText(items);
-      if (fromRag) {
-        ragEditsInput.value = fromRag;
-        await persistRagEditsLocal(fromRag);
-        setRagEditsMeta('Подтянуто из базы (overrides)');
-      }
-    }
+    await refreshSources({ quiet: true });
   } catch (err) {
     setError(String(err.message || err));
   }

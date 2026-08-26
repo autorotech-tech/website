@@ -2,35 +2,40 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <title>Job Responder</title>
+    <title>Autoro Hunt</title>
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
     <header>
-      <h1>Job Responder</h1>
+      <h1>Autoro Hunt</h1>
       <p class="hint" id="authHint">Загрузка…</p>
       <p class="error banner" id="error" role="alert"></p>
       <p class="success banner" id="success" role="status"></p>
     </header>
 
-    <details class="card collapsible" id="vacancySection" data-jr-collapse="vacancy" open>
-      <summary>Работа с вакансией</summary>
-      <p class="hint tight" id="vacancyMeta">Откройте страницу вакансии</p>
-      <div id="vacancyStructured" class="structuredBox" hidden></div>
-      <div class="row">
-        <button type="button" id="refreshVacancyBtn">Обновить с страницы</button>
-        <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
+    <details class="card collapsible" id="vacancySection" data-jr-collapse="vacancy">
+      <summary>
+        <span class="jrSummaryLabel">Работа с вакансией</span>
+        <span id="vacancyStatusDot" class="jrStatusDot" hidden title="" aria-hidden="true"></span>
+      </summary>
+      <div class="vacancyBody">
+        <p class="hint tight" id="vacancyMeta">Откройте страницу вакансии</p>
+        <div id="vacancyStructured" class="structuredBox" hidden></div>
+        <div class="row">
+          <button type="button" id="refreshVacancyBtn">Обновить с страницы</button>
+          <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
+        </div>
+        <div id="relevanceBox" class="relevanceBox" hidden></div>
+        <label class="field">
+          <span>Описание вакансии</span>
+          <textarea
+            id="vacancyDescription"
+            rows="4"
+            readonly
+            placeholder="Подтянется с страницы"
+          ></textarea>
+        </label>
       </div>
-      <div id="relevanceBox" class="relevanceBox" hidden></div>
-      <label class="field">
-        <span>Описание вакансии</span>
-        <textarea
-          id="vacancyDescription"
-          rows="4"
-          readonly
-          placeholder="Подтянется с страницы"
-        ></textarea>
-      </label>
     </details>
 
     <details class="card collapsible" id="qaSection" data-jr-collapse="qa" hidden>
@@ -48,9 +53,15 @@
         <button type="button" id="genCoverBtn">Отклик</button>
         <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>
       </div>
-      <label class="field">
+      <label class="field resultField">
         <span>Результат</span>
-        <textarea id="resultText" class="resultGrow" rows="6"></textarea>
+        <div class="resultWrap" id="resultWrap">
+          <textarea id="resultText" class="resultGrow" rows="6" placeholder="Здесь появится отклик"></textarea>
+          <div class="resultBusy" id="resultBusy" hidden aria-live="polite" aria-hidden="true">
+            <span class="btnSpinner" aria-hidden="true"></span>
+            <span id="resultBusyText">Генерация…</span>
+          </div>
+        </div>
       </label>
       <div class="row tight">
         <button type="button" id="copyBtn" class="secondary">Копировать</button>
@@ -193,6 +204,11 @@
       <button type="button" id="loginBtn" class="link" hidden>Вход</button>
       <button type="button" id="logoutBtn" class="link" hidden>Выход</button>
     </footer>
+
+    <div id="workBar" class="workBar" role="status" aria-live="polite" aria-busy="false">
+      <span class="btnSpinner workBarSpinner" aria-hidden="true"></span>
+      <span id="workBarText">Готово к работе</span>
+    </div>
 
     <script src="lib/api.js"></script>
     <script src="lib/drive-auth.js"></script>

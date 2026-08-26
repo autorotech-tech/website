@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Job Responder",
+  "name": "Autoro Hunt",
   "description": "Персонализированные отклики: парсинг страницы вакансии + база резюме (тестовый режим без login)",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "permissions": ["storage", "sidePanel", "activeTab", "scripting", "tabs", "identity"],
   "host_permissions": [
     "http://*/*",
@@ -22,7 +22,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Job Responder"
+    "default_title": "Autoro Hunt"
   },
   "side_panel": {
     "default_path": "sidepanel.html"

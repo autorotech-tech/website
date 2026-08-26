@@ -1,6 +1,6 @@
 body {
   margin: 0;
-  padding: 10px;
+  padding: 10px 10px 56px;
   font-family: Arial, sans-serif;
   background: #f8fafc;
   color: #0f172a;
@@ -98,6 +98,49 @@ details.card.collapsible > summary {
 
 .collapsible > summary {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jrSummaryLabel {
+  flex: 1 1 auto;
+}
+
+.jrStatusDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.06);
+}
+
+.jrStatusDot.isOk {
+  background: #22c55e;
+  animation: jrDotPulse 1.25s ease-in-out infinite;
+}
+
+.jrStatusDot.isFail {
+  background: #ef4444;
+  animation: jrDotPulse 1.25s ease-in-out infinite;
+}
+
+@keyframes jrDotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+}
+
+/* Keep vacancy controls inside <details> so they hide when collapsed. */
+.vacancyBody {
+  display: block;
 }
 
 .collapsible[open] > summary {
@@ -136,9 +179,39 @@ textarea.resultGrow {
 }
 
 textarea.resultGrow.isExpanded,
-textarea.resultGrow:focus {
+textarea.resultGrow:focus,
+textarea.resultGrow.isGenerating {
   min-height: 66vh;
   max-height: 80vh;
+}
+
+.resultWrap {
+  position: relative;
+}
+
+.resultWrap.isGenerating textarea.resultGrow {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.resultBusy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.82);
+  color: #3730a3;
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.resultBusy[hidden] {
+  display: none !important;
 }
 
 textarea[readonly] {
@@ -440,6 +513,47 @@ button.link {
   to {
     transform: rotate(360deg);
   }
+}
+
+.workBar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  background: #eef2ff;
+  border-top: 1px solid #c7d2fe;
+  color: #3730a3;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.workBar .workBarSpinner {
+  display: none;
+  flex: 0 0 auto;
+}
+
+.workBar.isBusy .workBarSpinner {
+  display: inline-block;
+}
+
+.workBar.isOk {
+  background: #f0fdf4;
+  border-top-color: #bbf7d0;
+  color: #166534;
+}
+
+.workBar.isError {
+  background: #fef2f2;
+  border-top-color: #fecaca;
+  color: #991b1b;
 }
 
 .qaTable {

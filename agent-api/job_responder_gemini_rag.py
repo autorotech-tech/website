@@ -32,7 +32,8 @@ ENABLED = str(os.environ.get("JOB_RESPONDER_GEMINI_RAG", "0")).strip().lower() i
 
 UPLOAD_POLL_INTERVAL_SEC = 1.5
 UPLOAD_POLL_MAX_SEC = 45.0
-GENERATE_TIMEOUT_SEC = 28.0
+# Default for File Search generate; JR generate path passes a tighter early-cancel (~7s).
+GENERATE_TIMEOUT_SEC = 12.0
 
 
 def is_enabled() -> bool:

@@ -56,23 +56,33 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 
 # Stay under nginx/CF ~60–100s: never return HTTP 502 (Cloudflare replaces JSON with HTML).
 FILE_CAPTURE_BUDGET_SEC = 28.0
-# Wall-clock target ~25–35s so CF/nginx do not kill the request.
-GENERATE_BUDGET_SEC = 34.0
+# Soft wall-clock for generate: leave headroom under CF; aim for letter in <25s typical.
+GENERATE_BUDGET_SEC = 38.0
 # Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
 # First attempt is already aggressive - do not start at 6k and only shrink on retry.
 SELECTED_SOURCES_MAX = 40
-COMPACT_PROFILE_CHARS = 2800
-COMPACT_PROFILE_CHARS_RETRY = 1600
+COMPACT_PROFILE_CHARS = 2200
+COMPACT_PROFILE_CHARS_MANY = 1700
+COMPACT_PROFILE_CHARS_RETRY = 1400
+COMPACT_PROFILE_MANY_SOURCES = 6
 COMPACT_PROFILE_KIND = "job_profile_compact"
 GENERATE_VACANCY_CHARS = 1600
-COVER_TEMPLATE_CHARS = 1200
-COVER_TEMPLATE_CHARS_RETRY = 600
+COVER_TEMPLATE_CHARS = 1000
+COVER_TEMPLATE_CHARS_RETRY = 500
 LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
-LLM_ATTEMPT_TIMEOUT_SEC = 11.0
+# Each fast provider gets a real slice (not leftover scraps after a hung rag call).
+LLM_ATTEMPT_TIMEOUT_SEC = 14.0
+LLM_PROVIDER_CAP_SEC = 15.0
+# Gemini File Search: only when budget allows; cancel early so openmodel still has time.
+GEMINI_RAG_EARLY_SEC = 7.0
+GEMINI_RAG_MIN_BUDGET_SEC = 20.0
+GEMINI_RAG_COOLDOWN_SEC = 120.0
 # gemini-2.0-flash is retired (404). Prefer current catalog flash.
 JR_GEMINI_MODEL = "gemini-3.5-flash"
+# Process-local: skip File Search briefly after a hang so cascade stays fast.
+_gemini_rag_last_timeout_mono = 0.0
 _COVER_SNIPPET_RE = re.compile(
     r"сопровод|cover\s*letter|coverletter|cover_letter|motivation\s*letter|шаблон\s*отклик",
     re.I,
@@ -3646,10 +3656,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 prompt_extra,
                 {"rag_edits": str(merged.get("rag_edits") or "")[:1500]},
             )
-        # Aggressive compact on first try (not only on retry).
-        profile_cap = COMPACT_PROFILE_CHARS
+        # Aggressive compact on first try - especially with many Resume sources.
+        profile_cap = (
+            COMPACT_PROFILE_CHARS_MANY
+            if len(rag_items) >= COMPACT_PROFILE_MANY_SOURCES
+            else COMPACT_PROFILE_CHARS
+        )
         cover_cap = COVER_TEMPLATE_CHARS
-        profile_compressed = False
+        profile_compressed = len(rag_items) >= COMPACT_PROFILE_MANY_SOURCES
         provider_errors: List[str] = []
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
@@ -3658,62 +3672,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         compact_text = ""
         has_template = False
 
+        global _gemini_rag_last_timeout_mono
         rag_status = jr_gemini_rag.get_status(pg_connect, workspace_id) if jr_gemini_rag.is_enabled() else {}
         use_rag = payload.useGeminiRag
         if use_rag is None:
             use_rag = bool(jr_gemini_rag.is_enabled() and rag_status.get("ready"))
-
-        if use_rag and jr_gemini_rag.is_enabled() and rag_status.get("storeName") and int(rag_status.get("docCount") or 0) > 0:
-            cover_template_rag = resolve_cover_template(
-                payload.coverTemplate, payload.baseLetter, max_chars=cover_cap
-            )
-            has_template = bool(cover_template_rag) and mode == "cover_letter"
-            system_prompt_rag = build_system_prompt(
-                mode, has_cover_template=has_template, prompt_extra=prompt_extra
-            )
-            user_prompt_rag = jr_gemini_rag.build_gemini_rag_user_prompt(
-                payload.vacancy,
-                mode,
-                payload.host,
-                normalized_questions,
-                cover_template=cover_template_rag if has_template else "",
-                prompt_extra=prompt_extra,
-                host_labels=HOST_LABELS,
-            )
-            remaining_rag = deadline - time.monotonic()
-            if remaining_rag >= 8:
-                try:
-                    rag_gen = call_with_timeout(
-                        jr_gemini_rag.generate_with_file_search,
-                        min(remaining_rag - 1.0, 22.0),
-                        store_name=str(rag_status["storeName"]),
-                        system_prompt=system_prompt_rag,
-                        user_prompt=user_prompt_rag,
-                        mode=mode,
-                        model=JR_GEMINI_MODEL,
-                    )
-                except FuturesTimeout:
-                    rag_gen = {"ok": False, "error": "timeout"}
-                    provider_errors.append("gemini_rag:timeout")
-                except Exception as exc:
-                    rag_gen = {"ok": False, "error": str(exc)}
-                    provider_errors.append(f"gemini_rag:{type(exc).__name__}")
-                else:
-                    if rag_gen.get("ok") and str(rag_gen.get("text") or "").strip():
-                        raw_text = str(rag_gen["text"]).strip()
-                        gemini_rag_used = True
-                        gemini_rag_citations = list(rag_gen.get("citations") or [])
-                        chat_result = type(
-                            "GeminiRagResult",
-                            (),
-                            {
-                                "content": raw_text,
-                                "model_resolved": rag_gen.get("model"),
-                                "provider_used": rag_gen.get("provider") or "gemini_file_search",
-                            },
-                        )()
-                    else:
-                        provider_errors.append(f"gemini_rag:{rag_gen.get('error') or 'empty'}")
 
         def _run_llm(profile_max: int, cover_max: int, attempt_timeout: float):
             cover_template = resolve_cover_template(
@@ -3737,9 +3700,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-            max_tokens = 1200 if mode == "question_answers" else 700
-            # Fast providers first. OpenRouter intentionally skipped.
-            # Prefer openmodel (stable) then Gemini flash; GLM last (slow key pool).
+            # Shorter outputs finish faster under CF soft budget.
+            max_tokens = 900 if mode == "question_answers" else 550
+            # Fast providers first with a real time slice each. OpenRouter skipped.
             attempts = (
                 {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
                 {
@@ -3753,13 +3716,17 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             last_err = ""
             for kwargs in attempts:
                 remaining = deadline - time.monotonic()
-                if remaining < 3.5:
+                if remaining < 4.0:
                     last_err = "timeout"
                     provider_errors.append("budget_exhausted")
                     break
                 provider = str(kwargs.get("route_provider_override") or "?")
-                t_cap = min(float(attempt_timeout), remaining - 0.8, 12.0)
-                if t_cap < 3.0:
+                # GLM is slow - skip unless we still have a healthy slice.
+                if provider == "glm" and remaining < 10.0:
+                    provider_errors.append("glm:skipped_low_budget")
+                    continue
+                t_cap = min(float(attempt_timeout), remaining - 0.5, LLM_PROVIDER_CAP_SEC)
+                if t_cap < 5.0:
                     last_err = "timeout"
                     provider_errors.append(f"{provider}:no_time")
                     break
@@ -3799,13 +3766,90 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 chat_result = None
             return chat_result, last_err, compact_text, has_template
 
-        if not raw_text:
-            chat_result, last_err, compact_text, has_template = _run_llm(
-                profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
+        # Fast cascade first (openmodel / flash). File Search only if budget still healthy.
+        chat_result, last_err, compact_text, has_template = _run_llm(
+            profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
+        )
+        if chat_result and str(getattr(chat_result, "content", None) or "").strip():
+            raw_text = str(chat_result.content).strip()
+
+        remaining_after_fast = deadline - time.monotonic()
+        recent_rag_timeout = (
+            _gemini_rag_last_timeout_mono > 0
+            and (time.monotonic() - _gemini_rag_last_timeout_mono) < GEMINI_RAG_COOLDOWN_SEC
+        )
+        should_try_rag = (
+            not raw_text
+            and bool(use_rag)
+            and jr_gemini_rag.is_enabled()
+            and bool(rag_status.get("ready"))
+            and bool(rag_status.get("storeName"))
+            and int(rag_status.get("docCount") or 0) > 0
+            and remaining_after_fast >= GEMINI_RAG_MIN_BUDGET_SEC
+            and not recent_rag_timeout
+        )
+        if should_try_rag:
+            cover_template_rag = resolve_cover_template(
+                payload.coverTemplate, payload.baseLetter, max_chars=cover_cap
             )
-        else:
-            last_err = ""
-            compact_text = format_compact_profile(merged, max_chars=profile_cap)
+            has_template_rag = bool(cover_template_rag) and mode == "cover_letter"
+            system_prompt_rag = build_system_prompt(
+                mode, has_cover_template=has_template_rag, prompt_extra=prompt_extra
+            )
+            user_prompt_rag = jr_gemini_rag.build_gemini_rag_user_prompt(
+                payload.vacancy,
+                mode,
+                payload.host,
+                normalized_questions,
+                cover_template=cover_template_rag if has_template_rag else "",
+                prompt_extra=prompt_extra,
+                host_labels=HOST_LABELS,
+            )
+            # Early cancel: never burn the soft budget on a hung File Search call.
+            rag_timeout = min(GEMINI_RAG_EARLY_SEC, remaining_after_fast - 8.0)
+            if rag_timeout >= 5.0:
+                try:
+                    rag_gen = call_with_timeout(
+                        jr_gemini_rag.generate_with_file_search,
+                        rag_timeout,
+                        store_name=str(rag_status["storeName"]),
+                        system_prompt=system_prompt_rag,
+                        user_prompt=user_prompt_rag,
+                        mode=mode,
+                        model=JR_GEMINI_MODEL,
+                    )
+                except FuturesTimeout:
+                    _gemini_rag_last_timeout_mono = time.monotonic()
+                    rag_gen = {"ok": False, "error": "timeout"}
+                    provider_errors.append("gemini_rag:timeout")
+                except Exception as exc:
+                    rag_gen = {"ok": False, "error": str(exc)}
+                    provider_errors.append(f"gemini_rag:{type(exc).__name__}")
+                else:
+                    if rag_gen.get("ok") and str(rag_gen.get("text") or "").strip():
+                        raw_text = str(rag_gen["text"]).strip()
+                        gemini_rag_used = True
+                        gemini_rag_citations = list(rag_gen.get("citations") or [])
+                        has_template = has_template_rag
+                        chat_result = type(
+                            "GeminiRagResult",
+                            (),
+                            {
+                                "content": raw_text,
+                                "model_resolved": rag_gen.get("model"),
+                                "provider_used": rag_gen.get("provider") or "gemini_file_search",
+                            },
+                        )()
+                    else:
+                        provider_errors.append(f"gemini_rag:{rag_gen.get('error') or 'empty'}")
+            else:
+                provider_errors.append("gemini_rag:skipped_low_budget")
+        elif use_rag and not raw_text:
+            if recent_rag_timeout:
+                provider_errors.append("gemini_rag:skipped_cooldown")
+            elif remaining_after_fast < GEMINI_RAG_MIN_BUDGET_SEC:
+                provider_errors.append("gemini_rag:skipped_low_budget")
+
         if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and (
             last_err == "timeout" or last_err.startswith("timeout") or "timeout" in (last_err or "")
         ):
@@ -3820,7 +3864,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     ";".join(provider_errors[-6:]),
                 )
                 chat_result, last_err, compact_text, has_template = _run_llm(
-                    profile_cap, cover_cap, min(9.0, remaining - 1.0)
+                    profile_cap, cover_cap, min(12.0, remaining - 1.0)
                 )
 
         raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else raw_text
@@ -3836,16 +3880,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             )
             timed_out = "timeout" in str(last_err or "") or any("timeout" in e for e in provider_errors)
             if timed_out:
+                # User-facing: no provider/model names (kept in providerErrors for logs/UI debug).
                 msg = (
-                    f"Модель не успела за {elapsed:.0f}с (бюджет {GENERATE_BUDGET_SEC:.0f}с). "
-                    f"Провайдеры: {err_tail}. "
-                    f"Профиль {len(compact_text or '')} симв. / {len(rag_items)} sources. "
-                    "Повторите «Отклик» - сервер уже использует сжатый unified profile."
+                    "Не успели сформировать отклик за отведённое время. "
+                    "Нажмите «Отклик» ещё раз - обычно со второго раза быстрее "
+                    "(профиль уже сжат)."
                 )
             else:
                 msg = (
-                    f"LLM не вернул текст. Провайдеры: {err_tail}. "
-                    "Проверьте Swoop Admin -> Settings -> Gemini / openmodel / GLM (без OpenRouter)."
+                    "Не удалось получить текст отклика. "
+                    "Повторите «Отклик» через несколько секунд."
                 )
             return {
                 "ok": False,

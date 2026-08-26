@@ -82,8 +82,8 @@ const JR_API = (() => {
     const sec = Math.round(timeoutMs / 1000);
     if (kind === 'generate') {
       return (
-        `Генерация прервана локально через ${sec}с: сервер не успел ответить. ` +
-        'Повторите «Отклик» - сервер сожмёт unified profile ещё сильнее. Это не размер PDF.'
+        `Генерация прервана через ${sec}с: сервер не успел ответить. ` +
+        'Нажмите «Отклик» ещё раз - обычно со второго раза быстрее.'
       );
     }
     if (kind === 'upload') {
@@ -100,7 +100,7 @@ const JR_API = (() => {
     if (kind === 'generate') {
       return (
         `Сервер генерации не ответил (HTTP ${code}). ` +
-        'Повторите «Отклик» - профиль сожмётся автоматически. Это не про размер PDF.'
+        'Нажмите «Отклик» ещё раз - обычно помогает.'
       );
     }
     if (kind === 'upload') {
@@ -110,6 +110,19 @@ const JR_API = (() => {
       );
     }
     return `Сервер не ответил (HTTP ${code}). Повторите попытку.`;
+  }
+
+  /** Strip provider/model names from user-visible API errors. */
+  function sanitizeUserError(text) {
+    let t = String(text || '');
+    t = t.replace(/\s*Провайдеры?:\s*[^.]+/gi, '');
+    t = t.replace(
+      /\b(gemini_rag|openmodel|openrouter|gemini|glm|groq|lmarena|mimo|kimi)(:[^\s;,.]+)?/gi,
+      ''
+    );
+    t = t.replace(/\b(timeout>\d+s|budget_exhausted|no_time|skipped_\w+)/gi, '');
+    t = t.replace(/\s{2,}/g, ' ').replace(/\s+([.,;])/g, '$1').trim();
+    return t;
   }
 
   function formatApiError(status, data, raw, url, kind = 'generic') {
@@ -156,9 +169,9 @@ const JR_API = (() => {
       return `Файл слишком большой (лимит 12 МБ). ${detail}`;
     }
     if (status === 422) {
-      return detail;
+      return sanitizeUserError(detail);
     }
-    return `${detail} (HTTP ${status})`;
+    return sanitizeUserError(`${detail} (HTTP ${status})`);
   }
 
   async function getApiBase() {
@@ -436,7 +449,9 @@ const JR_API = (() => {
       errorKind: 'generate',
     });
     if (data && data.ok === false) {
-      throw new Error(String(data.message || data.error || 'Генерация не удалась'));
+      throw new Error(
+        sanitizeUserError(String(data.message || data.error || 'Генерация не удалась'))
+      );
     }
     const text = pickGeneratedText(data);
     return { ...data, text };
