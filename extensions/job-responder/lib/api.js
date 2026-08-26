@@ -13,39 +13,122 @@ const JR_API = (() => {
     return true;
   }
 
-  async function fetchJson(url, options = {}) {
-    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
-    const errorKind = options.errorKind || inferErrorKind(url);
-    const { timeoutMs: _ignored, errorKind: _kindIgnored, ...fetchOpts } = options;
+  function networkFailMessage(kind, url, detail) {
+    const path = String(url || '').split('?')[0];
+    const hint =
+      kind === 'relevance'
+        ? 'Проверьте сеть и что API доступен (swoop.autoro.tech). Затем Reload расширения.'
+        : 'Проверьте сеть / VPN и базовый URL API, затем повторите.';
+    const extra = detail && !/failed to fetch/i.test(detail) ? ` (${detail})` : '';
+    return `Нет ответа от сервера${extra}: ${path}. ${hint}`;
+  }
+
+  /** Prefer service-worker fetch (host_permissions); fall back to page fetch. */
+  async function rawFetchViaExtension(url, fetchOpts, timeoutMs) {
+    const canMessage = typeof chrome !== 'undefined' && chrome.runtime?.sendMessage;
+    const body = fetchOpts.body;
+    const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+    // FormData cannot reliably cross the extension message boundary.
+    if (canMessage && !isFormData) {
+      const headers =
+        fetchOpts.headers && typeof fetchOpts.headers === 'object' && !(fetchOpts.headers instanceof Headers)
+          ? { ...fetchOpts.headers }
+          : fetchOpts.headers
+            ? Object.fromEntries(new Headers(fetchOpts.headers).entries())
+            : undefined;
+      const proxied = await new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: 'JR_FETCH_JSON',
+              url,
+              timeoutMs,
+              options: {
+                method: fetchOpts.method || 'GET',
+                headers,
+                body: body || undefined,
+              },
+            },
+            (resp) => {
+              if (chrome.runtime.lastError) {
+                resolve({ proxyError: chrome.runtime.lastError.message });
+                return;
+              }
+              resolve(resp || { proxyError: 'empty proxy response' });
+            }
+          );
+        } catch (err) {
+          resolve({ proxyError: String(err?.message || err) });
+        }
+      });
+      if (proxied && !proxied.proxyError) return proxied;
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response;
     try {
-      response = await fetch(url, { ...fetchOpts, signal: controller.signal });
-    } catch (err) {
-      if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-        throw new Error(localTimeoutMessage(errorKind, timeoutMs));
+      const response = await fetch(url, { ...fetchOpts, signal: controller.signal });
+      const raw = await response.text();
+      let data = null;
+      if (raw) {
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = null;
+        }
       }
-      throw err;
+      return {
+        ok: true,
+        status: response.status,
+        statusText: response.statusText || '',
+        raw,
+        data,
+      };
+    } catch (err) {
+      const name = err && err.name ? String(err.name) : '';
+      return {
+        ok: false,
+        aborted: name === 'AbortError' || name === 'TimeoutError',
+        error: err && err.message ? String(err.message) : String(err || 'network error'),
+        errorName: name,
+      };
     } finally {
       clearTimeout(timer);
     }
-    const raw = await response.text();
-    let data = null;
-    if (raw) {
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        data = null;
+  }
+
+  async function fetchJson(url, options = {}) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
+    const errorKind = options.errorKind || inferErrorKind(url);
+    const retries = Number(options.retries) >= 0 ? Number(options.retries) : errorKind === 'relevance' ? 1 : 0;
+    const { timeoutMs: _ignored, errorKind: _kindIgnored, retries: _retriesIgnored, ...fetchOpts } = options;
+
+    let lastFail = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const result = await rawFetchViaExtension(url, fetchOpts, timeoutMs);
+      if (result.aborted) {
+        throw new Error(localTimeoutMessage(errorKind, timeoutMs));
       }
+      if (!result.ok || result.proxyError) {
+        lastFail = result.error || result.proxyError || 'Failed to fetch';
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(networkFailMessage(errorKind, url, lastFail));
+      }
+      const status = Number(result.status) || 0;
+      const raw = result.raw || '';
+      const data = result.data;
+      if (status < 200 || status >= 300) {
+        throw new Error(formatApiError(status, data, raw, url, errorKind));
+      }
+      if (data == null && looksLikeHtml(raw)) {
+        throw new Error(gatewayMessage(status, errorKind));
+      }
+      return data || {};
     }
-    if (!response.ok) {
-      throw new Error(formatApiError(response.status, data, raw, url, errorKind));
-    }
-    if (data == null && looksLikeHtml(raw)) {
-      throw new Error(gatewayMessage(response.status, errorKind));
-    }
-    return data || {};
+    throw new Error(networkFailMessage(errorKind, url, lastFail));
   }
 
   function inferErrorKind(url) {
@@ -107,6 +190,12 @@ const JR_API = (() => {
       return (
         `Шлюз оборвал загрузку (HTTP ${code}). Нажмите «Обновить sources» - файл мог сохраниться. ` +
         'Если списка нет, загрузите ещё раз.'
+      );
+    }
+    if (kind === 'relevance') {
+      return (
+        `Сервер оценки не ответил (HTTP ${code}). ` +
+        'Нажмите «Оценить предложение» ещё раз.'
       );
     }
     return `Сервер не ответил (HTTP ${code}). Повторите попытку.`;
@@ -379,6 +468,9 @@ const JR_API = (() => {
       method: 'POST',
       headers,
       body: JSON.stringify({ workspaceId, vacancy, selectedSourceIds }),
+      timeoutMs: 30000,
+      errorKind: 'relevance',
+      retries: 1,
     });
   }
 
@@ -489,7 +581,10 @@ const JR_API = (() => {
           reject(new Error(resp?.error || 'Не удалось прочитать страницу'));
           return;
         }
-        resolve(resp.vacancy);
+        const vacancy = resp.vacancy && typeof resp.vacancy === 'object' ? { ...resp.vacancy } : {};
+        if (resp.tabId != null) vacancy.tabId = resp.tabId;
+        if (resp.url && !vacancy.url) vacancy.url = resp.url;
+        resolve(vacancy);
       });
     });
   }

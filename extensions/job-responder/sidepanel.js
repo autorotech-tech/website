@@ -5,6 +5,14 @@ let lastAddedAt = null;
 let lastIngestSummary = '';
 let geminiRagReady = false;
 let lastTabUrl = '';
+let lastTabId = null;
+/** URL/tab that produced the current generate result - clear when inactive/closed. */
+let resultBoundUrl = '';
+let resultBoundTabId = null;
+let vacancyExtractTimer = null;
+let vacancyExtractSeq = 0;
+
+const BTN_EVALUATE_LABEL = 'Оценить предложение';
 
 /** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md */
 const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов на вакансии. Пишешь отклик/ответы только по фактам кандидата.
@@ -713,15 +721,48 @@ function clearQaState() {
   }
 }
 
-/** Green/red pulsing dot on vacancy summary - visible while section is collapsed. */
-function setVacancyPageStatus(ok, title) {
+/** Status dot: reading | ok | fail - visible while vacancy section is collapsed. */
+function setVacancyPageStatus(state, title) {
   if (!vacancyStatusDot) return;
+  const mode = state === 'reading' || state === 'ok' || state === 'fail' ? state : state ? 'ok' : 'fail';
   vacancyStatusDot.hidden = false;
-  vacancyStatusDot.classList.remove('isOk', 'isFail');
-  vacancyStatusDot.classList.add(ok ? 'isOk' : 'isFail');
-  vacancyStatusDot.title = title || (ok ? 'Страница прочитана' : 'Не удалось прочитать страницу');
+  vacancyStatusDot.classList.remove('isOk', 'isFail', 'isReading');
+  if (mode === 'reading') vacancyStatusDot.classList.add('isReading');
+  else if (mode === 'ok') vacancyStatusDot.classList.add('isOk');
+  else vacancyStatusDot.classList.add('isFail');
+  const fallback =
+    mode === 'reading' ? 'Чтение' : mode === 'ok' ? 'Страница прочитана' : 'Не удалось прочитать страницу';
+  vacancyStatusDot.title = title || fallback;
   vacancyStatusDot.setAttribute('aria-label', vacancyStatusDot.title);
   vacancyStatusDot.setAttribute('aria-hidden', 'false');
+}
+
+function clearGenerateResult() {
+  if (resultText) resultText.value = '';
+  if (genMeta) genMeta.textContent = '';
+  resultBoundUrl = '';
+  resultBoundTabId = null;
+  setResultGenerating(false);
+}
+
+function maybeClearResultForPageChange({ url = '', tabId = null, removedTabId = null } = {}) {
+  const boundUrl = String(resultBoundUrl || '');
+  const boundTab = resultBoundTabId != null ? Number(resultBoundTabId) : null;
+  if (!boundUrl && boundTab == null) return false;
+  if (removedTabId != null && boundTab != null && Number(removedTabId) === boundTab) {
+    clearGenerateResult();
+    return true;
+  }
+  const nextUrl = String(url || '');
+  const nextTab = tabId != null ? Number(tabId) : null;
+  const urlChanged = boundUrl && nextUrl && nextUrl !== boundUrl;
+  const tabChanged = boundTab != null && nextTab != null && nextTab !== boundTab;
+  const becameInactive = Boolean(boundUrl || boundTab != null) && (urlChanged || tabChanged);
+  if (becameInactive) {
+    clearGenerateResult();
+    return true;
+  }
+  return false;
 }
 
 function applyVacancy(vacancy) {
@@ -738,6 +779,7 @@ function applyVacancy(vacancy) {
           : '';
   vacancyMeta.textContent = `${vacancy.title || '-'} | ${vacancy.company || '-'} | ${host}${site}${kind}`;
   if (vacancy.description) vacancyDescription.value = vacancy.description;
+  else if (vacancyDescription) vacancyDescription.value = '';
   renderStructured(vacancy.structured);
   renderRelevance(null);
   const qs = normalizeQuestionList(vacancy.questions);
@@ -750,24 +792,37 @@ function applyVacancy(vacancy) {
   }
   const descOk = String(vacancy.description || '').trim().length >= 20 || qs.length > 0;
   setVacancyPageStatus(
-    descOk,
+    descOk ? 'ok' : 'fail',
     descOk ? 'Страница прочитана' : 'Страница пустая или мало текста'
   );
 }
 
-async function refreshVacancyFromTab({ fromClick = false } = {}) {
-  setError('');
+/**
+ * DOM extract from active tab.
+ * @param {{ fromClick?: boolean, runRelevance?: boolean }} opts
+ * fromClick/runRelevance: user action «Оценить предложение» -> extract + relevance API.
+ * Auto tab-switch: extract only (zero LLM / no relevance tokens).
+ */
+async function refreshVacancyFromTab({ fromClick = false, runRelevance = false } = {}) {
+  const doRelevance = Boolean(fromClick || runRelevance);
   const vacancyBtn = document.getElementById('refreshVacancyBtn');
-  if (fromClick) {
-    setButtonBusy(vacancyBtn, true, 'Обновить с страницы', 'Читаю…');
+  const seq = ++vacancyExtractSeq;
+  setError('');
+  setVacancyPageStatus('reading', 'Чтение');
+  setSuccess('Чтение');
+  if (doRelevance) {
+    setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Чтение…');
   }
   try {
-    // Client-side DOM extract only - no /generate, /relevance, or Gemini (zero tokens).
+    // Client-side DOM extract only - no /generate or Gemini (zero tokens).
     const vacancy = await JR_API.fetchVacancyFromTab();
+    if (seq !== vacancyExtractSeq) return;
     lastTabUrl = String(vacancy.url || '');
+    if (vacancy.tabId != null) lastTabId = Number(vacancy.tabId);
     applyVacancy(vacancy);
     const qn = normalizeQuestionList(vacancy.questions).length;
-    setSuccess(
+    const descOk = String(vacancy.description || '').trim().length >= 20 || qn > 0;
+    const readMsg =
       vacancy.source === 'google_form'
         ? `Google Form прочитана (${qn} вопросов)`
         : vacancy.source === 'hh_vacancy_response' || vacancy.pageKind === 'hh_vacancy_response'
@@ -776,17 +831,53 @@ async function refreshVacancyFromTab({ fromClick = false } = {}) {
             : 'Страница отклика HH: вопросы не найдены (проверьте форму task-question)'
           : qn
             ? `Страница прочитана (${qn} вопросов)`
-            : 'Страница прочитана'
-    );
+            : descOk
+              ? 'Страница прочитана'
+              : 'Страница пустая или мало текста';
+    if (!descOk) {
+      setVacancyPageStatus('fail', readMsg);
+      setError(readMsg);
+      return;
+    }
+    setVacancyPageStatus('ok', 'Страница прочитана');
+    setSuccess(readMsg);
+
+    // Relevance only on explicit user click «Оценить предложение».
+    if (doRelevance) {
+      setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Оценка…');
+      try {
+        const data = await runRelevanceScore();
+        if (seq !== vacancyExtractSeq) return;
+        if (data && data.score != null) {
+          setSuccess(`Страница прочитана · релевантность ${data.score} / 100`);
+        } else if (data) {
+          setError('Оценка не вернула score. Проверьте API / redeploy.');
+        }
+      } catch (relErr) {
+        if (seq !== vacancyExtractSeq) return;
+        setVacancyPageStatus('ok', 'Страница прочитана');
+        setError(String(relErr.message || relErr));
+      }
+    }
   } catch (err) {
+    if (seq !== vacancyExtractSeq) return;
     clearQaState();
-    setVacancyPageStatus(false, 'Не удалось прочитать страницу');
+    setVacancyPageStatus('fail', 'Не удалось прочитать страницу');
     setError(String(err.message || err));
   } finally {
-    if (fromClick) {
-      setButtonBusy(vacancyBtn, false, 'Обновить с страницы');
+    if (doRelevance) {
+      setButtonBusy(vacancyBtn, false, BTN_EVALUATE_LABEL);
     }
   }
+}
+
+function scheduleVacancyExtractFromTab({ debounceMs = 280 } = {}) {
+  setVacancyPageStatus('reading', 'Чтение');
+  setSuccess('Чтение');
+  clearTimeout(vacancyExtractTimer);
+  vacancyExtractTimer = setTimeout(() => {
+    refreshVacancyFromTab({ fromClick: false, runRelevance: false }).catch(() => {});
+  }, debounceMs);
 }
 
 function normalizeQuestionList(raw) {
@@ -912,11 +1003,11 @@ async function runGenerate(mode) {
   const vacancy = buildVacancyPayload();
   const isQa = mode === 'question_answers' || mode === 'qa';
   if (!vacancy.description || vacancy.description.length < 20) {
-    setError('Нужно описание вакансии - нажмите «Обновить с страницы»');
+    setError('Нужно описание вакансии - нажмите «Оценить предложение»');
     return;
   }
   if (isQa && (!vacancy.questions || !vacancy.questions.length)) {
-    setError('На странице нет вопросов. Откройте Google Form / таблицу или HH с вопросами, затем «Обновить с страницы».');
+    setError('На странице нет вопросов. Откройте Google Form / таблицу или HH с вопросами, затем «Оценить предложение».');
     return;
   }
   const btn = isQa ? genAnswersBtn : genCoverBtn;
@@ -953,6 +1044,8 @@ async function runGenerate(mode) {
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
+    resultBoundUrl = String(vacancy.url || lastTabUrl || '');
+    resultBoundTabId = lastTabId != null ? Number(lastTabId) : null;
     if (Array.isArray(data.answers) && data.answers.length) {
       const mapped = data.answers.map((a, i) => {
         let question = String(a.question || a.text || '').trim();
@@ -1002,7 +1095,6 @@ const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
 const geminiRagSyncBtn = document.getElementById('geminiRagSyncBtn');
-const scoreBtn = document.getElementById('scoreBtn');
 const saveWorkspaceBtn = document.getElementById('saveWorkspaceBtn');
 
 const resumeFileInput = document.getElementById('resumeFile');
@@ -1539,7 +1631,9 @@ if (driveImportBtn) {
   });
 }
 
-refreshVacancyBtn.addEventListener('click', () => refreshVacancyFromTab({ fromClick: true }));
+refreshVacancyBtn.addEventListener('click', () =>
+  refreshVacancyFromTab({ fromClick: true, runRelevance: true })
+);
 refreshSourcesBtn.addEventListener('click', () => {
   setError('');
   refreshSources({ quiet: false }).catch(() => {});
@@ -1588,26 +1682,6 @@ if (sourcesListEl) {
     } catch (err) {
       setError(String(err.message || err));
       setButtonBusy(btn, false, '×');
-    }
-  });
-}
-if (scoreBtn) {
-  scoreBtn.addEventListener('click', async () => {
-    setError('');
-    setButtonBusy(scoreBtn, true, 'Оценка релевантности', 'Считаю…');
-    try {
-      const data = await runRelevanceScore();
-      if (data && data.score != null) {
-        setSuccess(`Релевантность: ${data.score} / 100`);
-      } else if (!data) {
-        return;
-      } else {
-        setError('Оценка не вернула score. Проверьте API / redeploy.');
-      }
-    } catch (err) {
-      setError(String(err.message || err));
-    } finally {
-      setButtonBusy(scoreBtn, false, 'Оценка релевантности');
     }
   });
 }
@@ -1673,13 +1747,30 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type !== 'JR_TAB_NAVIGATED') return;
+  if (message?.type === 'JR_TAB_REMOVED') {
+    const removedId = message.tabId != null ? Number(message.tabId) : null;
+    maybeClearResultForPageChange({ removedTabId: removedId });
+    clearQaState();
+    renderRelevance(null);
+    // Active tab re-read comes via JR_TAB_CHANGED (after_remove).
+    return;
+  }
+  if (message?.type !== 'JR_TAB_CHANGED' && message?.type !== 'JR_TAB_NAVIGATED') return;
   const url = String(message.url || '');
-  if (!url || url === lastTabUrl) return;
+  const tabId = message.tabId != null ? Number(message.tabId) : null;
+  maybeClearResultForPageChange({ url, tabId });
+  if (url && url === lastTabUrl && (tabId == null || tabId === lastTabId)) return;
   lastTabUrl = url;
-  // Clear stale form Q&A, then DOM-only re-extract (no LLM / no relevance API).
+  if (tabId != null) lastTabId = tabId;
+  // Clear stale form Q&A + relevance, then DOM-only re-extract (no LLM / no relevance API).
   clearQaState();
-  refreshVacancyFromTab().catch(() => {});
+  renderRelevance(null);
+  if (message.canExtract === false) {
+    setVacancyPageStatus('fail', 'Не http(s) страница');
+    setError('Откройте обычную http(s) страницу с вакансией');
+    return;
+  }
+  scheduleVacancyExtractFromTab({ debounceMs: 280 });
 });
 
 let coverTemplateSaveTimer = null;

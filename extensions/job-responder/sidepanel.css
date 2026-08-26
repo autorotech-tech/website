@@ -126,6 +126,11 @@ details.card.collapsible > summary {
   animation: jrDotPulse 1.25s ease-in-out infinite;
 }
 
+.jrStatusDot.isReading {
+  background: #f59e0b;
+  animation: jrDotPulse 0.9s ease-in-out infinite;
+}
+
 @keyframes jrDotPulse {
   0%,
   100% {

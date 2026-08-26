@@ -47,15 +47,21 @@ Chrome MV3 extension: персонализированные отклики с �
 - Generate: LLM получает vacancy + **один** compact profile (~3–6k chars), не тела PDF; при timeout - retry с ещё более сжатым профилем; JSON-ошибки без HTTP 502
 - После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
 
+## v0.8.2
+
+- Кнопка **«Оценить предложение»**: DOM-парс страницы + `POST /relevance` одним кликом (без отдельной «Оценка релевантности»).
+- Переключение / закрытие вкладки: статус **«Чтение»**, DOM-only re-read (0 LLM tokens), очистка результата отклика при inactive/close.
+- Relevance fetch через service worker + читаемые ошибки вместо raw `Failed to fetch`.
+
 ## Релевантность
 
-`POST /api/v1/job-responder/relevance` и кнопка «Оценка релевантности» в panel:
+`POST /api/v1/job-responder/relevance` и кнопка **«Оценить предложение»** в panel (после DOM extract):
 
 - score 0–100 по **тому же** unified compact profile (tools / skills / role / format / experience)
 - **Semantic grid** (`jr_semantic_grid`): synonym clusters + evidence из RAG (ROAS/GMV/PPC…) без LLM
 - Matching: exact → synonym → fuzzy/token; «Не хватает» только если нет семантического покрытия
 - rationale + matched / missing / `semanticMatches` в side panel
-
+- Auto tab-switch / close: только DOM extract, **без** relevance API
 ## v0.6.3
 
 - **Правки RAG (fix):** парсинг свободного RU ("Поменяй контакты… Telegram: @x") → structured `telegram`/`email`; документ overrides хранит parsed + raw.
@@ -90,7 +96,7 @@ Chrome MV3 extension: персонализированные отклики с �
 ## Google Forms + таблицы Q&A
 
 1. Откройте форму `https://docs.google.com/forms/.../viewform` (или страницу с таблицей Вопрос|Ответ).
-2. Side panel -> **Обновить с страницы** - вопросы попадут в блок **«Вопросы формы»**.
+2. Side panel -> **Оценить предложение** - вопросы попадут в блок **«Вопросы формы»** (+ оценка релевантности).
 3. **Ответы на вопросы** (`mode: qa`) - LLM вернёт `{ answers: [{question, answer}] }`.
 4. Копируйте ответ по строке или **Копировать все**.
 

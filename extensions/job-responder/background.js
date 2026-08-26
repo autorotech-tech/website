@@ -43,22 +43,42 @@ function extractFromTab(tabId, sendResponse) {
   });
 }
 
-/** Notify side panel that the active tab navigated - clear stale Q&A. */
-function broadcastActiveTabUrl(tabId, url) {
-  if (!canInjectIntoUrl(url)) return;
+/** Notify side panel about active tab changes - DOM re-read, clear stale letter. */
+function broadcastActiveTab(tab, reason) {
+  if (!tab?.id) return;
+  const url = String(tab.url || '');
   chrome.runtime
     .sendMessage({
-      type: 'JR_TAB_NAVIGATED',
-      tabId,
-      url: String(url || ''),
+      type: 'JR_TAB_CHANGED',
+      reason: reason || 'activated',
+      tabId: tab.id,
+      url,
+      canExtract: canInjectIntoUrl(url),
     })
     .catch(() => {});
+}
+
+function broadcastTabRemoved(tabId) {
+  chrome.runtime
+    .sendMessage({
+      type: 'JR_TAB_REMOVED',
+      tabId,
+    })
+    .catch(() => {});
+}
+
+function notifyCurrentActiveTab(reason) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab) return;
+    broadcastActiveTab(tab, reason);
+  });
 }
 
 chrome.tabs.onActivated.addListener((info) => {
   chrome.tabs.get(info.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
-    broadcastActiveTabUrl(tab.id, tab.url);
+    broadcastActiveTab(tab, 'activated');
   });
 });
 
@@ -67,25 +87,82 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!tab?.active) return;
   const url = changeInfo.url || tab.url;
   if (!url) return;
-  broadcastActiveTabUrl(tabId, url);
+  broadcastActiveTab({ ...tab, id: tabId, url }, changeInfo.url ? 'navigated' : 'complete');
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  broadcastTabRemoved(tabId);
+  // After close, re-read whatever is now active (debounced in sidepanel).
+  setTimeout(() => notifyCurrentActiveTab('after_remove'), 50);
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== 'JR_GET_VACANCY') return false;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0];
-    if (!tab?.id) {
-      sendResponse({ ok: false, error: 'No active tab' });
-      return;
-    }
-    if (!canInjectIntoUrl(tab.url)) {
-      sendResponse({
-        ok: false,
-        error: 'Откройте обычную http(s) страницу с вакансией (не chrome://)',
+  if (message?.type === 'JR_GET_VACANCY') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: 'No active tab' });
+        return;
+      }
+      if (!canInjectIntoUrl(tab.url)) {
+        sendResponse({
+          ok: false,
+          error: 'Откройте обычную http(s) страницу с вакансией (не chrome://)',
+          tabId: tab.id,
+          url: tab.url || '',
+        });
+        return;
+      }
+      extractFromTab(tab.id, (resp) => {
+        sendResponse({
+          ...(resp || { ok: false, error: 'Empty response' }),
+          tabId: tab.id,
+          url: tab.url || resp?.vacancy?.url || '',
+        });
       });
-      return;
-    }
-    extractFromTab(tab.id, sendResponse);
-  });
-  return true;
+    });
+    return true;
+  }
+
+  // Proxy fetch via service worker - more reliable than sidepanel fetch on some Chrome builds.
+  if (message?.type === 'JR_FETCH_JSON') {
+    const url = String(message.url || '');
+    const timeoutMs = Number(message.timeoutMs) > 0 ? Number(message.timeoutMs) : 45000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const opts = message.options && typeof message.options === 'object' ? message.options : {};
+    fetch(url, { ...opts, signal: controller.signal })
+      .then(async (response) => {
+        const raw = await response.text();
+        let data = null;
+        if (raw) {
+          try {
+            data = JSON.parse(raw);
+          } catch {
+            data = null;
+          }
+        }
+        sendResponse({
+          ok: true,
+          status: response.status,
+          statusText: response.statusText || '',
+          raw,
+          data,
+        });
+      })
+      .catch((err) => {
+        const name = err && err.name ? String(err.name) : '';
+        const msg = err && err.message ? String(err.message) : String(err || 'network error');
+        sendResponse({
+          ok: false,
+          aborted: name === 'AbortError' || name === 'TimeoutError',
+          error: msg,
+          errorName: name,
+        });
+      })
+      .finally(() => clearTimeout(timer));
+    return true;
+  }
+
+  return false;
 });
