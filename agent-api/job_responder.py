@@ -742,6 +742,27 @@ _GENERIC_LINK_LABELS = frozenset(
     }
 )
 
+# Canonical Autoro ## Ссылки (ws=1 / default cover). Dedup by URL; never drop AJtcYfItspM.
+DEFAULT_CANONICAL_LINKS: List[Dict[str, str]] = [
+    {"label": "резюме", "url": "https://autoro.tech/resume/"},
+    {"label": "youtube", "url": "https://www.youtube.com/@iq_boosted"},
+    {"label": "LinkedIn", "url": "https://www.linkedin.com/in/vlad-autoro-tech/"},
+    {
+        "label": "профиль на форуме по интернет маркетингу",
+        "url": "https://www.blackhatworld.com/members/vlad_x.1811065/",
+    },
+    {"label": "видео-демо процессов e-commerce", "url": "https://youtu.be/v2_zmJrlMks"},
+    {
+        "label": "видео-демо о тестирование гипотезы",
+        "url": "https://youtu.be/AJtcYfItspM",
+    },
+]
+
+DEFAULT_LINKS_BLOCK = (
+    "## Ссылки\n"
+    + "\n".join(f"{item['label']}: {item['url']}" for item in DEFAULT_CANONICAL_LINKS)
+)
+
 
 def is_junk_contact_url(url: str) -> bool:
     return bool(_JUNK_CONTACT_URL_RE.search(url or ""))
@@ -1215,18 +1236,36 @@ def collect_generate_contacts(
     return filter_contact_dict(out)
 
 
+def ensure_canonical_default_links(bucket: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Upsert DEFAULT_CANONICAL_LINKS by URL (fill missing; never drop AJtcYfItspM)."""
+    for item in DEFAULT_CANONICAL_LINKS:
+        url = str(item.get("url") or "").strip()
+        label = str(item.get("label") or "").strip()
+        if not url or not label:
+            continue
+        _upsert_labeled_link(
+            bucket,
+            label=label,
+            url=url,
+            value=url,
+            require_meaningful_label=True,
+        )
+    return bucket
+
+
 def collect_generate_links(
     *,
     cover_template: str = "",
     overrides: Optional[Dict[str, Any]] = None,
     merged: Optional[Dict[str, Any]] = None,
     prompt_extra: str = "",
+    include_canonical_defaults: bool = True,
 ) -> List[Dict[str, str]]:
     """Collect ## Ссылки ONLY from cover_template + profile overrides (+ promptExtra).
 
     Never vacancy HTML, YouTube footer crawl, or unlabeled profile.links dumps.
     Preserves Russian labels and optional title text before the URL.
-    Priority: cover_template > rag_edits/overrides > promptExtra.
+    Priority: cover_template > rag_edits/overrides > promptExtra > canonical defaults.
     """
     out: List[Dict[str, str]] = []
     profile = merged or {}
@@ -1279,6 +1318,10 @@ def collect_generate_links(
     # 4) Generation instructions (also accept labeled ## Ссылки there)
     _ingest_blob(prompt_extra or "")
 
+    # 5) Always fill Autoro canonical URLs (dedupe by URL; keep richer labels from above)
+    if include_canonical_defaults:
+        ensure_canonical_default_links(out)
+
     return out[:20]
 
 
@@ -1317,6 +1360,7 @@ def ensure_links_in_cover_letter(text: str, links: List[Dict[str, str]]) -> str:
             value=str(item.get("value") or item.get("url") or ""),
             require_meaningful_label=True,
         )
+    ensure_canonical_default_links(clean)
     body = strip_links_section(body)
     body = strip_empty_markdown_headings(body)
     if not clean:
@@ -2504,6 +2548,7 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
 
 
 # Ultra-short runtime system (token-efficient). Fuller notes: docs/job-responder/prompts-ultra-short.md
+# Keep in sync with extensions/job-responder/sidepanel.js DEFAULT_PROMPT_EXTRA.
 ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
 
 [INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
@@ -2712,9 +2757,10 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
             continue
         # Labeled relevant link (резюме, youtube, демо, форум, …)
         if url and is_relevant_link_url(url):
-            label = _normalize_link_label(raw_key)[:40]
+            label = _normalize_link_label(raw_key)[:120]
             if label.lower() not in ("контакты", "contacts", "ссылки"):
-                link_extras[label] = url[:500]
+                # Keep title text before URL when present (value may be "Title https://…")
+                link_extras[label] = (val if extract_http_url(val) == url else url)[:500]
 
     # 2) Free-form Telegram ONLY near Telegram/телеграм/тг labels — never bare youtube.com/@
     if "telegram" not in out:
@@ -2751,10 +2797,11 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
                 break
 
     for item in extract_labeled_links_from_text(raw):
-        lab = _normalize_link_label(item.get("label") or "Ссылка")[:40]
+        lab = _normalize_link_label(item.get("label") or "Ссылка")[:120]
         url = str(item.get("url") or "")
+        val = str(item.get("value") or url)
         if lab and url:
-            link_extras.setdefault(lab, url[:500])
+            link_extras.setdefault(lab, val[:500] if extract_http_url(val) else url[:500])
 
     contacts = filter_contact_dict(out)
     # Preserve labeled links alongside contacts for overrides / patch / generate
@@ -2837,6 +2884,24 @@ def format_structured_overrides_document(raw_text: str, parsed: Dict[str, str]) 
             lines.append("")
             lines.append("## Ссылки")
             lines.extend(link_lines)
+        lines.append("")
+    # Ensure canonical Autoro URLs survive structured rewrite (esp. AJtcYfItspM)
+    have_urls = {
+        _link_url_key(extract_http_url(ln.split(":", 1)[-1]) or "")
+        for ln in lines
+        if "://" in ln
+    }
+    missing_canon = [
+        item
+        for item in DEFAULT_CANONICAL_LINKS
+        if _link_url_key(item["url"]) not in have_urls
+    ]
+    if missing_canon:
+        if not any(ln.strip() == "## Ссылки" for ln in lines):
+            lines.append("")
+            lines.append("## Ссылки")
+        for item in missing_canon:
+            lines.append(f"{item['label']}: {item['url']}")
         lines.append("")
     lines.append("# Raw edits")
     lines.append(raw)
@@ -3897,6 +3962,22 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             (workspace_id, RESUME_SOURCE, uniq),
         )
         return [int(r["id"]) for r in cur.fetchall() if r.get("id") is not None]
+
+    @app.get("/api/v1/job-responder/default-prompt")
+    async def job_responder_default_prompt(
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """Live ultra-short system prompt + canonical ## Ссылки (for side panel sync)."""
+        _auth(request, x_api_key, authorization)
+        return {
+            "ok": True,
+            "prompt": ULTRA_SHORT_SYSTEM_PROMPT,
+            "promptVersion": "ultra-short-no-ai-slop-v1",
+            "linksBlock": DEFAULT_LINKS_BLOCK,
+            "canonicalLinks": list(DEFAULT_CANONICAL_LINKS),
+        }
 
     @app.get("/api/v1/job-responder/resume/status")
     async def job_responder_resume_status(

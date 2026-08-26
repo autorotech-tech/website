@@ -650,6 +650,14 @@ const JR_API = (() => {
     });
   }
 
+  async function getDefaultPrompt() {
+    const apiBase = await getApiBase();
+    return fetchJson(`${apiBase}/api/v1/job-responder/default-prompt`, {
+      method: 'GET',
+      headers: await getAuthHeaders(),
+    });
+  }
+
   async function logout() {
     await chrome.storage.local.remove([
       'userAccessToken',
@@ -671,6 +679,7 @@ const JR_API = (() => {
     geminiRagSync,
     generateResponse,
     getApiBase,
+    getDefaultPrompt,
     getWorkspaceId,
     injectListBadges,
     isTestMode,

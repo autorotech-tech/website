@@ -130,10 +130,16 @@ Chrome MV3 extension: персонализированные отклики с �
 
 ## Инструкции генерации (промпт)
 
+- Side panel всегда показывает **runtime** ultra-short prompt (не пустой / не stale)
+- Empty / legacy / drifted `jrPromptExtra` синхронизируется с `DEFAULT_PROMPT_EXTRA` и опционально `GET /api/v1/job-responder/default-prompt`
 - Ultra-short system prompt (см. `prompts-ultra-short.md`)
 - **Сохранить промпт** активна только при изменениях vs сохранённого (`jrPromptExtra`)
-- **Сбросить** → default ultra-short
-- На generate уходит текущий текст; ultra-short не дублируется в CUSTOM (уже в system)
+- **Сбросить** заливает текущий default (API → fallback bundled)
+- На generate: ultra-short в textarea не дублируется в CUSTOM (уже в `ULTRA_SHORT_SYSTEM_PROMPT`)
+
+## Канонические ## Ссылки (6 URL)
+
+`DEFAULT_CANONICAL_LINKS` в extension + backend. Finalize дописывает недостающие URL (в т.ч. `https://youtu.be/AJtcYfItspM`). Deploy upsert в ws=1 overrides.
 
 ## Sources list (v0.5.6+)
 

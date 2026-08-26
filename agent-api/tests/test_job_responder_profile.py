@@ -389,7 +389,7 @@ LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/
 """
 
 
-def test_extract_labeled_links_five_urls():
+def test_extract_labeled_links_six_urls():
     links = extract_labeled_links_from_text(_SMOKE_LINKS_BLOCK)
     urls = {lk["url"] for lk in links}
     assert "https://autoro.tech/resume/" in urls
@@ -398,8 +398,41 @@ def test_extract_labeled_links_five_urls():
     assert "https://www.blackhatworld.com/members/vlad_x.1811065/" in urls
     assert "https://youtu.be/v2_zmJrlMks" in urls
     assert "https://youtu.be/AJtcYfItspM" in urls
+    assert len(urls) >= 6
     assert not any("example.com" in u or "jr-smoke" in u for u in urls)
     assert any(lk.get("label") == "LinkedIn" for lk in links)
+
+
+def test_canonical_defaults_fill_missing_sixth_link():
+    """Five-link template still gets AJtcYfItspM from DEFAULT_CANONICAL_LINKS."""
+    five = """## Ссылки
+резюме: https://autoro.tech/resume/
+youtube: https://www.youtube.com/@iq_boosted
+LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/
+профиль на форуме по интернет маркетингу: https://www.blackhatworld.com/members/vlad_x.1811065/
+видео-демо процессов e-commerce: https://youtu.be/v2_zmJrlMks
+"""
+    links = collect_generate_links(cover_template=five)
+    urls = [lk["url"] for lk in links]
+    assert "https://youtu.be/AJtcYfItspM" in urls
+    assert len(urls) >= 6
+    out = finalize_cover_letter_contacts_and_links(
+        "# ОТКЛИК\n\nHi\n",
+        contacts={"telegram": "@autoro_tech", "email": "a@b.com"},
+        links=links,
+    )
+    assert "https://youtu.be/AJtcYfItspM" in out
+    assert "видео-демо о тестирование гипотезы" in out
+
+
+def test_long_title_before_url_parses():
+    blob = (
+        "## Ссылки\n"
+        'видео-демо рассуждение: Тестирование гипотезы "Планировщик путешествий" '
+        "https://youtu.be/AJtcYfItspM\n"
+    )
+    links = extract_labeled_links_from_text(blob)
+    assert any(lk["url"] == "https://youtu.be/AJtcYfItspM" for lk in links)
 
 
 def test_ensure_links_in_letter_from_overrides_and_instructions():

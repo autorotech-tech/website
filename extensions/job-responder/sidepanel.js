@@ -80,7 +80,9 @@ if (scoreListBtn) {
   });
 }
 
-/** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md */
+/** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md
+ * Keep in sync with agent-api ULTRA_SHORT_SYSTEM_PROMPT (GET /api/v1/job-responder/default-prompt).
+ */
 const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
 
 [INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
@@ -89,7 +91,7 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
-4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок (резюме, youtube, LinkedIn, демо…). YouTube @handle ≠ Telegram. Не выдумывай URL.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
 5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
@@ -129,6 +131,22 @@ youtube: https://...
 
 [OUT qa] [{"question":"...","answer":"..."}]`;
 
+/** Canonical ## Ссылки (must stay in sync with agent-api DEFAULT_CANONICAL_LINKS). */
+const DEFAULT_CANONICAL_LINKS = [
+  { label: 'резюме', url: 'https://autoro.tech/resume/' },
+  { label: 'youtube', url: 'https://www.youtube.com/@iq_boosted' },
+  { label: 'LinkedIn', url: 'https://www.linkedin.com/in/vlad-autoro-tech/' },
+  {
+    label: 'профиль на форуме по интернет маркетингу',
+    url: 'https://www.blackhatworld.com/members/vlad_x.1811065/',
+  },
+  { label: 'видео-демо процессов e-commerce', url: 'https://youtu.be/v2_zmJrlMks' },
+  { label: 'видео-демо о тестирование гипотезы', url: 'https://youtu.be/AJtcYfItspM' },
+];
+
+const DEFAULT_LINKS_BLOCK =
+  '## Ссылки\n' + DEFAULT_CANONICAL_LINKS.map((l) => `${l.label}: ${l.url}`).join('\n');
+
 /** Structured cover template - default for empty / migration. */
 const DEFAULT_COVER_TEMPLATE = `[COVER_TEMPLATE]
 Приветствие: Здравствуйте!
@@ -142,19 +160,20 @@ CTA: Готов обсудить детали в удобном формате.
 Telegram: @autoro_tech
 Email: autoro.tech@gmail.com
 
-## Ссылки
-резюме: https://autoro.tech/resume/
-youtube: https://www.youtube.com/@iq_boosted
-LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/
-профиль на форуме по интернет маркетингу: https://www.blackhatworld.com/members/vlad_x.1811065/
-видео-демо процессов e-commerce: https://youtu.be/v2_zmJrlMks
-видео-демо о тестирование гипотезы: https://youtu.be/AJtcYfItspM
+${DEFAULT_LINKS_BLOCK}
 `;
 
 /** Legacy default contact line - migrate storage to ultra-short on load. */
 const LEGACY_PROMPT_EXTRA =
   'Всегда включай контакты и релевантные ссылки из профиля (email, Telegram, телефон, портфолио, GitHub, LinkedIn). ' +
   'Не выдумывай. Для переопределения добавьте строки вида ключ: значение (см. placeholder).';
+
+function normPromptBlob(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
 
 function isJrSystemPromptText(text) {
   const t = String(text || '');
@@ -173,9 +192,48 @@ function isMissingNoAiSlopPrompt(text) {
   return isJrSystemPromptText(t) && !/no-ai-slop/i.test(t);
 }
 
+/** System prompt in storage drifted from live DEFAULT_PROMPT_EXTRA / API. */
+function isDriftedSystemPrompt(text, liveDefault = DEFAULT_PROMPT_EXTRA) {
+  const t = String(text || '').trim();
+  if (!t) return true;
+  if (!isJrSystemPromptText(t)) return false;
+  return normPromptBlob(t) !== normPromptBlob(liveDefault);
+}
+
+function shouldMigratePromptExtra(savedExtra, liveDefault = DEFAULT_PROMPT_EXTRA) {
+  const saved = String(savedExtra || '');
+  if (!saved.trim()) return true;
+  if (saved.trim() === LEGACY_PROMPT_EXTRA.trim()) return true;
+  if (/^Всегда включай контакты и релевантные ссылки из профиля/.test(saved.trim())) return true;
+  if (isOldUltraShortPrompt(saved)) return true;
+  if (isMissingNoAiSlopPrompt(saved)) return true;
+  if (isDriftedSystemPrompt(saved, liveDefault)) return true;
+  return false;
+}
+
 function isStructuredCoverTemplate(text) {
   const t = String(text || '');
   return /\[COVER_TEMPLATE\]/i.test(t) || /\[CONTACTS\]/i.test(t);
+}
+
+function coverTemplateMissingCanonicalLinks(text) {
+  const blob = String(text || '');
+  return DEFAULT_CANONICAL_LINKS.some((item) => !blob.includes(item.url));
+}
+
+/** Ensure ## Ссылки has all 6 canonical URLs (dedupe by URL; never drop AJtcYfItspM). */
+function ensureCanonicalLinksInTemplate(text) {
+  let raw = String(text || '').trim();
+  if (!raw) {
+    return DEFAULT_COVER_TEMPLATE.trim();
+  }
+  const missing = DEFAULT_CANONICAL_LINKS.filter((item) => !raw.includes(item.url));
+  if (!missing.length) return raw;
+  if (/##\s*Ссылки/i.test(raw)) {
+    const lines = missing.map((item) => `${item.label}: ${item.url}`).join('\n');
+    return `${raw.trimEnd()}\n${lines}`.trim();
+  }
+  return `${raw.trimEnd()}\n\n${DEFAULT_LINKS_BLOCK}`.trim();
 }
 
 function formatContactsBlock(contacts) {
@@ -203,13 +261,41 @@ function formatContactsBlock(contacts) {
   return lines.join('\n');
 }
 
+function extractLinksSection(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#{1,6}\s*Ссылки\s*$/i.test(lines[i].trim())) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return '';
+  return lines.slice(start).join('\n').trim();
+}
+
+function stripLinksSection(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#{1,6}\s*Ссылки\s*$/i.test(lines[i].trim())) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return String(text || '').trim();
+  return lines.slice(0, start).join('\n').trim();
+}
+
 function buildStructuredCoverTemplate({ body = '', contacts = {} } = {}) {
   let about = String(body || '').trim();
-  // Strip existing structured wrappers if re-migrating
+  // Strip existing structured wrappers if re-migrating (keep ## Ссылки separately)
+  const linksFromBody = extractLinksSection(about);
   about = about
     .replace(/\[COVER_TEMPLATE\]/gi, '')
     .replace(/\[CONTACTS\][\s\S]*$/i, '')
     .trim();
+  about = stripLinksSection(about);
   if (!about) {
     about =
       'Приветствие: Здравствуйте!\nО себе (1-2 предложения): Кратко кто вы и чем полезны под эту роль.\nКлючевые факты (bullet):\n- факт 1\n- факт 2\nCTA: Готов обсудить детали.';
@@ -217,20 +303,31 @@ function buildStructuredCoverTemplate({ body = '', contacts = {} } = {}) {
   const contactLines = formatContactsBlock(contacts);
   const contactsBlock = contactLines
     ? contactLines
-    : 'Telegram: @autoro_tech\nEmail: autoro.tech@gmail.com\nPortfolio:\nLinkedIn:\nGitHub:';
-  return `[COVER_TEMPLATE]\n${about}\n\n[CONTACTS]\n${contactsBlock}`.trim();
+    : 'Telegram: @autoro_tech\nEmail: autoro.tech@gmail.com';
+  const withLinks = ensureCanonicalLinksInTemplate(
+    `[COVER_TEMPLATE]\n${about}\n\n[CONTACTS]\n${contactsBlock}\n\n${linksFromBody || DEFAULT_LINKS_BLOCK}`.trim()
+  );
+  return withLinks;
 }
 
 function mergeContactsIntoStructuredTemplate(template, contacts) {
   const raw = String(template || '').trim();
-  if (!raw || !contacts || !Object.keys(contacts).length) return raw;
+  if (!raw || !contacts || !Object.keys(contacts).length) {
+    return ensureCanonicalLinksInTemplate(raw);
+  }
+  // Preserve ## Ссылки that sit after [CONTACTS]
+  const linksTail = extractLinksSection(raw) || DEFAULT_LINKS_BLOCK;
   if (!/\[CONTACTS\]/i.test(raw)) {
-    return `${raw}\n\n[CONTACTS]\n${formatContactsBlock(contacts)}`.trim();
+    return ensureCanonicalLinksInTemplate(
+      `${raw}\n\n[CONTACTS]\n${formatContactsBlock(contacts)}\n\n${linksTail}`.trim()
+    );
   }
   const existing = parseProfileOverrides(raw);
   const merged = { ...contacts, ...existing }; // template wins
-  const head = raw.replace(/\[CONTACTS\][\s\S]*$/i, '').trim();
-  return `${head}\n\n[CONTACTS]\n${formatContactsBlock(merged)}`.trim();
+  const head = stripLinksSection(raw.replace(/\[CONTACTS\][\s\S]*$/i, '').trim());
+  return ensureCanonicalLinksInTemplate(
+    `${head}\n\n[CONTACTS]\n${formatContactsBlock(merged)}\n\n${linksTail}`.trim()
+  );
 }
 
 /** Last saved prompt text (chrome.storage jrPromptExtra). */
@@ -244,10 +341,25 @@ function syncPromptSaveButton() {
   const dirty = current !== String(savedPromptExtra || '');
   saveBtn.disabled = !dirty;
   if (meta) {
-    meta.textContent = dirty
-      ? 'Есть несохранённые изменения промпта.'
-      : 'Промпт сохранён.';
+    const isLiveDefault = normPromptBlob(current) === normPromptBlob(DEFAULT_PROMPT_EXTRA);
+    if (dirty) {
+      meta.textContent = 'Есть несохранённые изменения промпта.';
+    } else if (isLiveDefault) {
+      meta.textContent =
+        'Показан runtime-промпт (ultra-short). Generate использует тот же текст на бэкенде.';
+    } else {
+      meta.textContent = 'Промпт сохранён - уходит в generate как promptExtra / CUSTOM.';
+    }
   }
+}
+
+/** Apply live default (local or API) into textarea + storage when empty/legacy/drifted. */
+async function applyRuntimePromptToUi(liveDefault) {
+  const prompt = String(liveDefault || DEFAULT_PROMPT_EXTRA);
+  if (promptExtraEl) promptExtraEl.value = prompt;
+  savedPromptExtra = prompt;
+  await chrome.storage.local.set({ jrPromptExtra: prompt });
+  syncPromptSaveButton();
 }
 /** Keys expanded after generate / with answers (not forced closed by restore). */
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
@@ -626,7 +738,10 @@ async function ensureCoverTemplateStructured({ force = false } = {}) {
     });
   } else if (Object.keys(contacts).length) {
     next = mergeContactsIntoStructuredTemplate(current, contacts);
+  } else {
+    next = ensureCanonicalLinksInTemplate(current);
   }
+  next = ensureCanonicalLinksInTemplate(next);
   if (next === current) return false;
   coverTemplateEl.value = next;
   await chrome.storage.local.set({ jrCoverTemplate: next });
@@ -1504,11 +1619,6 @@ function setResultGenerating(busy, label) {
     } catch (_) {
       resultText.focus();
     }
-    try {
-      resultText.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } catch (_) {
-      resultText.scrollIntoView();
-    }
   } else {
     resultText.removeAttribute('aria-busy');
     try {
@@ -1935,11 +2045,17 @@ if (savePromptBtn) {
 
 if (resetPromptBtn) {
   resetPromptBtn.addEventListener('click', async () => {
-    if (promptExtraEl) promptExtraEl.value = DEFAULT_PROMPT_EXTRA;
-    await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
-    savedPromptExtra = DEFAULT_PROMPT_EXTRA;
-    syncPromptSaveButton();
-    setSuccess('Инструкции сброшены (ultra-short default)');
+    let live = DEFAULT_PROMPT_EXTRA;
+    try {
+      const data = await JR_API.getDefaultPrompt();
+      if (data?.prompt && isJrSystemPromptText(data.prompt)) {
+        live = String(data.prompt);
+      }
+    } catch {
+      /* use bundled default */
+    }
+    await applyRuntimePromptToUi(live);
+    setSuccess('Инструкции сброшены (runtime ultra-short default)');
   });
 }
 
@@ -2052,24 +2168,32 @@ if (saveCoverTemplateBtn) {
         coverTemplateEl.value = buildStructuredCoverTemplate({ body: savedCover, contacts });
         await chrome.storage.local.set({ jrCoverTemplate: coverTemplateEl.value });
       } else {
-        coverTemplateEl.value = savedCover;
+        const nextCover = ensureCanonicalLinksInTemplate(savedCover);
+        coverTemplateEl.value = nextCover;
+        if (nextCover !== savedCover) {
+          await chrome.storage.local.set({ jrCoverTemplate: nextCover });
+        }
       }
+    }
+    // Resolve live runtime prompt (API if available, else bundled DEFAULT)
+    let livePrompt = DEFAULT_PROMPT_EXTRA;
+    try {
+      const data = await JR_API.getDefaultPrompt();
+      if (data?.prompt && isJrSystemPromptText(data.prompt)) {
+        livePrompt = String(data.prompt);
+      }
+    } catch {
+      /* offline / older API - keep bundled */
     }
     if (promptExtraEl) {
       const savedExtra = savedTpl.jrPromptExtra != null ? String(savedTpl.jrPromptExtra) : '';
-      const isLegacy =
-        !savedExtra.trim() ||
-        savedExtra.trim() === LEGACY_PROMPT_EXTRA.trim() ||
-        /^Всегда включай контакты и релевантные ссылки из профиля/.test(savedExtra.trim()) ||
-        isOldUltraShortPrompt(savedExtra) ||
-        isMissingNoAiSlopPrompt(savedExtra);
-      const next = isLegacy ? DEFAULT_PROMPT_EXTRA : savedExtra;
-      promptExtraEl.value = next;
-      savedPromptExtra = next;
-      if (isLegacy) {
-        await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
+      if (shouldMigratePromptExtra(savedExtra, livePrompt)) {
+        await applyRuntimePromptToUi(livePrompt);
+      } else {
+        promptExtraEl.value = savedExtra;
+        savedPromptExtra = savedExtra;
+        syncPromptSaveButton();
       }
-      syncPromptSaveButton();
     }
     await refreshDriveStatus();
     await refreshAuthHint();

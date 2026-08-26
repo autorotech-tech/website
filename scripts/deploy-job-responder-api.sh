@@ -56,6 +56,37 @@ for path in (
 PY
 REMOTE
 
+echo "=== 4a. Upsert canonical ## Ссылки into ws=1 profile overrides ==="
+ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
+set -euo pipefail
+docker exec autoro-agent-api python3 - <<'PY'
+import json, urllib.request
+from job_responder import DEFAULT_LINKS_BLOCK, DEFAULT_CANONICAL_LINKS
+
+body = (
+    "[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n\n"
+    + DEFAULT_LINKS_BLOCK
+    + "\n"
+)
+req = urllib.request.Request(
+    "http://127.0.0.1:8900/api/v1/job-responder/resume/patch",
+    data=json.dumps({"workspaceId": "1", "text": body, "title": "Profile overrides"}).encode(),
+    method="POST",
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(req, timeout=30) as r:
+    status = r.status
+    data = json.loads(r.read().decode())
+print("overrides-upsert", status, "kid=", data.get("knowledgeItemId"), "ok=", data.get("ok"))
+assert data.get("ok") is not False
+# unit check constants
+urls = {x["url"] for x in DEFAULT_CANONICAL_LINKS}
+assert "https://youtu.be/AJtcYfItspM" in urls
+assert len(DEFAULT_CANONICAL_LINKS) == 6
+print("canonical-links-ok", len(DEFAULT_CANONICAL_LINKS))
+PY
+REMOTE
+
 echo "=== 4b. Smoke file-capture + multi-source generate (then purge) ==="
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
@@ -148,7 +179,14 @@ gen = {
     "selectedSourceIds": selected,
     "coverTemplate": (
         "[COVER_TEMPLATE]\nПриветствие: Здравствуйте!\nCTA: Готов обсудить.\n\n"
-        "[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n"
+        "[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n\n"
+        "## Ссылки\n"
+        "резюме: https://autoro.tech/resume/\n"
+        "youtube: https://www.youtube.com/@iq_boosted\n"
+        "LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/\n"
+        "профиль на форуме по интернет маркетингу: https://www.blackhatworld.com/members/vlad_x.1811065/\n"
+        "видео-демо процессов e-commerce: https://youtu.be/v2_zmJrlMks\n"
+        "видео-демо о тестирование гипотезы: https://youtu.be/AJtcYfItspM\n"
     ),
     "profileOverrides": {
         "telegram": "@autoro_tech",
@@ -204,6 +242,25 @@ try:
         print(text[-500:])
         raise SystemExit(7)
     print("contacts-ok", "Telegram+Email present, no smoke/experience dump")
+    # ## Ссылки: all 6 canonical URLs including hypothesis demo
+    need_urls = [
+        "https://autoro.tech/resume/",
+        "https://www.youtube.com/@iq_boosted",
+        "https://www.linkedin.com/in/vlad-autoro-tech/",
+        "https://www.blackhatworld.com/members/vlad_x.1811065/",
+        "https://youtu.be/v2_zmJrlMks",
+        "https://youtu.be/AJtcYfItspM",
+    ]
+    if "## ссылки" not in text.lower():
+        print("LINKS_HEADING_MISSING")
+        print(text[-600:])
+        raise SystemExit(9)
+    for u in need_urls:
+        if u not in text:
+            print("LINKS_MISSING", u)
+            print(text[-800:])
+            raise SystemExit(10)
+    print("links-ok", "all 6 canonical URLs present incl AJtcYfItspM")
 except Exception as e:
     gelapsed = time.monotonic() - gt0
     code = getattr(e, "code", None)
