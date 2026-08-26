@@ -47,6 +47,11 @@ Chrome MV3 extension: персонализированные отклики с �
 - Generate: LLM получает vacancy + **один** compact profile (~3–6k chars), не тела PDF; при timeout - retry с ещё более сжатым профилем; JSON-ошибки без HTTP 502
 - После добавления: зелёный баннер сверху, блок **ingest** со счётчиком, подсветка новых sources, timestamp последнего ingest
 
+## v0.8.3
+
+- Новый ultra-short system prompt (`jrPromptExtra` + `build_system_prompt`): структура ОТКЛИК / СОПРОВОДИТЕЛЬНОЕ / Контакты.
+- Backend: `## Контакты` только из template/overrides (Telegram/Email/…); strip experience dump + smoke URL (`example.com`, `jr-smoke`).
+
 ## v0.8.2
 
 - Кнопка **«Оценить предложение»**: DOM-парс страницы + `POST /relevance` одним кликом (без отдельной «Оценка релевантности»).

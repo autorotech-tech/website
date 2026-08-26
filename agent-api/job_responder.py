@@ -516,6 +516,93 @@ _CONTACT_LABELS = (
 )
 
 _CONTACT_ORDER = [k for k, _ in _CONTACT_LABELS]
+_CONTACT_KEYS_ALLOWED = frozenset(_CONTACT_ORDER)
+
+# Smoke / placeholder / local URLs must never appear under ## Контакты
+_JUNK_CONTACT_URL_RE = re.compile(
+    r"(?i)(?:\bexample\.com\b|\bjr-smoke\b|\blocalhost\b|\b127\.0\.0\.1\b|"
+    r"\b0\.0\.0\.0\b|\btest\.local\b|\bsmoke[-_]?test\b)"
+)
+_KNOWN_CONTACT_HOST_RE = re.compile(
+    r"(?i)https?://(?:www\.)?(?:linkedin\.com|github\.com|t\.me)/"
+)
+_CONTACT_LINE_LABEL_RE = re.compile(
+    r"(?i)^\s*[-*•]?\s*(?:telegram|телеграм|\bтг\b|\btg\b|email|e-mail|\bmail\b|почта|"
+    r"телефон|phone|\btel\b|portfolio|портфолио|github|linkedin|сайт|website|"
+    r"\bsite\b|ссылка|\blink\b|\burl\b)\s*[:：]"
+)
+
+
+def is_junk_contact_url(url: str) -> bool:
+    return bool(_JUNK_CONTACT_URL_RE.search(url or ""))
+
+
+def is_contact_url(url: str, *, title: str = "") -> bool:
+    """Accept portfolio/GitHub/LinkedIn/site URLs; reject smoke/test/random dumps."""
+    u = (url or "").strip()
+    if not u or is_junk_contact_url(u):
+        return False
+    low = u.lower()
+    if low.startswith("mailto:") or "t.me/" in low:
+        return True
+    if _KNOWN_CONTACT_HOST_RE.search(u):
+        return True
+    canon = _canonical_override_key(title) if title else ""
+    if canon in ("github", "linkedin", "portfolio", "website", "site", "link"):
+        return low.startswith("http://") or low.startswith("https://")
+    # Untitled bare URL: only allow if host looks like a personal contact site
+    # (not used for profile dumps without title)
+    return False
+
+
+def filter_contact_dict(contacts: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Keep only real contact fields; drop smoke URLs and non-contact keys."""
+    ordered: Dict[str, str] = {}
+    for key in _CONTACT_ORDER:
+        val = str((contacts or {}).get(key) or "").strip()
+        if not val:
+            continue
+        if is_junk_contact_url(val):
+            continue
+        if key == "email":
+            em = _EMAIL_EXTRACT_RE.search(val)
+            if not em:
+                continue
+            val = em.group(0)
+        elif key == "telegram":
+            hm = _TG_HANDLE_EXTRACT_RE.search(val) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", val)
+            if not hm:
+                continue
+            handle = hm.group(1) if hm.lastindex else hm.group(0)
+            val = f"@{str(handle).lstrip('@')}"
+        elif key == "phone":
+            if len(val) > 40:
+                continue
+        elif key in ("portfolio", "github", "linkedin", "website", "site", "link"):
+            if not (val.startswith("http://") or val.startswith("https://")):
+                continue
+        canon_key = "website" if key == "site" else key
+        if canon_key not in ordered:
+            ordered[canon_key] = val[:500]
+    return ordered
+
+
+def is_contact_bullet_line(line: str) -> bool:
+    """True if line looks like a real contact bullet (not experience/skill dump)."""
+    s = (line or "").strip()
+    if not s or len(s) > 220:
+        return False
+    if is_junk_contact_url(s):
+        return False
+    if _CONTACT_LINE_LABEL_RE.match(s):
+        return True
+    if _EMAIL_EXTRACT_RE.search(s) and len(s) < 120:
+        return True
+    if _TG_HANDLE_EXTRACT_RE.search(s) and len(s) < 100:
+        return True
+    if _KNOWN_CONTACT_HOST_RE.search(s):
+        return True
+    return False
 
 
 def extract_contacts_from_cover_template(template: str) -> Dict[str, str]:
@@ -527,7 +614,8 @@ def extract_contacts_from_cover_template(template: str) -> Dict[str, str]:
     m = re.search(r"(?is)\[CONTACTS\]\s*(.*?)(?=\n\s*\[[A-Z_]+\]|\Z)", raw)
     if m:
         section = m.group(1).strip()
-    return extract_contacts_from_rag_edits(section) or extract_contacts_from_rag_edits(raw)
+    parsed = extract_contacts_from_rag_edits(section) or extract_contacts_from_rag_edits(raw)
+    return filter_contact_dict(parsed)
 
 
 def collect_generate_contacts(
@@ -536,21 +624,24 @@ def collect_generate_contacts(
     overrides: Optional[Dict[str, str]] = None,
     merged: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
-    """Merge known contacts. Priority: cover_template > overrides > profile."""
+    """Merge known contacts. Priority: cover_template > overrides > profile.
+
+    Only telegram/email/phone/portfolio/GitHub/LinkedIn/site. Never skill/experience bullets.
+    """
     out: Dict[str, str] = {}
     profile = merged or {}
 
-    # Lowest priority: profile fields + links
+    # Lowest priority: profile fields + contact-like links only
     for key in ("telegram", "email", "phone"):
         val = str(profile.get(key) or "").strip()
-        if val:
+        if val and not is_junk_contact_url(val):
             out[key] = val[:500]
     for lk in profile.get("links") or []:
         if not isinstance(lk, dict):
             continue
         url = str(lk.get("url") or "").strip()
         title = str(lk.get("title") or "").strip().lower()
-        if not url:
+        if not url or is_junk_contact_url(url):
             continue
         if "t.me/" in url.lower() or title == "telegram":
             hm = _TG_HANDLE_EXTRACT_RE.search(url)
@@ -559,20 +650,29 @@ def collect_generate_contacts(
             continue
         if url.lower().startswith("mailto:") or ("@" in url and "://" not in url):
             em = _EMAIL_EXTRACT_RE.search(url.replace("mailto:", ""))
-            if em:
+            if em and not is_junk_contact_url(em.group(0)):
                 out.setdefault("email", em.group(0))
             continue
-        canon = _canonical_override_key(title) if title else "link"
+        if not is_contact_url(url, title=title):
+            continue
+        canon = _canonical_override_key(title) if title else ""
         if canon in ("github", "linkedin", "portfolio", "website", "site", "link"):
             out.setdefault(canon if canon != "site" else "website", url[:400])
-        else:
-            out.setdefault("link", url[:400])
+        elif _KNOWN_CONTACT_HOST_RE.search(url):
+            if "github.com" in url.lower():
+                out.setdefault("github", url[:400])
+            elif "linkedin.com" in url.lower():
+                out.setdefault("linkedin", url[:400])
 
-    # Overrides win over profile
+    # Overrides win over profile (contact keys only)
     for key, val in (overrides or {}).items():
         ck = _canonical_override_key(str(key))
         v = _clean_override_value(str(val or ""))
         if not ck or not v or ck.startswith("_") or ck == "rag_edits":
+            continue
+        if ck not in _CONTACT_KEYS_ALLOWED:
+            continue
+        if is_junk_contact_url(v):
             continue
         if ck == "telegram":
             hm = _TG_HANDLE_EXTRACT_RE.search(v) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", v)
@@ -586,22 +686,17 @@ def collect_generate_contacts(
             continue
         if ck == "site":
             ck = "website"
+        if ck in ("portfolio", "github", "linkedin", "website", "link"):
+            if not (v.startswith("http://") or v.startswith("https://") or "@" in v):
+                continue
         out[ck] = v[:500]
 
     # Cover template [CONTACTS] highest priority
     for key, val in extract_contacts_from_cover_template(cover_template).items():
-        if val:
+        if val and key in _CONTACT_KEYS_ALLOWED and not is_junk_contact_url(val):
             out[key] = val
 
-    # Stable order, drop empties
-    ordered: Dict[str, str] = {}
-    for key in _CONTACT_ORDER:
-        if out.get(key):
-            ordered[key] = out[key]
-    for key, val in out.items():
-        if key not in ordered and val:
-            ordered[key] = val
-    return ordered
+    return filter_contact_dict(out)
 
 
 def _contact_needle(key: str, value: str) -> str:
@@ -639,48 +734,66 @@ def strip_empty_markdown_headings(text: str) -> str:
 
 
 def format_contacts_block(contacts: Dict[str, str]) -> str:
-    if not contacts:
+    clean = filter_contact_dict(contacts)
+    if not clean:
         return ""
     labels = dict(_CONTACT_LABELS)
     lines = ["## Контакты"]
     for key in _CONTACT_ORDER:
-        val = contacts.get(key)
+        val = clean.get(key)
         if not val:
             continue
         label = labels.get(key, key.capitalize())
         lines.append(f"- {label}: {val}")
-    for key, val in contacts.items():
-        if key in labels or not val:
-            continue
-        lines.append(f"- {key}: {val}")
     return "\n".join(lines)
 
 
-def ensure_contacts_in_cover_letter(text: str, contacts: Dict[str, str]) -> str:
-    """Guarantee contacts block when values are known; never invent."""
-    body = strip_empty_markdown_headings(hh_format_text(text or ""))
-    if not contacts:
-        return body
-    missing = {
-        k: v
-        for k, v in contacts.items()
-        if v and not letter_has_contact_value(body, k, v)
-    }
-    if not missing:
-        return body
-    # If letter already has a contacts heading, append only missing bullets under it
+def strip_contacts_section(text: str) -> str:
+    """Remove ## Контакты section (heading + body until next heading or EOF)."""
+    body = text or ""
     heading_re = re.compile(r"(?im)^#{1,6}\s*контакты\s*$")
     m = heading_re.search(body)
-    block_missing = format_contacts_block(missing)
-    if not block_missing:
+    if not m:
         return body
-    if m:
-        # Insert bullets after existing heading (skip the "## Контакты" line from block)
-        bullets = "\n".join(block_missing.splitlines()[1:])
-        insert_at = m.end()
-        return (body[:insert_at] + "\n" + bullets + body[insert_at:]).strip()
-    return (body.rstrip() + "\n\n" + block_missing).strip()
+    rest = body[m.end() :]
+    next_h = re.search(r"(?m)^#{1,6}\s+\S", rest)
+    if next_h:
+        return (body[: m.start()].rstrip() + "\n\n" + rest[next_h.start() :].lstrip()).strip()
+    return body[: m.start()].rstrip()
 
+
+def sanitize_contacts_section_inplace(text: str) -> str:
+    """Keep ## Контакты but drop non-contact / smoke lines."""
+    body = text or ""
+    heading_re = re.compile(r"(?im)^#{1,6}\s*контакты\s*$")
+    m = heading_re.search(body)
+    if not m:
+        return body
+    rest = body[m.end() :]
+    next_h = re.search(r"(?m)^#{1,6}\s+\S", rest)
+    section_body = rest[: next_h.start()] if next_h else rest
+    after = rest[next_h.start() :] if next_h else ""
+    kept = [ln for ln in section_body.splitlines() if is_contact_bullet_line(ln)]
+    before = body[: m.start()].rstrip()
+    if not kept:
+        return (before + ("\n\n" + after if after else "")).strip()
+    block = "## Контакты\n" + "\n".join(kept)
+    return (before + "\n\n" + block + ("\n\n" + after if after else "")).strip()
+
+
+def ensure_contacts_in_cover_letter(text: str, contacts: Dict[str, str]) -> str:
+    """Rebuild ## Контакты from known contacts; strip experience dumps / smoke URLs."""
+    body = strip_empty_markdown_headings(hh_format_text(text or ""))
+    clean = filter_contact_dict(contacts)
+    if clean:
+        body = strip_contacts_section(body)
+        body = strip_empty_markdown_headings(body)
+        block = format_contacts_block(clean)
+        if not block:
+            return body
+        return (body.rstrip() + "\n\n" + block).strip()
+    # No authoritative contacts: sanitize LLM section in place
+    return sanitize_contacts_section_inplace(body)
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
     """Heuristic structured params for RAG matching touchpoints."""
@@ -1612,31 +1725,50 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
 
 
 # Ultra-short runtime system (token-efficient). Fuller notes: docs/job-responder/prompts-ultra-short.md
-ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов на вакансии. Пишешь отклик/ответы только по фактам кандидата.
+ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
 
-[INPUT] vacancy_data | candidate_profile (Resume/File Search) | cover_template? | custom_instructions?
+[INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
 
 [RULES]
-1. Только факты из входа. Не выдумывай опыт, метрики, контакты, URL.
-2. Всегда включай контакты/ссылки из профиля, если есть: email, Telegram, телефон, портфолио, GitHub, LinkedIn, сайт.
-3. Контакты из cover_template - приоритет, сохрани.
-4. Нет данных -> "нет данных в профиле".
+1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
+2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
+3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон/портфолио/GitHub/LinkedIn/сайт из template/contacts/profile. Без опыта, навыков, описаний, smoke/test URL (example.com, jr-smoke).
+5. ASCII " и дефис -. Русский, если не просили иначе.
 
-[FLOW]
-1) mode=cover_letter|qa
-2) Выбери 3-6 релевантных фактов под требования
-3) cover_letter: адаптируй template или короткий отклик
-4) qa: краткие ответы по фактам
-5) Блок контактов/ссылок без дублей
+[OUT cover_letter]
+# ОТКЛИК НА ВАКАНСИЮ
+**Должность:** {title}
+**Компания:** {company}
+**Формат:** {format|remote|employment}
 
-[OUT]
-cover_letter: привет -> релевантность (2-4) -> опыт/метрики (1-3) -> следующий шаг -> контакты
-qa: [{"question":"...","answer":"..."}]
-Стиль: кратко, по делу, русский (если не просили иначе). ASCII " и дефис -, без длинных тире."""
+---
+
+## СОПРОВОДИТЕЛЬНОЕ ПИСЬМО
+{greeting}
+
+{1 short pitch sentence}
+
+**Почему я подхожу под вакансию:**
+1. **{тема}** - {1-2 предложения с фактом}
+2. ...
+3. ...
+(макс 4 пункта)
+
+{1 sentence CTA}
+
+**Следующий шаг:** {коротко}
+
+## Контакты
+- Telegram: ...
+- Email: ...
+(только известные; без пустых строк и без лишнего текста)
+
+[OUT qa] [{"question":"...","answer":"..."}]"""
 
 CONTACTS_LINKS_RULE = (
-    "Всегда включай контакты/ссылки из профиля, если есть: email, Telegram, телефон, "
-    "портфолио, GitHub, LinkedIn, сайт. Не выдумывай."
+    "## Контакты: только email/Telegram/телефон/портфолио/GitHub/LinkedIn/сайт "
+    "из template/contacts/profile. Без опыта, навыков, smoke URL. Не выдумывай."
 )
 
 
@@ -1646,7 +1778,7 @@ def _norm_prompt_blob(text: str) -> str:
 
 def is_ultra_short_system_text(text: str) -> bool:
     t = text or ""
-    return "[ROLE]" in t and "[RULES]" in t and "[FLOW]" in t
+    return "[ROLE]" in t and "[RULES]" in t and ("[OUT" in t or "[FLOW]" in t)
 
 
 def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optional[str], *, max_chars: int = 4000) -> str:
@@ -1732,9 +1864,19 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
             continue
         if key == "email":
             em = _EMAIL_EXTRACT_RE.search(val)
-            if em:
+            if em and not is_junk_contact_url(em.group(0)):
                 out["email"] = em.group(0)
             continue
+        # Only known contact fields - never skills/experience key:value lines
+        if key not in _CONTACT_KEYS_ALLOWED:
+            continue
+        if is_junk_contact_url(val):
+            continue
+        if key in ("portfolio", "github", "linkedin", "website", "site", "link"):
+            if not (val.startswith("http://") or val.startswith("https://")):
+                continue
+            if key == "site":
+                key = "website"
         if len(key) <= 40 and len(val) <= 500:
             out[key] = val
 
@@ -1762,19 +1904,27 @@ def extract_contacts_from_rag_edits(text: str) -> Dict[str, str]:
     # 3) Email anywhere
     if "email" not in out:
         em = _EMAIL_EXTRACT_RE.search(raw)
-        if em:
+        if em and not is_junk_contact_url(em.group(0)):
             out["email"] = em.group(0)
 
-    # 4) Extra http(s) links (portfolio etc.)
-    if "link" not in out and "portfolio" not in out:
+    # 4) Extra http(s) links - only known contact hosts (never smoke/example.com)
+    if "link" not in out and "portfolio" not in out and "github" not in out and "linkedin" not in out:
         for um in _URL_EXTRACT_RE.finditer(raw):
             url = um.group(0).rstrip(").,;")
+            if is_junk_contact_url(url):
+                continue
             if "t.me/" in url.lower() or url.lower().startswith("mailto:"):
                 continue
-            out.setdefault("link", url[:400])
-            break
+            low = url.lower()
+            if "github.com" in low:
+                out.setdefault("github", url[:400])
+                break
+            if "linkedin.com" in low:
+                out.setdefault("linkedin", url[:400])
+                break
+            # Skip untitled random URLs (portfolio must be labeled)
 
-    return out
+    return filter_contact_dict(out)
 
 
 def normalize_profile_overrides(raw: Optional[Any]) -> Dict[str, str]:
@@ -1940,10 +2090,10 @@ def build_system_prompt(
     elif has_cover_template:
         base += (
             "\n\n[MODE] cover_letter + cover_template: адаптируй template под вакансию, "
-            "сохрани голос и контакты из template; факты только из профиля."
+            "сохрани голос; ## Контакты только из template/contacts (без опыта/smoke URL)."
         )
     else:
-        base += "\n\n[MODE] cover_letter: короткий отклик по [OUT]; только текст письма."
+        base += "\n\n[MODE] cover_letter: структура по [OUT cover_letter]; ## Контакты только реальные."
 
     extra = (prompt_extra or "").strip()
     if extra and not is_ultra_short_system_text(extra):

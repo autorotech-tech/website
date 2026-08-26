@@ -259,7 +259,60 @@ Email: autoro.tech@gmail.com
     assert out2.count("@autoro_tech") == 1
 
 
-def test_collect_contacts_priority_template_over_overrides():
+def test_ensure_contacts_strips_experience_and_smoke_url():
+    """## Контакты must not keep experience bullets or jr-smoke URLs."""
+    dirty = """# ОТКЛИК
+
+## СОПРОВОДИТЕЛЬНОЕ ПИСЬМО
+Привет.
+
+## Контакты
+- ai/agentic: агенты и RAG
+- маркетинг: performance
+- e-commerce: Shopify
+- Portfolio: https://example.com/jr-smoke
+- Telegram: @wrong_bot
+- Email: wrong@x.com
+"""
+    contacts = collect_generate_contacts(
+        cover_template="[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n",
+        overrides={},
+        merged={
+            "links": [{"url": "https://example.com/jr-smoke", "title": "portfolio"}],
+            "experience_bullets": ["ai/agentic", "маркетинг"],
+        },
+    )
+    assert "link" not in contacts or "jr-smoke" not in str(contacts.get("link") or "")
+    assert "portfolio" not in contacts or "jr-smoke" not in str(contacts.get("portfolio") or "")
+    assert contacts.get("telegram") == "@autoro_tech"
+    assert contacts.get("email") == "autoro.tech@gmail.com"
+    out = ensure_contacts_in_cover_letter(dirty, contacts)
+    assert "jr-smoke" not in out
+    assert "example.com" not in out
+    assert "ai/agentic" not in out.split("## Контакты")[-1]
+    assert "маркетинг" not in out.split("## Контакты")[-1]
+    assert "e-commerce" not in out.split("## Контакты")[-1]
+    section = out.split("## Контакты")[-1]
+    assert "@autoro_tech" in section
+    assert "autoro.tech@gmail.com" in section
+    assert section.count("\n- ") == 2
+
+
+def test_collect_contacts_ignores_non_contact_overrides():
+    contacts = collect_generate_contacts(
+        overrides={
+            "telegram": "@autoro_tech",
+            "email": "autoro.tech@gmail.com",
+            "опыт": "10 лет ai/agentic",
+            "skills": "python, n8n",
+        },
+        merged={"links": [{"url": "https://example.com/jr-smoke", "title": "portfolio"}]},
+    )
+    assert set(contacts.keys()) == {"telegram", "email"}
+    assert "jr-smoke" not in str(contacts)
+
+
+def test_collect_generate_contacts_priority_template_over_overrides():
     contacts = collect_generate_contacts(
         cover_template="[CONTACTS]\nTelegram: @from_template\nEmail: t@x.com",
         overrides={"telegram": "@from_override", "email": "o@x.com"},

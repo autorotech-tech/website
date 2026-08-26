@@ -146,6 +146,14 @@ gen = {
     "host": "web",
     "locale": "ru",
     "selectedSourceIds": selected,
+    "coverTemplate": (
+        "[COVER_TEMPLATE]\nПриветствие: Здравствуйте!\nCTA: Готов обсудить.\n\n"
+        "[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n"
+    ),
+    "profileOverrides": {
+        "telegram": "@autoro_tech",
+        "email": "autoro.tech@gmail.com",
+    },
     "vacancy": {
         "title": "n8n automation engineer",
         "company": "SmokeCo",
@@ -175,6 +183,27 @@ try:
     if "меньше sources" in str(gdata.get("message") or "").lower():
         print("BAD_TIMEOUT_COPY", gdata.get("message"))
         raise SystemExit(3)
+    # ## Контакты must be clean (Telegram+Email only; no smoke/experience dump)
+    low = text.lower()
+    if "## контакты" not in low:
+        print("CONTACTS_HEADING_MISSING")
+        print(text[-400:])
+        raise SystemExit(8)
+    section = text.lower().split("## контакты", 1)[-1]
+    if "jr-smoke" in section or "example.com" in section:
+        print("CONTACTS_POLLUTION smoke URL in ## Контакты")
+        print(text[-500:])
+        raise SystemExit(5)
+    for junk in ("ai/agentic", "маркетинг", "e-commerce", "experience:", "skills:"):
+        if junk in section:
+            print("CONTACTS_POLLUTION experience in ## Контакты:", junk)
+            print(text[-500:])
+            raise SystemExit(6)
+    if "@autoro_tech" not in text or "autoro.tech@gmail.com" not in text:
+        print("CONTACTS_MISSING expected Telegram/Email")
+        print(text[-500:])
+        raise SystemExit(7)
+    print("contacts-ok", "Telegram+Email present, no smoke/experience dump")
 except Exception as e:
     gelapsed = time.monotonic() - gt0
     code = getattr(e, "code", None)
