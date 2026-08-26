@@ -1,0 +1,13 @@
+{
+  "id": "_template",
+  "vacancy": {
+    "title": "Example role",
+    "description": "Short JD text…",
+    "structured": { "keySkills": ["skill-a", "skill-b"] }
+  },
+  "profile_fixture": "fixtures/example_compact.json",
+  "must_include_facts": ["fact-from-profile"],
+  "must_not_claim": ["Airflow", "C1", "senior"],
+  "allow_transferable": true,
+  "banned_phrases": ["thrilled to apply", "выразить заинтересованность"]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "saas-no-direct-match",
+  "vacancy": {
+    "title": "Growth Marketing Manager (B2B SaaS)",
+    "description": "Need HubSpot, PLG funnels, SQL dashboards. Nice to have: Airflow.",
+    "structured": { "keySkills": ["HubSpot", "PLG", "SQL", "Airflow"] }
+  },
+  "profile_fixture": "fixtures/marketing_compact.json",
+  "must_include_facts": ["Meta", "ROAS"],
+  "must_not_claim": ["Airflow", "senior", "C1"],
+  "allow_transferable": true,
+  "banned_phrases": ["thrilled to apply", "passionate about", "выразить заинтересованность"]
+}

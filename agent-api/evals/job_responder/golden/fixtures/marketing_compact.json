@@ -1,0 +1,13 @@
+{
+  "skills": ["performance marketing", "Meta Ads", "Google Ads", "ROAS"],
+  "tools": ["Meta Ads", "Google Ads", "Looker Studio"],
+  "domains": ["tourism", "ecommerce"],
+  "domains_matched": ["tourism"],
+  "industry_experience": ["tourism performance marketing"],
+  "experience": [
+    "Tourism funnel: Meta Ads, ROAS x2 vs baseline (profile fact)."
+  ],
+  "roles": ["performance marketer"],
+  "links": [],
+  "rag_edits": ""
+}

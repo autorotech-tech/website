@@ -257,6 +257,10 @@ npm run deploy:job-responder-api
 
 Tier-схема (Tier 0 без LLM → ultra-cheap → flash generate → quality), task routing, caps и roadmap: [model-routing.md](./model-routing.md).
 
+## RAG / ATS optimization playbook
+
+SOTA-дорожная карта (CRAG-lite, hybrid BM25+RRF, ESCO synonym graph, faithfulness, eval): [rag-ats-optimization-playbook.md](./rag-ats-optimization-playbook.md).
+
 ## Фаза 2
 
 См. [phase2-autofill.md](./phase2-autofill.md)
