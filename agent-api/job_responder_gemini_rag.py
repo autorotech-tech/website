@@ -562,6 +562,7 @@ def build_gemini_rag_user_prompt(
     cover_template: str = "",
     prompt_extra: str = "",
     host_labels: Optional[Dict[str, str]] = None,
+    domain_boost: str = "",
 ) -> str:
     labels = host_labels or {}
     host_label = labels.get(host, host or "web")
@@ -587,6 +588,12 @@ def build_gemini_rag_user_prompt(
         "RESUME CONTEXT: File Search over candidate docs. Facts only. "
         "Contacts/links from docs if present. CUSTOM / overrides win over conflicts.",
     ]
+    boost = (domain_boost or "").strip()
+    if boost:
+        parts.insert(
+            2,
+            "DOMAIN RETRIEVAL HINT (prefer matching industry/project chunks):\n" + boost[:900],
+        )
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:1200]}")
     if mode == "question_answers":

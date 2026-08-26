@@ -12,6 +12,7 @@ echo "=== 1. Syntax check ==="
 python3 -m py_compile \
   "$ROOT/agent-api/job_responder.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
+  "$ROOT/agent-api/job_responder_optimize.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py"
@@ -20,6 +21,7 @@ echo "=== 2. Upload job_responder*.py + kb_file_ingest.py + main.py ==="
 scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
+  "$ROOT/agent-api/job_responder_optimize.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py" \
@@ -30,6 +32,7 @@ ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
 docker cp /tmp/job_responder_semantic.py autoro-agent-api:/app/job_responder_semantic.py
+docker cp /tmp/job_responder_optimize.py autoro-agent-api:/app/job_responder_optimize.py
 docker cp /tmp/job_responder_gemini_rag.py autoro-agent-api:/app/job_responder_gemini_rag.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
@@ -276,6 +279,101 @@ st, pdata = post_json(
     timeout=20,
 )
 print("purge-smoke", st, pdata)
+PY
+REMOTE
+
+echo "=== 4b2. Bootstrap domain facts + optimize + tourism generate smoke ==="
+ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
+set -euo pipefail
+docker exec autoro-agent-api python3 - <<'PY'
+import json, urllib.request
+
+def post_json(path, obj, timeout=55):
+    req = urllib.request.Request(
+        "http://127.0.0.1:8900" + path,
+        data=json.dumps(obj).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, json.loads(r.read().decode())
+
+# Permanent-pipeline bootstrap (not a generate special-case): structured multi-domain facts.
+st, td = post_json(
+    "/api/v1/job-responder/resume/text-capture",
+    {
+        "workspaceId": "1",
+        "title": "Domain portfolio facts (optimized KB seed)",
+        "kind": "job_experience",
+        "category": "portfolio",
+        "text": (
+            "Проект: pquoc.com - туристическая платформа Phu Quoc (tourism / travel). "
+            "785 отелей, weighted ratings Google/Booking/Trip.com/Tripadvisor/Klook, "
+            "8 языков, multilingual SEO/GEO, RAG chat Ask Phu Quoc, Telegram bot. "
+            "https://pquoc.com/\n"
+            "Проект: Autoro Swoop - SaaS admin + AI agents (saas / ai / automation). "
+            "https://swoop.autoro.tech/\n"
+            "Проект: e-commerce SEO/GEO audit cases (ecommerce / seo).\n"
+            "Skills: performance marketing, GA4, Direct, n8n, RAG, content for travel."
+        ),
+    },
+    timeout=30,
+)
+print("domain-seed", st, td.get("knowledgeItemId"), "domains=", (td.get("profile") or {}).get("domains"))
+ost, od = post_json(
+    "/api/v1/job-responder/resume/optimize",
+    {"workspaceId": "1", "syncGemini": True},
+    timeout=60,
+)
+print(
+    "optimize",
+    ost,
+    "ok=", od.get("ok"),
+    "domains=", od.get("domains"),
+    "sources=", od.get("sourceCount"),
+    "kid=", od.get("knowledgeItemId"),
+)
+assert od.get("ok") is not False
+assert "tourism" in [str(x).lower() for x in (od.get("domains") or [])]
+
+gst, gdata = post_json(
+    "/api/v1/job-responder/generate",
+    {
+        "workspaceId": "1",
+        "mode": "cover_letter",
+        "host": "ru",
+        "locale": "ru",
+        "useGeminiRag": False,
+        "vacancy": {
+            "title": "Руководитель отдела маркетинга",
+            "company": "Elbrus",
+            "description": (
+                "Туризм. Remote. Ищем руководителя маркетинга с опытом в travel / hospitality. "
+                "Ответственность за performance, контент, SEO, команду."
+            ),
+            "structured": {"keySkills": ["маркетинг", "SEO"], "workFormat": "удалённо"},
+        },
+    },
+    timeout=55,
+)
+text = (gdata.get("text") or "").lower()
+print(
+    "tourism-generate",
+    gst,
+    "ok=", gdata.get("ok"),
+    "vacancyDomains=", gdata.get("vacancyDomains"),
+    "domainsMatched=", gdata.get("domainsMatched"),
+    "pin=", gdata.get("domainPinBullets"),
+    "text_snip=", (gdata.get("text") or "")[:220],
+)
+assert gdata.get("ok") is not False
+hay = text + " " + " ".join(str(x).lower() for x in (gdata.get("domainPinBullets") or []))
+assert "tourism" in (gdata.get("vacancyDomains") or []) or "tourism" in (gdata.get("domainsMatched") or [])
+if "pquoc" not in hay and "туризм" not in text and "phu" not in hay and "travel" not in text:
+    print("TOURISM_CONTEXT_MISSING in letter")
+    print(gdata.get("text") or "")
+    raise SystemExit(11)
+print("tourism-domain-pin-ok")
 PY
 REMOTE
 

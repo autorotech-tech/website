@@ -224,6 +224,66 @@ _CLUSTER_TERMS: Dict[str, Tuple[str, ...]] = {
         "midjourney",
         "нейрокреатор",
     ),
+    "tourism": (
+        "tourism",
+        "travel",
+        "туризм",
+        "путешеств",
+        "hospitality",
+        "hotel",
+        "отель",
+        "отели",
+        "resort",
+        "курорт",
+        "phu quoc",
+        "фукуок",
+        "pquoc",
+        "booking",
+        "tripadvisor",
+        "klook",
+        "destination",
+        "турагент",
+        "туроператор",
+    ),
+    "ecommerce": (
+        "ecommerce",
+        "e-commerce",
+        "ecom",
+        "marketplace",
+        "маркетплейс",
+        "интернет-магазин",
+        "retail",
+        "ритейл",
+        "shopify",
+        "woocommerce",
+        "wildberries",
+        "ozon",
+    ),
+    "saas": (
+        "saas",
+        "b2b saas",
+        "subscription",
+        "подписка",
+        "product-led",
+        "plg",
+    ),
+    "edtech": (
+        "edtech",
+        "ed-tech",
+        "образование",
+        "онлайн-курс",
+        "lms",
+        "e-learning",
+    ),
+    "fintech": (
+        "fintech",
+        "финтех",
+        "banking",
+        "платежи",
+        "payments",
+        "crypto",
+        "web3",
+    ),
 }
 
 # Evidence patterns auto-extracted from resume text -> cluster id
@@ -259,6 +319,11 @@ _EVIDENCE_PATTERNS: Tuple[Tuple[str, str], ...] = (
     (r"оптимизаци\w*\s+кампани", "campaign_analysis"),
     (r"ga4|google\s*analytics|amplitude|mixpanel", "analytics"),
     (r"\bn8n\b|\brag\b|\bllm\b", "ai_automation"),
+    (r"pquoc|phu\s*quoc|туризм|travel|hospitality|отел", "tourism"),
+    (r"ecommerce|e-commerce|marketplace|маркетплейс|woocommerce|shopify", "ecommerce"),
+    (r"\bsaas\b|product-led|\bplg\b", "saas"),
+    (r"edtech|онлайн-курс|\blms\b", "edtech"),
+    (r"fintech|финтех|web3|\bcrypto\b", "fintech"),
 )
 
 # If any of these clusters have evidence, sibling HH skill phrases should match.
@@ -453,7 +518,39 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
             touch_cluster("marketing", d, source="domain")
         if d in {"ai", "ml", "automation"}:
             touch_cluster("ai_automation", d, source="domain")
+        if d in {"tourism", "travel"}:
+            touch_cluster("tourism", d, source="domain")
+        if d in {"ecommerce", "ecom", "retail"}:
+            touch_cluster("ecommerce", d, source="domain")
+        if d in {"saas"}:
+            touch_cluster("saas", d, source="domain")
+        if d in {"edtech"}:
+            touch_cluster("edtech", d, source="domain")
+        if d in {"fintech", "crypto", "web3"}:
+            touch_cluster("fintech", d, source="domain")
 
+    # Project names reinforce domain clusters
+    for proj in profile.get("projects") or []:
+        if not isinstance(proj, dict):
+            continue
+        hay = normalize_phrase(f"{proj.get('name') or ''} {proj.get('summary') or ''} {proj.get('url') or ''}")
+        if not hay:
+            continue
+        cid = cluster_for_phrase(hay)
+        if cid:
+            touch_cluster(cid, hay[:80], source="project")
+        for dom in str(proj.get("domains") or "").split(","):
+            dn = normalize_phrase(dom)
+            if dn in {"tourism", "travel"}:
+                touch_cluster("tourism", hay[:80], source="project")
+            elif dn in {"ecommerce"}:
+                touch_cluster("ecommerce", hay[:80], source="project")
+            elif dn in {"saas"}:
+                touch_cluster("saas", hay[:80], source="project")
+            elif dn in {"ai", "automation"}:
+                touch_cluster("ai_automation", hay[:80], source="project")
+            elif dn in {"marketing", "seo"}:
+                touch_cluster("marketing", hay[:80], source="project")
     # Marketing family inheritance: Growth/Performance CV covers HH skill phrasing
     # like "маркетинговые метрики" / "планирование бюджета" even without every acronym.
     family_present = _MARKETING_FAMILY & set(clusters.keys())

@@ -2,6 +2,14 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.9
+
+- **Permanent KB optimize**: ingest нормализует skills/tools/domains/projects/metrics; dedupe; semantic domain clusters (tourism, ecommerce, SaaS, EdTech, fintech, …).
+- **Generate**: vacancy domain extraction + pinned `domains_matched` / `industry_experience` в compact profile (не теряются при char budget).
+- **API**: `POST /api/v1/job-responder/resume/optimize` → master `job_profile_compact` + Gemini sync; status показывает `optimized` / domains.
+- **UI**: кнопка «Оптимизировать базу», статус «База оптимизирована».
+- Prompt rule 8: отрасль из вакансии -> обязательный факт из profile. Fix `Компания:**` header typo.
+
 ## v0.9.7
 
 - **Новое окно**: side panel привязан к `windowId`; hydrate score из `jrRelevanceCache` по URL на open / tabs.onActivated / after «Страница прочитана». Content script ставит бейдж `%` на `/vacancy/<id>` и на списке из кэша.
@@ -194,6 +202,7 @@ Chrome MV3 extension: персонализированные отклики с �
 | POST | `/api/v1/job-responder/resume/capture` |
 | POST | `/api/v1/job-responder/resume/text-capture` |
 | POST | `/api/v1/job-responder/resume/patch` (правки фактов: `job_profile_overrides`) |
+| POST | `/api/v1/job-responder/resume/optimize` (пересборка master `job_profile_compact` + domains) |
 | POST | `/api/v1/job-responder/resume/file-capture` |
 | DELETE | `/api/v1/job-responder/resume/sources/{id}?workspaceId=` |
 | POST | `/api/v1/job-responder/resume/sources/delete` (`knowledgeItemIds` / `titles`) |

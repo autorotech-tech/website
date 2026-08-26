@@ -429,6 +429,19 @@ const JR_API = (() => {
     });
   }
 
+  async function resumeOptimize({ syncGemini = true } = {}) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/resume/optimize`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, syncGemini: Boolean(syncGemini) }),
+      timeoutMs: 60000,
+      errorKind: 'upload',
+    });
+  }
+
   async function resumeLinkCapture({ url, title, kind = 'job_experience', category = 'link' }) {
     if (!url) throw new Error('url is required');
     const apiBase = await getApiBase();
@@ -715,6 +728,7 @@ const JR_API = (() => {
     resumeStatus,
     resumeFileCapture,
     resumePatch,
+    resumeOptimize,
     resumeTextCapture,
     resumeLinkCapture,
     scoreRelevance,

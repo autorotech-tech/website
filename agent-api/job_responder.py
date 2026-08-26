@@ -12,7 +12,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
-from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 from urllib.error import HTTPError as UrlHTTPError
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
@@ -31,6 +31,18 @@ from job_responder_semantic import (
     format_semantic_hit,
     match_skills,
     semantic_matched_lines,
+)
+from job_responder_optimize import (
+    COMPACT_PROFILE_CATEGORY,
+    COMPACT_PROFILE_TITLE,
+    build_file_search_query_boost,
+    build_master_compact_document,
+    domain_tags_for_profile,
+    enrich_resume_profile,
+    extract_domains_from_text,
+    format_vacancy_aware_compact,
+    pin_domain_facts,
+    vacancy_domains_from_text,
 )
 
 _LOG = logging.getLogger("job-responder")
@@ -287,6 +299,12 @@ def hh_format_text(text: str) -> str:
     t = re.sub(r"[ \t]{2,}", " ", t)
     t = re.sub(r" *([,.;:])", r"\1", t)
     t = re.sub(r"(?m)^[ \t]*[,.;:]+[ \t]*", "", t)
+    # Fix broken header markdown like `Компания:**` / `Должность:**` (missing opening **)
+    t = re.sub(
+        r"(?m)^(?!\*\*)(Должность|Компания|Формат):\*\*",
+        r"**\1:**",
+        t,
+    )
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
@@ -517,6 +535,14 @@ class JobResponderResumePatchPayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     text: str = Field(..., min_length=3, max_length=50000)
     title: Optional[str] = Field(default=None, max_length=1000)
+
+
+class JobResponderOptimizePayload(BaseModel):
+    """Re-process all Resume KB sources into one optimized master profile."""
+
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    syncGemini: bool = True
+
 
 
 class JobResponderResumeSearchPayload(BaseModel):
@@ -1653,6 +1679,7 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
             seniority = level
             break
 
+    # Legacy short list kept as seeds; full industry taxonomy via enrich_resume_profile.
     domains: List[str] = []
     for dom in (
         "ai",
@@ -1668,9 +1695,13 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
         "video",
         "content",
         "devrel",
+        "tourism",
+        "travel",
+        "edtech",
     ):
         if re.search(rf"\b{re.escape(dom)}\b", lower):
             domains.append(dom)
+    domains.extend(extract_domains_from_text(blob, title=title))
 
     geo_remote = None
     if "remote" in lower or "удал" in lower:
@@ -1682,7 +1713,8 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
     for line in (text or "").splitlines():
         s = re.sub(r"\s+", " ", line).strip(" -•*\t")
         if 24 <= len(s) <= 220 and re.search(
-            r"(опыт|проект|разработ|автоматиз|внедр|запуск|руковод|built|led|developed|automated)",
+            r"(опыт|проект|разработ|автоматиз|внедр|запуск|руковод|built|led|developed|automated|"
+            r"маркетинг|seo|gtm|платформ|hotel|отел|туризм|travel)",
             s,
             flags=re.I,
         ):
@@ -1724,7 +1756,7 @@ def extract_resume_profile(text: str, *, title: str = "", category: str = "") ->
         "achievements": _uniq_lower(achievements, 8),
         "links": links[:12],
     }
-    return profile
+    return enrich_resume_profile(profile, text, title=title, category=category)
 
 
 def wrap_content_with_profile(text: str, profile: Dict[str, Any]) -> Tuple[str, str]:
@@ -1739,6 +1771,8 @@ def wrap_content_with_profile(text: str, profile: Dict[str, Any]) -> Tuple[str, 
         bits.append("roles: " + ", ".join(profile["roles"][:6]))
     if profile.get("tools"):
         bits.append("tools: " + ", ".join(profile["tools"][:10]))
+    if profile.get("domains"):
+        bits.append("domains: " + ", ".join(profile["domains"][:10]))
     if profile.get("employment_preferences"):
         bits.append("prefs: " + ", ".join(profile["employment_preferences"]))
     if profile.get("seniority"):
@@ -1747,6 +1781,15 @@ def wrap_content_with_profile(text: str, profile: Dict[str, Any]) -> Tuple[str, 
         bits.append(f"format: {profile['geo_remote']}")
     if profile.get("experience_bullets"):
         bits.append("exp: " + " | ".join(profile["experience_bullets"][:4]))
+    if profile.get("projects"):
+        proj_bits = []
+        for p in profile["projects"][:4]:
+            if isinstance(p, dict) and p.get("name"):
+                proj_bits.append(str(p["name"]))
+        if proj_bits:
+            bits.append("projects: " + ", ".join(proj_bits))
+    if profile.get("metrics"):
+        bits.append("metrics: " + " | ".join(str(x) for x in profile["metrics"][:3]))
     if profile.get("education"):
         bits.append("edu: " + "; ".join(profile["education"][:2]))
     if profile.get("achievements"):
@@ -1876,7 +1919,19 @@ def _row_profile(row: Dict[str, Any]) -> Dict[str, Any]:
     prof = parse_profile_from_content(body)
     if not prof.get("tools") or not prof.get("skills"):
         soft = extract_resume_profile(body, title=title, category=str(row.get("category") or ""))
-        for k in ("skills", "tools", "roles", "domains", "employment_preferences", "languages", "education", "achievements"):
+        for k in (
+            "skills",
+            "tools",
+            "roles",
+            "domains",
+            "employment_preferences",
+            "languages",
+            "education",
+            "achievements",
+            "metrics",
+            "domain_evidence",
+            "projects",
+        ):
             if not prof.get(k) and soft.get(k):
                 prof[k] = soft[k]
         if not prof.get("experience_bullets") and soft.get("experience_bullets"):
@@ -1907,6 +1962,9 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     experience_bullets: List[str] = []
     education: List[str] = []
     achievements: List[str] = []
+    metrics: List[str] = []
+    domain_evidence: List[str] = []
+    projects: List[Dict[str, str]] = []
     links: List[Dict[str, str]] = []
     cover_snippets: List[str] = []
     source_titles: List[str] = []
@@ -1915,6 +1973,7 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     text_bits: List[str] = []
     seen_link: set = set()
     seen_cover: set = set()
+    seen_project: set = set()
     override_plains: List[str] = []
 
     for row in resume_rows:
@@ -1943,6 +2002,8 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         experience_bullets.extend(prof.get("experience_bullets") or [])
         education.extend(prof.get("education") or [])
         achievements.extend(prof.get("achievements") or [])
+        metrics.extend(prof.get("metrics") or [])
+        domain_evidence.extend(prof.get("domain_evidence") or [])
         if prof.get("geo_remote"):
             formats.append(str(prof["geo_remote"]))
         if prof.get("seniority") and not seniority:
@@ -1962,6 +2023,22 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
                     "summary": str(lk.get("summary") or "")[:220],
                 }
             )
+        for pj in prof.get("projects") or []:
+            if not isinstance(pj, dict):
+                continue
+            pname = str(pj.get("name") or "").strip()
+            pkey = pname.lower()[:80]
+            if not pkey or pkey in seen_project:
+                continue
+            seen_project.add(pkey)
+            projects.append(
+                {
+                    "name": pname[:120],
+                    "summary": str(pj.get("summary") or "")[:220],
+                    "url": str(pj.get("url") or "")[:400],
+                    "domains": str(pj.get("domains") or "")[:120],
+                }
+            )
         hay = f"{title}\n{plain[:800]}"
         if _COVER_SNIPPET_RE.search(hay):
             snip = re.sub(r"\s+", " ", plain).strip()[:420]
@@ -1972,19 +2049,24 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
 
     blob = " ".join(text_bits).lower()
     tools = _uniq_lower([*tools, *[t for t in _KNOWN_TOOLS if t in blob]], 40)
+    # Re-tag domains from full merged blob (catches tourism/pquoc etc. across sources).
+    domains.extend(extract_domains_from_text(blob))
 
     profile = {
         "skills": _uniq_lower(skills, 40),
         "tools": tools,
         "roles": _uniq_lower(roles, 16),
-        "domains": _uniq_lower(domains, 16),
+        "domains": _uniq_lower(domains, 20),
         "languages": _uniq_lower(languages, 10),
         "employment_preferences": _uniq_lower(prefs, 10),
         "seniority": seniority,
         "geo_remote": (formats[0] if formats else None),
-        "experience_bullets": _uniq_lower(experience_bullets, 14),
+        "experience_bullets": _uniq_lower(experience_bullets, 16),
+        "domain_evidence": _uniq_lower(domain_evidence, 12),
+        "metrics": _uniq_lower(metrics, 12),
         "education": _uniq_lower(education, 6),
         "achievements": _uniq_lower(achievements, 8),
+        "projects": projects[:16],
         "links": links[:12],
         "cover_snippets": cover_snippets[:3],
         "source_titles": list(dict.fromkeys(source_titles))[:24],
@@ -2016,8 +2098,27 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     return profile
 
 
-def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_PROFILE_CHARS) -> str:
-    """Render merged profile as a single lean RESUME CONTEXT block."""
+def format_compact_profile(
+    profile: Dict[str, Any],
+    *,
+    max_chars: int = COMPACT_PROFILE_CHARS,
+    vacancy_domains: Optional[Sequence[str]] = None,
+) -> str:
+    """Render merged profile as a single lean RESUME CONTEXT block.
+
+    When vacancy_domains is set, industry-matched facts are pinned first so they
+    survive char-budget compression (any industry, not a special-case).
+    """
+    if vacancy_domains:
+        return format_vacancy_aware_compact(
+            profile,
+            vacancy_domains=vacancy_domains,
+            max_chars=max_chars,
+            base_formatter=lambda p, max_chars=max_chars: format_compact_profile(
+                p, max_chars=max_chars, vacancy_domains=None
+            ),
+        )
+
     max_chars = max(1200, int(max_chars))
 
     def render(
@@ -2029,6 +2130,7 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
         title_n: int,
         with_snippets: bool,
         with_ach: bool,
+        with_projects: bool,
     ) -> str:
         lines: List[str] = [
             "UNIFIED RESUME PROFILE (compact, deduped)",
@@ -2061,7 +2163,7 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
         add_csv("skills", profile.get("skills"), skill_n)
         add_csv("tools", profile.get("tools"), tool_n)
         add_csv("roles", profile.get("roles"), 10)
-        add_csv("domains", profile.get("domains"), 10)
+        add_csv("domains", profile.get("domains"), 12)
         add_csv("languages", profile.get("languages"), 8)
         add_csv("employment", profile.get("employment_preferences"), 8)
         if profile.get("seniority"):
@@ -2074,6 +2176,23 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
             lines.append("experience:")
             for b in bullets:
                 lines.append(f"- {b[:180]}")
+
+        if with_projects:
+            projects = [p for p in (profile.get("projects") or []) if isinstance(p, dict)][:5]
+            if projects:
+                lines.append("projects:")
+                for p in projects:
+                    bit = str(p.get("name") or "")
+                    if p.get("url"):
+                        bit += f" ({p['url']})"
+                    if p.get("domains"):
+                        bit += f" [{p['domains']}]"
+                    if p.get("summary"):
+                        bit += f" - {str(p['summary'])[:100]}"
+                    lines.append(f"- {bit[:200]}")
+            mets = [str(x) for x in (profile.get("metrics") or []) if str(x).strip()][:4]
+            if mets:
+                lines.append("metrics: " + "; ".join(m[:140] for m in mets))
 
         edu = [str(x) for x in (profile.get("education") or []) if str(x).strip()][:4]
         if edu:
@@ -2107,9 +2226,36 @@ def format_compact_profile(profile: Dict[str, Any], *, max_chars: int = COMPACT_
         return "\n".join(lines)
 
     tiers = (
-        dict(skill_n=28, tool_n=24, bullet_n=10, link_n=8, title_n=12, with_snippets=True, with_ach=True),
-        dict(skill_n=20, tool_n=16, bullet_n=6, link_n=4, title_n=6, with_snippets=False, with_ach=True),
-        dict(skill_n=14, tool_n=12, bullet_n=4, link_n=2, title_n=4, with_snippets=False, with_ach=False),
+        dict(
+            skill_n=28,
+            tool_n=24,
+            bullet_n=10,
+            link_n=8,
+            title_n=12,
+            with_snippets=True,
+            with_ach=True,
+            with_projects=True,
+        ),
+        dict(
+            skill_n=20,
+            tool_n=16,
+            bullet_n=6,
+            link_n=4,
+            title_n=6,
+            with_snippets=False,
+            with_ach=True,
+            with_projects=True,
+        ),
+        dict(
+            skill_n=14,
+            tool_n=12,
+            bullet_n=4,
+            link_n=2,
+            title_n=4,
+            with_snippets=False,
+            with_ach=False,
+            with_projects=False,
+        ),
     )
     text = ""
     for opts in tiers:
@@ -2127,8 +2273,10 @@ def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> 
         tags.append(f"skill:{str(skill).lower()[:40]}")
     for role in (profile.get("roles") or [])[:4]:
         tags.append(f"role:{str(role).lower()[:40]}")
-    for dom in (profile.get("domains") or [])[:4]:
+    for dom in (profile.get("domains") or [])[:8]:
         tags.append(f"domain:{str(dom).lower()[:40]}")
+    for extra_tag in domain_tags_for_profile(profile):
+        tags.append(extra_tag)
     if profile.get("seniority"):
         tags.append(f"seniority:{profile['seniority']}")
     if profile.get("geo_remote"):
@@ -2138,7 +2286,7 @@ def profile_tags(profile: Dict[str, Any], extra: Optional[List[str]] = None) -> 
         tags.append("jr_semantic_grid")
         for cid in list((grid.get("clusters") or {}).keys())[:8]:
             tags.append(f"jr_sg:{cid}"[:40])
-    return list(dict.fromkeys(tags))[:32]
+    return list(dict.fromkeys(tags))[:40]
 
 
 def vacancy_to_match_blob(vacancy: JobResponderVacancyPayload) -> Dict[str, Any]:
@@ -2536,9 +2684,10 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     if vacancy.company:
         parts.append(vacancy.company.strip())
     st = vacancy.structured
+    skills = list(st.keySkills) if st and st.keySkills else []
     if st:
-        if st.keySkills:
-            parts.append(" ".join(st.keySkills[:20]))
+        if skills:
+            parts.append(" ".join(skills[:20]))
         if st.workFormat:
             parts.append(st.workFormat)
         if st.experience:
@@ -2546,6 +2695,13 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     desc = re.sub(r"\s+", " ", vacancy.description or "").strip()
     if desc:
         parts.append(desc[:1200])
+    vac_domains = vacancy_domains_from_text(
+        vacancy.title or "",
+        vacancy.description or "",
+        skills,
+    )
+    if vac_domains:
+        parts.insert(1, "domains: " + ", ".join(vac_domains))
     return " | ".join(p for p in parts if p)
 
 
@@ -2563,6 +2719,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про него с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -3769,6 +3926,210 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         profile["_ingest"] = {"merged": replaced, "reason": "overrides-upsert"}
         return kid, content_hash, profile, replaced
 
+    def _find_compact_profile_id(cur, workspace_id: int) -> Optional[int]:
+        cur.execute(
+            """
+            select id
+            from public.knowledge_items
+            where workspace_id = %s and source = %s and kind = %s
+            order by updated_at desc
+            limit 1
+            """,
+            (workspace_id, RESUME_SOURCE, COMPACT_PROFILE_KIND),
+        )
+        row = cur.fetchone() or {}
+        if row.get("id") is None:
+            return None
+        return int(row["id"])
+
+    def _optimize_workspace_kb(
+        cur,
+        workspace_id: int,
+    ) -> Dict[str, Any]:
+        """Merge all Resume sources into one job_profile_compact master document."""
+        rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
+        rows = _ensure_overrides_in_rows(cur, workspace_id, rows)
+        capped, truncated = cap_rag_items(list(rows), max_n=SELECTED_SOURCES_MAX)
+        merged = merge_profiles_from_rows(capped)
+        master_body = build_master_compact_document(merged)
+        profile = extract_resume_profile(
+            master_body,
+            title=COMPACT_PROFILE_TITLE,
+            category=COMPACT_PROFILE_CATEGORY,
+        )
+        # Preserve structured slots from merge (richer than re-extract alone).
+        for key in (
+            "skills",
+            "tools",
+            "roles",
+            "domains",
+            "projects",
+            "metrics",
+            "domain_evidence",
+            "experience_bullets",
+            "links",
+            "languages",
+            "employment_preferences",
+            "achievements",
+            "education",
+        ):
+            if merged.get(key):
+                profile[key] = merged[key]
+        if merged.get("jr_semantic_grid"):
+            profile["jr_semantic_grid"] = merged["jr_semantic_grid"]
+        profile["source_count"] = merged.get("source_count") or len(capped)
+        profile["source_titles"] = merged.get("source_titles") or []
+        content_text, ai_summary = wrap_content_with_profile(master_body, profile)
+        tags = profile_tags(
+            profile,
+            [COMPACT_PROFILE_CATEGORY, "optimized", "master-profile", *domain_tags_for_profile(profile)],
+        )
+        content_hash = build_knowledge_content_hash(
+            RESUME_SOURCE,
+            f"jr-compact:{workspace_id}",
+            content_text,
+        )
+        note_path = truncate_text(
+            resolve_knowledge_obsidian_note_path(
+                workspace_id,
+                content_hash,
+                None,
+                kind=COMPACT_PROFILE_KIND,
+            ),
+            4000,
+        )
+        existing_id = _find_compact_profile_id(cur, workspace_id)
+        if existing_id:
+            cur.execute(
+                """
+                update public.knowledge_items set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = coalesce(seen_count, 0) + 1,
+                  title = %s,
+                  content_text = %s,
+                  ai_summary = %s,
+                  category = %s,
+                  tags = %s,
+                  content_hash = %s,
+                  kind = %s,
+                  note_path = coalesce(%s, note_path),
+                  status = 'to_process'
+                where id = %s and workspace_id = %s and source = %s
+                returning id
+                """,
+                (
+                    COMPACT_PROFILE_TITLE,
+                    content_text,
+                    ai_summary,
+                    COMPACT_PROFILE_CATEGORY,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    COMPACT_PROFILE_KIND,
+                    note_path,
+                    existing_id,
+                    workspace_id,
+                    RESUME_SOURCE,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else existing_id
+            replaced = True
+        else:
+            cur.execute(
+                """
+                insert into public.knowledge_items (
+                  workspace_id, source, title, url, canonical_url,
+                  content_text, ai_summary, category, tags, content_hash, status, note_path, kind
+                ) values (%s, %s, %s, null, null, %s, %s, %s, %s, %s, 'to_process', %s, %s)
+                on conflict (workspace_id, content_hash)
+                do update set
+                  updated_at = now(),
+                  last_seen_at = now(),
+                  seen_count = public.knowledge_items.seen_count + 1,
+                  title = excluded.title,
+                  content_text = excluded.content_text,
+                  ai_summary = excluded.ai_summary,
+                  category = excluded.category,
+                  tags = excluded.tags,
+                  note_path = coalesce(excluded.note_path, public.knowledge_items.note_path),
+                  kind = excluded.kind,
+                  status = 'to_process'
+                returning id
+                """,
+                (
+                    workspace_id,
+                    RESUME_SOURCE,
+                    COMPACT_PROFILE_TITLE,
+                    content_text,
+                    ai_summary,
+                    COMPACT_PROFILE_CATEGORY,
+                    psycopg2.extras.Json(tags),
+                    content_hash,
+                    note_path,
+                    COMPACT_PROFILE_KIND,
+                ),
+            )
+            row = cur.fetchone() or {}
+            kid = int(row["id"]) if row.get("id") is not None else -1
+            replaced = False
+        return {
+            "knowledgeItemId": kid,
+            "replaced": replaced,
+            "sourceCount": len(capped),
+            "truncated": truncated,
+            "domains": list(profile.get("domains") or [])[:16],
+            "projects": len(profile.get("projects") or []),
+            "skills": len(profile.get("skills") or []),
+            "contentHash": content_hash,
+            "profile": profile,
+            "aiSummary": (ai_summary or "")[:400],
+        }
+
+    def _run_optimize_workspace(workspace_id: int, *, sync_gemini: bool = True) -> Dict[str, Any]:
+        conn = pg_connect()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                result = _optimize_workspace_kb(cur, workspace_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+        gemini: Dict[str, Any] = {"queued": False}
+        kid = int(result.get("knowledgeItemId") or -1)
+        if sync_gemini and kid > 0 and jr_gemini_rag.is_enabled():
+            try:
+                gemini = jr_gemini_rag.sync_knowledge_item(
+                    pg_connect, workspace_id, kid, poll=False
+                )
+            except Exception as exc:
+                gemini = {"ok": False, "error": str(exc)[:200]}
+            # Also refresh store docs for other sources (best-effort, non-blocking poll)
+            try:
+                gemini["workspaceSync"] = jr_gemini_rag.sync_workspace(
+                    pg_connect, workspace_id, poll=False
+                )
+            except Exception as exc:
+                gemini["workspaceSyncError"] = str(exc)[:160]
+        result["gemini"] = gemini
+        result["ok"] = True
+        result["optimized"] = True
+        return result
+
+    def _queue_optimize_kb(background_tasks: BackgroundTasks, workspace_id: int) -> None:
+        def _job() -> None:
+            try:
+                _run_optimize_workspace(workspace_id, sync_gemini=True)
+            except Exception as exc:
+                _LOG.warning("background optimize kb failed ws=%s: %s", workspace_id, exc)
+
+        try:
+            background_tasks.add_task(_job)
+        except Exception as exc:
+            _LOG.warning("queue optimize failed: %s", exc)
+
     def _find_resume_item_by_url(cur, workspace_id: int, url: str) -> Optional[int]:
         canonical = normalize_url(url) if url else ""
         if not canonical:
@@ -4011,7 +4372,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         return {
             "ok": True,
             "prompt": ULTRA_SHORT_SYSTEM_PROMPT,
-            "promptVersion": "ultra-short-honesty-v2",
+            "promptVersion": "ultra-short-domain-pin-v1",
             "linksBlock": DEFAULT_LINKS_BLOCK,
             "canonicalLinks": list(DEFAULT_CANONICAL_LINKS),
         }
@@ -4035,13 +4396,48 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     select
                       count(*)::int as total,
                       count(*) filter (where kind = %s)::int as primary_cv_count,
-                      max(updated_at) as last_updated
+                      count(*) filter (where kind = %s)::int as optimized_count,
+                      max(updated_at) as last_updated,
+                      max(updated_at) filter (where kind = %s) as optimized_at
                     from public.knowledge_items
-                    where workspace_id = %s and source = %s and kind = any(%s)
+                    where workspace_id = %s and source = %s
+                      and (kind = any(%s) or kind = %s)
                     """,
-                    (PRIMARY_CV_KIND, workspace_id, RESUME_SOURCE, list(RESUME_KINDS)),
+                    (
+                        PRIMARY_CV_KIND,
+                        COMPACT_PROFILE_KIND,
+                        COMPACT_PROFILE_KIND,
+                        workspace_id,
+                        RESUME_SOURCE,
+                        list(RESUME_KINDS),
+                        COMPACT_PROFILE_KIND,
+                    ),
                 )
                 row = cur.fetchone() or {}
+                # Surface latest optimized domains from master doc if present
+                domains: List[str] = []
+                compact_id = None
+                cur.execute(
+                    """
+                    select id, content_text, ai_summary, tags, updated_at
+                    from public.knowledge_items
+                    where workspace_id = %s and source = %s and kind = %s
+                    order by updated_at desc
+                    limit 1
+                    """,
+                    (workspace_id, RESUME_SOURCE, COMPACT_PROFILE_KIND),
+                )
+                compact = cur.fetchone()
+                if compact:
+                    compact_id = int(compact["id"]) if compact.get("id") is not None else None
+                    prof = parse_profile_from_content(str(compact.get("content_text") or ""))
+                    domains = list(prof.get("domains") or [])[:16]
+                    if not domains and isinstance(compact.get("tags"), list):
+                        domains = [
+                            str(t).split(":", 1)[1]
+                            for t in compact["tags"]
+                            if str(t).startswith("domain:")
+                        ][:16]
             return {
                 "workspaceId": str(workspace_id),
                 "defaultTestWorkspaceId": str(DEFAULT_TEST_WORKSPACE_ID),
@@ -4050,6 +4446,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "primaryCvCount": int(row.get("primary_cv_count") or 0),
                 "hasPrimaryCv": int(row.get("primary_cv_count") or 0) > 0,
                 "lastUpdated": row.get("last_updated").isoformat() if row.get("last_updated") else None,
+                "optimized": int(row.get("optimized_count") or 0) > 0,
+                "optimizedAt": row.get("optimized_at").isoformat() if row.get("optimized_at") else None,
+                "optimizedSourceId": compact_id,
+                "domains": domains,
+                "domainCount": len(domains),
             }
         finally:
             conn.close()
@@ -4231,6 +4632,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
             _queue_embed(background_tasks, kid, title, text, str((profile or {}).get("ai_summary") or ""))
             _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+            _queue_optimize_kb(background_tasks, workspace_id)
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -4299,6 +4701,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
             _queue_embed(background_tasks, kid, title, text)
             _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+            _queue_optimize_kb(background_tasks, workspace_id)
             _queue_extracted_link_index(
                 background_tasks,
                 workspace_id,
@@ -4316,6 +4719,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "profile": profile,
                 "linkedSources": [],
                 "linkIndexQueued": True,
+                "optimizeQueued": True,
                 "merged": bool(ingest_meta.get("merged")),
                 "workspaceId": str(workspace_id),
             }
@@ -4360,6 +4764,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     parsed_contacts = extract_contacts_from_rag_edits(text)
             store_text = format_structured_overrides_document(text, parsed_contacts)
             _queue_embed(background_tasks, kid, PROFILE_OVERRIDES_TITLE, store_text)
+            _queue_optimize_kb(background_tasks, workspace_id)
             gemini_sync: Dict[str, Any] = {"queued": True, "ok": None}
             # Prefer prompt injection on generate; still try a short sync so File Search catches up.
             if jr_gemini_rag.is_enabled():
@@ -4397,6 +4802,44 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             raise
         finally:
             conn.close()
+
+    @app.post("/api/v1/job-responder/resume/optimize")
+    async def job_responder_resume_optimize(
+        payload: JobResponderOptimizePayload,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """Re-merge all Resume KB sources into job_profile_compact + optional Gemini sync."""
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        try:
+            result = _run_optimize_workspace(workspace_id, sync_gemini=bool(payload.syncGemini))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _LOG.exception("optimize kb failed ws=%s", workspace_id)
+            raise HTTPException(status_code=500, detail=f"optimize_failed: {type(exc).__name__}") from exc
+        # Drop heavy profile from HTTP body; keep summary stats.
+        profile = result.pop("profile", None) or {}
+        return {
+            "ok": True,
+            "optimized": True,
+            "workspaceId": str(workspace_id),
+            "knowledgeItemId": result.get("knowledgeItemId"),
+            "replaced": result.get("replaced"),
+            "sourceCount": result.get("sourceCount"),
+            "truncated": result.get("truncated"),
+            "domains": result.get("domains") or list(profile.get("domains") or [])[:16],
+            "domainCount": len(result.get("domains") or profile.get("domains") or []),
+            "projects": result.get("projects"),
+            "skills": result.get("skills"),
+            "contentHash": result.get("contentHash"),
+            "gemini": result.get("gemini"),
+            "message": "База оптимизирована: structured master profile обновлён.",
+        }
 
     @app.post("/api/v1/job-responder/resume/file-capture")
     async def job_responder_resume_file_capture(
@@ -4511,6 +4954,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 ingest_meta = (profile or {}).pop("_ingest", {}) if isinstance(profile, dict) else {}
                 _queue_embed(background_tasks, kid, item_title, extracted_text)
                 _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+                _queue_optimize_kb(background_tasks, workspace_id)
                 _queue_extracted_link_index(
                     background_tasks,
                     workspace_id,
@@ -4629,6 +5073,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             conn.commit()
             _queue_embed(background_tasks, kid, item_title, text[:3500])
             _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+            _queue_optimize_kb(background_tasks, workspace_id)
             return {
                 "ok": True,
                 "knowledgeItemId": kid,
@@ -4641,6 +5086,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "merged": bool(ingest_meta.get("merged")),
                 "description": (preview.get("summary") or "")[:280],
                 "linkedSources": linked,
+                "optimizeQueued": True,
                 "workspaceId": str(workspace_id),
             }
         except Exception:
@@ -4792,6 +5238,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         )
                         _queue_embed(background_tasks, kid, fname, text.strip())
                         _queue_gemini_rag_sync(background_tasks, workspace_id, kid)
+                        _queue_optimize_kb(background_tasks, workspace_id)
                         _queue_extracted_link_index(
                             background_tasks,
                             workspace_id,
@@ -5139,6 +5586,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         )
         cover_cap = COVER_TEMPLATE_CHARS
         profile_compressed = len(rag_items) >= COMPACT_PROFILE_MANY_SOURCES
+        vac_skills = list(
+            (payload.vacancy.structured.keySkills if payload.vacancy.structured else None) or []
+        )
+        vacancy_domains = vacancy_domains_from_text(
+            payload.vacancy.title or "",
+            payload.vacancy.description or "",
+            vac_skills,
+        )
+        domain_pin = pin_domain_facts(merged, vacancy_domains)
         provider_errors: List[str] = []
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
@@ -5158,7 +5614,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 payload.coverTemplate, payload.baseLetter, max_chars=cover_max
             )
             has_template = bool(cover_template) and mode == "cover_letter"
-            compact_text = format_compact_profile(merged, max_chars=profile_max)
+            compact_text = format_compact_profile(
+                merged,
+                max_chars=profile_max,
+                vacancy_domains=vacancy_domains,
+            )
             system_prompt = build_system_prompt(
                 mode, has_cover_template=has_template, prompt_extra=prompt_extra
             )
@@ -5279,6 +5739,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 cover_template=cover_template_rag if has_template_rag else "",
                 prompt_extra=prompt_extra,
                 host_labels=HOST_LABELS,
+                domain_boost=build_file_search_query_boost(vacancy_domains, domain_pin),
             )
             # Early cancel: never burn the soft budget on a hung File Search call.
             rag_timeout = min(GEMINI_RAG_EARLY_SEC, remaining_after_fast - 8.0)
@@ -5481,4 +5942,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "elapsedSec": round(elapsed_ok, 2),
             "questionsCount": len(normalized_questions),
             "workspaceId": str(workspace_id),
+            "vacancyDomains": vacancy_domains,
+            "domainsMatched": list(domain_pin.get("domains_matched") or []),
+            "domainPinBullets": list(domain_pin.get("pinned_bullets") or [])[:4],
         }

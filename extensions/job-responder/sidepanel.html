@@ -91,11 +91,20 @@
         <button type="button" id="refreshSourcesBtn" class="secondary btnCompact" title="Обновить источники">
           Обновить
         </button>
+        <button
+          type="button"
+          id="optimizeKbBtn"
+          class="secondary btnCompact"
+          title="Пересобрать structured master profile из всех источников"
+        >
+          Оптимизировать базу
+        </button>
         <button type="button" id="geminiRagSyncBtn" class="secondary btnCompact" title="Синхронизировать базу">
           Синхр.
         </button>
       </div>
       <p class="hint tight" id="resumeStatus">—</p>
+      <p class="hint tight" id="optimizeStatus">База: не оптимизирована</p>
       <p class="hint tight" id="geminiRagStatus">База: …</p>
       <div class="ingestBanner" id="ingestBanner" hidden></div>
     </details>

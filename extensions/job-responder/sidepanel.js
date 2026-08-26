@@ -242,6 +242,7 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про него с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -645,6 +646,7 @@ function bindCollapsePersistence() {
 
 const authHint = document.getElementById('authHint');
 const resumeStatus = document.getElementById('resumeStatus');
+const optimizeStatusEl = document.getElementById('optimizeStatus');
 const geminiRagStatusEl = document.getElementById('geminiRagStatus');
 const ingestBanner = document.getElementById('ingestBanner');
 const vacancyMeta = document.getElementById('vacancyMeta');
@@ -1140,9 +1142,20 @@ async function refreshResumeStatus() {
     resumeStatus.textContent = st.hasPrimaryCv
       ? `База резюме ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}${lastAdd}`
       : `База резюме ws=${ws}: загрузите CV (сейчас ${st.count} док.)${lastAdd}`;
+    if (optimizeStatusEl) {
+      if (st.optimized) {
+        const domains = Array.isArray(st.domains) && st.domains.length
+          ? ` · domains: ${st.domains.slice(0, 6).join(', ')}`
+          : '';
+        optimizeStatusEl.textContent = `База оптимизирована${st.optimizedAt ? ` · ${formatUpdatedAt(st.optimizedAt)}` : ''}${domains}`;
+      } else {
+        optimizeStatusEl.textContent = 'База: не оптимизирована - нажмите «Оптимизировать базу»';
+      }
+    }
     await refreshGeminiRagStatus({ quiet: true });
   } catch (err) {
     resumeStatus.textContent = `База резюме: ${err.message}`;
+    if (optimizeStatusEl) optimizeStatusEl.textContent = `Оптимизация: ${err.message}`;
   }
 }
 
@@ -1715,6 +1728,7 @@ const copyAllQaBtn = document.getElementById('copyAllQaBtn');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
 const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
+const optimizeKbBtn = document.getElementById('optimizeKbBtn');
 const geminiRagSyncBtn = document.getElementById('geminiRagSyncBtn');
 const saveWorkspaceBtn = document.getElementById('saveWorkspaceBtn');
 
@@ -2254,6 +2268,30 @@ refreshSourcesBtn.addEventListener('click', () => {
   setError('');
   refreshSources({ quiet: false }).catch(() => {});
 });
+
+if (optimizeKbBtn) {
+  optimizeKbBtn.addEventListener('click', async () => {
+    setError('');
+    setButtonBusy(optimizeKbBtn, true, 'Оптимизировать базу', '…');
+    if (optimizeStatusEl) optimizeStatusEl.textContent = 'Оптимизация базы…';
+    try {
+      const res = await JR_API.resumeOptimize({ syncGemini: true });
+      await refreshResumeStatus();
+      await refreshSources({ quiet: true });
+      const doms = Array.isArray(res.domains) && res.domains.length
+        ? ` · ${res.domains.slice(0, 8).join(', ')}`
+        : '';
+      setSuccess(
+        `База оптимизирована: ${res.sourceCount || 0} источников → master profile${doms}`
+      );
+    } catch (err) {
+      setError(String(err.message || err));
+      await refreshResumeStatus();
+    } finally {
+      setButtonBusy(optimizeKbBtn, false, 'Оптимизировать базу');
+    }
+  });
+}
 
 if (geminiRagSyncBtn) {
   geminiRagSyncBtn.addEventListener('click', async () => {
