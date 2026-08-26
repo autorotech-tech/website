@@ -98,12 +98,22 @@ Chrome MV3 extension: персонализированные отклики с �
 
 ## Сопроводительное (шаблон)
 
-- Поле **«Моё сопроводительное (шаблон)»** + кнопка **Взять из RAG**
-- Автоподстановка из Resume RAG, если storage пуст и найден source с "сопроводительн" / cover letter
+- Поле **«Моё сопроводительное (шаблон)»** + кнопки **Взять из базы** / **Сохранить шаблон в базу** / **Структура шаблона**
+- Формат LLM-friendly:
+  - `[COVER_TEMPLATE]` - приветствие, о себе, факты, CTA
+  - `[CONTACTS]` - Telegram, Email, Portfolio, LinkedIn, GitHub
+- Пустой или старый freeform шаблон при загрузке мигрирует в структуру (контакты из правок профиля)
+- **Сохранить шаблон в базу** → `text-capture` (category=`cover_letter`)
 - Хранится в `chrome.storage.local` (`jrCoverTemplate`)
-- При генерации отклика передаётся как `coverTemplate` / `baseLetter`
-- Если шаблон не пустой - LLM **адаптирует** его под вакансию (голос автора), а не пишет с нуля
+- При генерации: `coverTemplate` / `baseLetter`; backend **дописывает блок контактов**, если LLM их пропустил
 - Формат HH: `-`, `->`, ASCII `"`
+
+## Инструкции генерации (промпт)
+
+- Ultra-short system prompt (см. `prompts-ultra-short.md`)
+- **Сохранить промпт** активна только при изменениях vs сохранённого (`jrPromptExtra`)
+- **Сбросить** → default ultra-short
+- На generate уходит текущий текст; ultra-short не дублируется в CUSTOM (уже в system)
 
 ## Sources list (v0.5.6+)
 

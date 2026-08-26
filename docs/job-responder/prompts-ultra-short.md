@@ -2,6 +2,8 @@
 
 Runtime system instruction (extension `jrPromptExtra` default + backend `build_system_prompt`) is token-efficient.
 
+Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбросить**. Storage key: `jrPromptExtra`.
+
 ## Ultra-short (default)
 
 ```
@@ -28,6 +30,25 @@ qa: [{"question":"...","answer":"..."}]
 Стиль: кратко, по делу, русский (если не просили иначе). ASCII " и дефис -, без длинных тире.
 ```
 
+## Cover template (structured)
+
+```
+[COVER_TEMPLATE]
+Приветствие: ...
+О себе (1-2 предложения): ...
+Ключевые факты (bullet): ...
+CTA: ...
+
+[CONTACTS]
+Telegram: @autoro_tech
+Email: autoro.tech@gmail.com
+Portfolio: ...
+LinkedIn: ...
+GitHub: ...
+```
+
+Backend post-process: if letter misses known contacts from template / overrides / profile → append `## Контакты` (never invent).
+
 ## Fuller reference (not runtime default)
 
 Use when debugging or expanding docs only. Prefer ultra-short in production.
@@ -37,4 +58,4 @@ Use when debugging or expanding docs only. Prefer ultra-short in production.
 - Cover: greet -> 2-4 relevance points -> 1-3 experience/metrics -> CTA -> contacts.
 - QA: JSON array `[{"question","answer"}]`; copy question text literally.
 - Contacts/links always when present; cover_template contacts win; never invent.
-- Side panel `jrPromptExtra` overrides tone/contacts for one generate; «Правки профиля» persist to knowledge base.
+- Side panel `jrPromptExtra` = ultra-short system instructions; «Правки профиля» persist to knowledge base.

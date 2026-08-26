@@ -9,6 +9,9 @@ from job_responder import (
     JobResponderVacancyPayload,
     JobResponderVacancyStructured,
     cap_rag_items,
+    collect_generate_contacts,
+    ensure_contacts_in_cover_letter,
+    extract_contacts_from_cover_template,
     extract_contacts_from_rag_edits,
     extract_resume_profile,
     extract_urls_from_text,
@@ -19,6 +22,7 @@ from job_responder import (
     normalize_questions,
     parse_answers_json,
     score_resume_vs_vacancy,
+    strip_empty_markdown_headings,
     strip_profile_wrapper,
     wrap_content_with_profile,
 )
@@ -230,6 +234,44 @@ def test_extract_contacts_from_freeform_russian():
     )
     assert merged.get("telegram") == "@autoro_tech"
     assert merged.get("email") == "autoro.tech@gmail.com"
+
+
+def test_ensure_contacts_appended_from_template():
+    template = """[COVER_TEMPLATE]
+Приветствие: Здравствуйте!
+CTA: Готов обсудить.
+
+[CONTACTS]
+Telegram: @autoro_tech
+Email: autoro.tech@gmail.com
+"""
+    contacts = extract_contacts_from_cover_template(template)
+    assert contacts["telegram"] == "@autoro_tech"
+    assert contacts["email"] == "autoro.tech@gmail.com"
+    letter = "Здравствуйте!\n\nПодхожу по стеку.\n\n##\n"
+    out = ensure_contacts_in_cover_letter(letter, contacts)
+    assert "##" not in out.split("Контакты")[0] or "Контакты" in out
+    assert "@autoro_tech" in out
+    assert "autoro.tech@gmail.com" in out
+    assert "## Контакты" in out
+    # Idempotent
+    out2 = ensure_contacts_in_cover_letter(out, contacts)
+    assert out2.count("@autoro_tech") == 1
+
+
+def test_collect_contacts_priority_template_over_overrides():
+    contacts = collect_generate_contacts(
+        cover_template="[CONTACTS]\nTelegram: @from_template\nEmail: t@x.com",
+        overrides={"telegram": "@from_override", "email": "o@x.com"},
+        merged={"telegram": "@from_profile", "email": "p@x.com"},
+    )
+    assert contacts["telegram"] == "@from_template"
+    assert contacts["email"] == "t@x.com"
+
+
+def test_strip_empty_headings():
+    assert strip_empty_markdown_headings("Hi\n\n##\n") == "Hi"
+    assert strip_empty_markdown_headings("Hi\n## Контакты\n") == "Hi"
 
 
 def test_semantic_hh_phrases_without_english_acronyms():

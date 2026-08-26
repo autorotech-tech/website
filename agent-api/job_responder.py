@@ -67,8 +67,8 @@ COMPACT_PROFILE_CHARS_RETRY = 1400
 COMPACT_PROFILE_MANY_SOURCES = 6
 COMPACT_PROFILE_KIND = "job_profile_compact"
 GENERATE_VACANCY_CHARS = 1600
-COVER_TEMPLATE_CHARS = 1000
-COVER_TEMPLATE_CHARS_RETRY = 500
+COVER_TEMPLATE_CHARS = 1400
+COVER_TEMPLATE_CHARS_RETRY = 700
 LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
@@ -501,6 +501,185 @@ def extract_urls_from_text(text: str, limit: int = 20) -> List[str]:
 def resolve_cover_template(cover_template: Optional[str], base_letter: Optional[str], *, max_chars: int = COVER_TEMPLATE_CHARS) -> str:
     raw = (cover_template or base_letter or "").strip()
     return raw[: max(500, int(max_chars))] if raw else ""
+
+
+_CONTACT_LABELS = (
+    ("telegram", "Telegram"),
+    ("email", "Email"),
+    ("phone", "Телефон"),
+    ("portfolio", "Portfolio"),
+    ("github", "GitHub"),
+    ("linkedin", "LinkedIn"),
+    ("website", "Сайт"),
+    ("site", "Сайт"),
+    ("link", "Ссылка"),
+)
+
+_CONTACT_ORDER = [k for k, _ in _CONTACT_LABELS]
+
+
+def extract_contacts_from_cover_template(template: str) -> Dict[str, str]:
+    """Parse [CONTACTS] block (or whole template) for known contact keys."""
+    raw = (template or "").strip()
+    if not raw:
+        return {}
+    section = raw
+    m = re.search(r"(?is)\[CONTACTS\]\s*(.*?)(?=\n\s*\[[A-Z_]+\]|\Z)", raw)
+    if m:
+        section = m.group(1).strip()
+    return extract_contacts_from_rag_edits(section) or extract_contacts_from_rag_edits(raw)
+
+
+def collect_generate_contacts(
+    *,
+    cover_template: str = "",
+    overrides: Optional[Dict[str, str]] = None,
+    merged: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    """Merge known contacts. Priority: cover_template > overrides > profile."""
+    out: Dict[str, str] = {}
+    profile = merged or {}
+
+    # Lowest priority: profile fields + links
+    for key in ("telegram", "email", "phone"):
+        val = str(profile.get(key) or "").strip()
+        if val:
+            out[key] = val[:500]
+    for lk in profile.get("links") or []:
+        if not isinstance(lk, dict):
+            continue
+        url = str(lk.get("url") or "").strip()
+        title = str(lk.get("title") or "").strip().lower()
+        if not url:
+            continue
+        if "t.me/" in url.lower() or title == "telegram":
+            hm = _TG_HANDLE_EXTRACT_RE.search(url)
+            if hm:
+                out.setdefault("telegram", f"@{hm.group(1).lstrip('@')}")
+            continue
+        if url.lower().startswith("mailto:") or ("@" in url and "://" not in url):
+            em = _EMAIL_EXTRACT_RE.search(url.replace("mailto:", ""))
+            if em:
+                out.setdefault("email", em.group(0))
+            continue
+        canon = _canonical_override_key(title) if title else "link"
+        if canon in ("github", "linkedin", "portfolio", "website", "site", "link"):
+            out.setdefault(canon if canon != "site" else "website", url[:400])
+        else:
+            out.setdefault("link", url[:400])
+
+    # Overrides win over profile
+    for key, val in (overrides or {}).items():
+        ck = _canonical_override_key(str(key))
+        v = _clean_override_value(str(val or ""))
+        if not ck or not v or ck.startswith("_") or ck == "rag_edits":
+            continue
+        if ck == "telegram":
+            hm = _TG_HANDLE_EXTRACT_RE.search(v) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", v)
+            if hm:
+                out["telegram"] = f"@{hm.group(1).lstrip('@')}"
+            continue
+        if ck == "email":
+            em = _EMAIL_EXTRACT_RE.search(v)
+            if em:
+                out["email"] = em.group(0)
+            continue
+        if ck == "site":
+            ck = "website"
+        out[ck] = v[:500]
+
+    # Cover template [CONTACTS] highest priority
+    for key, val in extract_contacts_from_cover_template(cover_template).items():
+        if val:
+            out[key] = val
+
+    # Stable order, drop empties
+    ordered: Dict[str, str] = {}
+    for key in _CONTACT_ORDER:
+        if out.get(key):
+            ordered[key] = out[key]
+    for key, val in out.items():
+        if key not in ordered and val:
+            ordered[key] = val
+    return ordered
+
+
+def _contact_needle(key: str, value: str) -> str:
+    v = (value or "").strip()
+    if key == "telegram":
+        hm = _TG_HANDLE_EXTRACT_RE.search(v) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", v)
+        if hm:
+            return hm.group(1).lstrip("@").lower()
+    if key == "email":
+        em = _EMAIL_EXTRACT_RE.search(v)
+        if em:
+            return em.group(0).lower()
+    if v.startswith("http://") or v.startswith("https://"):
+        return v.lower().rstrip("/")
+    return v.lower()[:80]
+
+
+def letter_has_contact_value(text: str, key: str, value: str) -> bool:
+    blob = (text or "").lower()
+    needle = _contact_needle(key, value)
+    if not needle or len(needle) < 3:
+        return False
+    return needle in blob
+
+
+def strip_empty_markdown_headings(text: str) -> str:
+    """Drop empty ## / ### headings (LLM often leaves trailing `##`)."""
+    if not text:
+        return ""
+    cleaned = [ln for ln in text.splitlines() if not re.match(r"^#{1,6}\s*$", ln.strip())]
+    # Trailing heading with no body (e.g. "## Контакты" alone at end)
+    while cleaned and re.match(r"^#{1,6}\s+\S", cleaned[-1].strip()):
+        cleaned.pop()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned)).strip()
+
+
+def format_contacts_block(contacts: Dict[str, str]) -> str:
+    if not contacts:
+        return ""
+    labels = dict(_CONTACT_LABELS)
+    lines = ["## Контакты"]
+    for key in _CONTACT_ORDER:
+        val = contacts.get(key)
+        if not val:
+            continue
+        label = labels.get(key, key.capitalize())
+        lines.append(f"- {label}: {val}")
+    for key, val in contacts.items():
+        if key in labels or not val:
+            continue
+        lines.append(f"- {key}: {val}")
+    return "\n".join(lines)
+
+
+def ensure_contacts_in_cover_letter(text: str, contacts: Dict[str, str]) -> str:
+    """Guarantee contacts block when values are known; never invent."""
+    body = strip_empty_markdown_headings(hh_format_text(text or ""))
+    if not contacts:
+        return body
+    missing = {
+        k: v
+        for k, v in contacts.items()
+        if v and not letter_has_contact_value(body, k, v)
+    }
+    if not missing:
+        return body
+    # If letter already has a contacts heading, append only missing bullets under it
+    heading_re = re.compile(r"(?im)^#{1,6}\s*контакты\s*$")
+    m = heading_re.search(body)
+    block_missing = format_contacts_block(missing)
+    if not block_missing:
+        return body
+    if m:
+        # Insert bullets after existing heading (skip the "## Контакты" line from block)
+        bullets = "\n".join(block_missing.splitlines()[1:])
+        insert_at = m.end()
+        return (body[:insert_at] + "\n" + bullets + body[insert_at:]).strip()
+    return (body.rstrip() + "\n\n" + block_missing).strip()
 
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
@@ -3938,7 +4117,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 else:
                     raw_text = hh_format_text(raw_text)
         else:
-            raw_text = hh_format_text(raw_text)
+            cover_for_contacts = resolve_cover_template(
+                payload.coverTemplate, payload.baseLetter, max_chars=COVER_TEMPLATE_CHARS
+            )
+            known_contacts = collect_generate_contacts(
+                cover_template=cover_for_contacts,
+                overrides=overrides,
+                merged=merged,
+            )
+            raw_text = ensure_contacts_in_cover_letter(raw_text, known_contacts)
 
         sources = [
             {

@@ -29,6 +29,22 @@ cover_letter: привет -> релевантность (2-4) -> опыт/ме�
 qa: [{"question":"...","answer":"..."}]
 Стиль: кратко, по делу, русский (если не просили иначе). ASCII " и дефис -, без длинных тире.`;
 
+/** Structured cover template - default for empty / migration. */
+const DEFAULT_COVER_TEMPLATE = `[COVER_TEMPLATE]
+Приветствие: Здравствуйте!
+О себе (1-2 предложения): Кратко кто вы и чем полезны под эту роль.
+Ключевые факты (bullet):
+- факт 1 под требования вакансии
+- факт 2 (метрика / стек / результат)
+CTA: Готов обсудить детали в удобном формате.
+
+[CONTACTS]
+Telegram: @autoro_tech
+Email: autoro.tech@gmail.com
+Portfolio:
+LinkedIn:
+GitHub:`;
+
 /** Legacy default contact line - migrate storage to ultra-short on load. */
 const LEGACY_PROMPT_EXTRA =
   'Всегда включай контакты и релевантные ссылки из профиля (email, Telegram, телефон, портфолио, GitHub, LinkedIn). ' +
@@ -37,6 +53,83 @@ const LEGACY_PROMPT_EXTRA =
 function isJrSystemPromptText(text) {
   const t = String(text || '');
   return /\[ROLE\]/.test(t) && /\[RULES\]/.test(t) && /\[FLOW\]/.test(t);
+}
+
+function isStructuredCoverTemplate(text) {
+  const t = String(text || '');
+  return /\[COVER_TEMPLATE\]/i.test(t) || /\[CONTACTS\]/i.test(t);
+}
+
+function formatContactsBlock(contacts) {
+  const order = [
+    ['telegram', 'Telegram'],
+    ['email', 'Email'],
+    ['phone', 'Телефон'],
+    ['portfolio', 'Portfolio'],
+    ['link', 'Portfolio'],
+    ['linkedin', 'LinkedIn'],
+    ['github', 'GitHub'],
+    ['website', 'Сайт'],
+  ];
+  const lines = [];
+  const used = new Set();
+  for (const [key, label] of order) {
+    if (!contacts?.[key] || used.has(key)) continue;
+    used.add(key);
+    lines.push(`${label}: ${contacts[key]}`);
+  }
+  for (const [k, v] of Object.entries(contacts || {})) {
+    if (used.has(k) || !v) continue;
+    lines.push(`${k}: ${v}`);
+  }
+  return lines.join('\n');
+}
+
+function buildStructuredCoverTemplate({ body = '', contacts = {} } = {}) {
+  let about = String(body || '').trim();
+  // Strip existing structured wrappers if re-migrating
+  about = about
+    .replace(/\[COVER_TEMPLATE\]/gi, '')
+    .replace(/\[CONTACTS\][\s\S]*$/i, '')
+    .trim();
+  if (!about) {
+    about =
+      'Приветствие: Здравствуйте!\nО себе (1-2 предложения): Кратко кто вы и чем полезны под эту роль.\nКлючевые факты (bullet):\n- факт 1\n- факт 2\nCTA: Готов обсудить детали.';
+  }
+  const contactLines = formatContactsBlock(contacts);
+  const contactsBlock = contactLines
+    ? contactLines
+    : 'Telegram: @autoro_tech\nEmail: autoro.tech@gmail.com\nPortfolio:\nLinkedIn:\nGitHub:';
+  return `[COVER_TEMPLATE]\n${about}\n\n[CONTACTS]\n${contactsBlock}`.trim();
+}
+
+function mergeContactsIntoStructuredTemplate(template, contacts) {
+  const raw = String(template || '').trim();
+  if (!raw || !contacts || !Object.keys(contacts).length) return raw;
+  if (!/\[CONTACTS\]/i.test(raw)) {
+    return `${raw}\n\n[CONTACTS]\n${formatContactsBlock(contacts)}`.trim();
+  }
+  const existing = parseProfileOverrides(raw);
+  const merged = { ...contacts, ...existing }; // template wins
+  const head = raw.replace(/\[CONTACTS\][\s\S]*$/i, '').trim();
+  return `${head}\n\n[CONTACTS]\n${formatContactsBlock(merged)}`.trim();
+}
+
+/** Last saved prompt text (chrome.storage jrPromptExtra). */
+let savedPromptExtra = DEFAULT_PROMPT_EXTRA;
+
+function syncPromptSaveButton() {
+  const saveBtn = document.getElementById('savePromptBtn');
+  const meta = document.getElementById('promptExtraMeta');
+  if (!promptExtraEl || !saveBtn) return;
+  const current = String(promptExtraEl.value || '');
+  const dirty = current !== String(savedPromptExtra || '');
+  saveBtn.disabled = !dirty;
+  if (meta) {
+    meta.textContent = dirty
+      ? 'Есть несохранённые изменения промпта.'
+      : 'Промпт сохранён.';
+  }
 }
 /** Keys expanded after generate / with answers (not forced closed by restore). */
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
@@ -362,11 +455,46 @@ async function maybePrefillCoverTemplate(items, { force = false } = {}) {
   if (!force && current) return false;
   const picked = pickCoverLetterSource(items);
   if (!picked) return false;
-  const body = coverLetterBody(picked);
+  let body = coverLetterBody(picked);
   if (!body || body.length < 40) return false;
+  const contacts = {
+    ...parseProfileOverrides(String(ragEditsInput?.value || '')),
+    ...parseProfileOverrides(body),
+  };
+  if (!isStructuredCoverTemplate(body)) {
+    body = buildStructuredCoverTemplate({ body, contacts });
+  } else if (Object.keys(contacts).length) {
+    body = mergeContactsIntoStructuredTemplate(body, contacts);
+  }
   coverTemplateEl.value = body;
   await chrome.storage.local.set({ jrCoverTemplate: body });
   setSuccess(`Шаблон взят из базы: ${sourceTitleRaw(picked)}`);
+  return true;
+}
+
+async function ensureCoverTemplateStructured({ force = false } = {}) {
+  if (!coverTemplateEl) return false;
+  const current = String(coverTemplateEl.value || '').trim();
+  const contacts = {
+    ...parseProfileOverrides(String(ragEditsInput?.value || '')),
+    ...parseProfileOverrides(current),
+  };
+  let next = current;
+  if (!current) {
+    next = buildStructuredCoverTemplate({ contacts });
+  } else if (!isStructuredCoverTemplate(current) || force) {
+    next = buildStructuredCoverTemplate({
+      body: isStructuredCoverTemplate(current)
+        ? current.replace(/\[CONTACTS\][\s\S]*$/i, '').replace(/\[COVER_TEMPLATE\]/gi, '').trim()
+        : current,
+      contacts,
+    });
+  } else if (Object.keys(contacts).length) {
+    next = mergeContactsIntoStructuredTemplate(current, contacts);
+  }
+  if (next === current) return false;
+  coverTemplateEl.value = next;
+  await chrome.storage.local.set({ jrCoverTemplate: next });
   return true;
 }
 
@@ -812,9 +940,7 @@ async function runGenerate(mode) {
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
-    if (promptExtraEl) {
-      await chrome.storage.local.set({ jrPromptExtra: promptExtraRaw });
-    }
+    // Промпт: только через «Сохранить промпт»; на generate уходит текущее значение textarea.
     const data = await JR_API.generateResponse({
       mode: isQa ? 'qa' : 'cover_letter',
       host: currentVacancy?.host || 'web',
@@ -888,10 +1014,14 @@ const ragTextTitle = document.getElementById('ragTextTitle');
 const coverTemplateEl = document.getElementById('coverTemplate');
 const promptExtraEl = document.getElementById('promptExtra');
 const resetPromptBtn = document.getElementById('resetPromptBtn');
+const savePromptBtn = document.getElementById('savePromptBtn');
 const coverFromRagBtn = document.getElementById('coverFromRagBtn');
+const saveCoverTemplateBtn = document.getElementById('saveCoverTemplateBtn');
+const migrateCoverTemplateBtn = document.getElementById('migrateCoverTemplateBtn');
 const ragEditsInput = document.getElementById('ragEditsInput');
 const saveRagEditsBtn = document.getElementById('saveRagEditsBtn');
 const ragEditsMeta = document.getElementById('ragEditsMeta');
+const promptExtraMeta = document.getElementById('promptExtraMeta');
 const linkUrlInput = document.getElementById('linkUrl');
 const linkTitleInput = document.getElementById('linkTitle');
 const driveFolderInput = document.getElementById('driveFolderInput');
@@ -1532,7 +1662,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     coverTemplateEl.value = String(changes.jrCoverTemplate.newValue || '');
   }
   if (changes.jrPromptExtra && promptExtraEl && document.activeElement !== promptExtraEl) {
-    promptExtraEl.value = String(changes.jrPromptExtra.newValue || DEFAULT_PROMPT_EXTRA);
+    const next = String(changes.jrPromptExtra.newValue || DEFAULT_PROMPT_EXTRA);
+    savedPromptExtra = next;
+    promptExtraEl.value = next;
+    syncPromptSaveButton();
   }
   if (changes.jrRagEdits && ragEditsInput && document.activeElement !== ragEditsInput) {
     ragEditsInput.value = String(changes.jrRagEdits.newValue || '');
@@ -1559,13 +1692,26 @@ if (coverTemplateEl) {
   });
 }
 
-let promptExtraSaveTimer = null;
 if (promptExtraEl) {
   promptExtraEl.addEventListener('input', () => {
-    clearTimeout(promptExtraSaveTimer);
-    promptExtraSaveTimer = setTimeout(() => {
-      chrome.storage.local.set({ jrPromptExtra: String(promptExtraEl.value || '') });
-    }, 400);
+    syncPromptSaveButton();
+  });
+  promptExtraEl.addEventListener('focus', () => {
+    promptExtraEl.classList.add('isFocused');
+  });
+  promptExtraEl.addEventListener('blur', () => {
+    promptExtraEl.classList.remove('isFocused');
+  });
+}
+
+if (savePromptBtn) {
+  savePromptBtn.addEventListener('click', async () => {
+    if (!promptExtraEl) return;
+    const value = String(promptExtraEl.value || '');
+    await chrome.storage.local.set({ jrPromptExtra: value });
+    savedPromptExtra = value;
+    syncPromptSaveButton();
+    setSuccess('Промпт сохранён');
   });
 }
 
@@ -1573,16 +1719,9 @@ if (resetPromptBtn) {
   resetPromptBtn.addEventListener('click', async () => {
     if (promptExtraEl) promptExtraEl.value = DEFAULT_PROMPT_EXTRA;
     await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
+    savedPromptExtra = DEFAULT_PROMPT_EXTRA;
+    syncPromptSaveButton();
     setSuccess('Инструкции сброшены (ultra-short default)');
-  });
-}
-
-if (promptExtraEl) {
-  promptExtraEl.addEventListener('focus', () => {
-    promptExtraEl.classList.add('isFocused');
-  });
-  promptExtraEl.addEventListener('blur', () => {
-    promptExtraEl.classList.remove('isFocused');
   });
 }
 
@@ -1618,13 +1757,85 @@ if (coverFromRagBtn) {
   });
 }
 
+if (migrateCoverTemplateBtn) {
+  migrateCoverTemplateBtn.addEventListener('click', async () => {
+    setError('');
+    try {
+      const ok = await ensureCoverTemplateStructured({ force: true });
+      setSuccess(ok ? 'Шаблон приведён к структуре [COVER_TEMPLATE] + [CONTACTS]' : 'Шаблон уже в нужном формате');
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  });
+}
+
+if (saveCoverTemplateBtn) {
+  saveCoverTemplateBtn.addEventListener('click', async () => {
+    setError('');
+    setSuccess('');
+    let text = String(coverTemplateEl?.value || '').trim();
+    if (text.length < 20) {
+      setError('Шаблон слишком короткий (мин. 20 символов)');
+      return;
+    }
+    if (!isStructuredCoverTemplate(text)) {
+      await ensureCoverTemplateStructured({ force: true });
+      text = String(coverTemplateEl?.value || '').trim();
+    }
+    setButtonBusy(saveCoverTemplateBtn, true, 'Сохранить шаблон в базу', 'Сохранение…');
+    try {
+      await JR_API.ensureWorkspace();
+      await chrome.storage.local.set({ jrCoverTemplate: text });
+      const res = await JR_API.resumeTextCapture({
+        text,
+        title: 'Моё сопроводительное (шаблон)',
+        kind: 'job_experience',
+        category: 'cover_letter',
+      });
+      const contacts = parseProfileOverrides(text);
+      const preview = formatParsedContactsPreview(contacts);
+      const summary = preview
+        ? `Шаблон в базе (id=${res.knowledgeItemId}). Контакты: ${preview}`
+        : `Шаблон сохранён в базу (id=${res.knowledgeItemId})`;
+      setSuccess(summary);
+      await refreshResumeStatus();
+      await refreshSources({
+        highlightIds: collectLinkedIds(res),
+        quiet: true,
+      });
+      showIngestBanner({ addedCount: 1, summary });
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setButtonBusy(saveCoverTemplateBtn, false, 'Сохранить шаблон в базу');
+    }
+  });
+}
+
 (async function init() {
   try {
     await restoreCollapseState();
     bindCollapsePersistence();
     const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra', 'jrRagEdits']);
-    if (coverTemplateEl && savedTpl.jrCoverTemplate) {
-      coverTemplateEl.value = String(savedTpl.jrCoverTemplate);
+    if (ragEditsInput) {
+      ragEditsInput.value = String(savedTpl.jrRagEdits || '');
+    }
+    if (coverTemplateEl) {
+      const savedCover = savedTpl.jrCoverTemplate != null ? String(savedTpl.jrCoverTemplate) : '';
+      if (!savedCover.trim()) {
+        const contacts = parseProfileOverrides(String(savedTpl.jrRagEdits || ''));
+        coverTemplateEl.value = buildStructuredCoverTemplate({ contacts });
+        await chrome.storage.local.set({ jrCoverTemplate: coverTemplateEl.value });
+      } else if (!isStructuredCoverTemplate(savedCover)) {
+        const contacts = {
+          ...parseProfileOverrides(String(savedTpl.jrRagEdits || '')),
+          ...parseProfileOverrides(savedCover),
+        };
+        coverTemplateEl.value = buildStructuredCoverTemplate({ body: savedCover, contacts });
+        await chrome.storage.local.set({ jrCoverTemplate: coverTemplateEl.value });
+      } else {
+        coverTemplateEl.value = savedCover;
+      }
     }
     if (promptExtraEl) {
       const savedExtra = savedTpl.jrPromptExtra != null ? String(savedTpl.jrPromptExtra) : '';
@@ -1632,14 +1843,13 @@ if (coverFromRagBtn) {
         !savedExtra.trim() ||
         savedExtra.trim() === LEGACY_PROMPT_EXTRA.trim() ||
         /^Всегда включай контакты и релевантные ссылки из профиля/.test(savedExtra.trim());
-      promptExtraEl.value = isLegacy ? DEFAULT_PROMPT_EXTRA : savedExtra;
+      const next = isLegacy ? DEFAULT_PROMPT_EXTRA : savedExtra;
+      promptExtraEl.value = next;
+      savedPromptExtra = next;
       if (isLegacy) {
         await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
       }
-    }
-    if (ragEditsInput) {
-      // Local draft only - do not re-fill from KB (saved overrides stay in knowledge base).
-      ragEditsInput.value = String(savedTpl.jrRagEdits || '');
+      syncPromptSaveButton();
     }
     await refreshDriveStatus();
     await refreshAuthHint();

@@ -176,15 +176,18 @@
     </details>
 
     <details class="card collapsible" id="coverTemplateDetails" data-jr-collapse="coverTemplate">
-      <summary>Шаблон письма</summary>
+      <summary>Моё сопроводительное (шаблон)</summary>
       <textarea
         id="coverTemplate"
-        rows="4"
-        placeholder="Вставьте своё письмо - генерация адаптирует под вакансию"
+        rows="8"
+        placeholder="[COVER_TEMPLATE]&#10;Приветствие: …&#10;О себе (1-2 предложения): …&#10;Ключевые факты (bullet): …&#10;CTA: …&#10;&#10;[CONTACTS]&#10;Telegram: @…&#10;Email: …"
       ></textarea>
       <div class="row tight">
-        <button type="button" id="coverFromRagBtn" class="secondary">Взять из базы</button>
+        <button type="button" id="coverFromRagBtn" class="secondary btnCompact">Взять из базы</button>
+        <button type="button" id="saveCoverTemplateBtn" class="secondary btnCompact">Сохранить шаблон в базу</button>
+        <button type="button" id="migrateCoverTemplateBtn" class="secondary btnCompact">Структура шаблона</button>
       </div>
+      <p class="hint tight">Структура [COVER_TEMPLATE] + [CONTACTS] - контакты всегда попадают в отклик.</p>
     </details>
 
     <details class="card collapsible" id="promptExtraDetails" data-jr-collapse="promptExtra">
@@ -196,8 +199,10 @@
         placeholder="Системные правила генерации…"
       ></textarea>
       <div class="row tight">
+        <button type="button" id="savePromptBtn" class="btnCompact" disabled>Сохранить промпт</button>
         <button type="button" id="resetPromptBtn" class="secondary btnCompact">Сбросить</button>
       </div>
+      <p class="hint tight" id="promptExtraMeta">Сохраните после правок - иначе останется предыдущая версия.</p>
     </details>
 
     <footer class="footer">
