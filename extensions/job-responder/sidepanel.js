@@ -759,14 +759,64 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+/** Keep «Отклик / Результат» open and textarea at expanded height after copy. */
+function keepResultPanelExpanded({ wasExpanded = true } = {}) {
+  const genSection = document.getElementById('generateSection');
+  if (genSection) genSection.open = true;
+  if (resultText && wasExpanded) {
+    resultText.classList.add('isExpanded');
+  }
+}
+
 /**
  * Clipboard for Chrome side panel / extension context.
  * Order: select #resultText (user gesture) -> clipboard API -> visible temp textarea
  * -> background offscreen document (MV3 CLIPBOARD reason).
+ * Does not collapse the result panel: restores focus/selection and isExpanded after select().
  */
-async function copyTextToClipboard(text, { sourceEl = null } = {}) {
+async function copyTextToClipboard(text, { sourceEl = null, keepExpanded = false } = {}) {
   const value = String(text || '');
   if (!value) throw new Error('Нечего копировать');
+
+  const wasExpanded =
+    keepExpanded ||
+    Boolean(sourceEl?.classList?.contains('isExpanded')) ||
+    Boolean(resultText?.classList?.contains('isExpanded')) ||
+    document.activeElement === resultText;
+  const prevActive = document.activeElement;
+  const prevSel =
+    resultText && typeof resultText.selectionStart === 'number'
+      ? { start: resultText.selectionStart, end: resultText.selectionEnd }
+      : null;
+
+  const restoreAfterCopy = () => {
+    keepResultPanelExpanded({ wasExpanded });
+    if (resultText && prevSel && typeof resultText.setSelectionRange === 'function') {
+      try {
+        resultText.setSelectionRange(prevSel.start, prevSel.end);
+      } catch (_err) {
+        /* ignore */
+      }
+    }
+    if (
+      prevActive &&
+      prevActive !== resultText &&
+      typeof prevActive.focus === 'function' &&
+      document.contains(prevActive)
+    ) {
+      try {
+        prevActive.focus({ preventScroll: true });
+      } catch (_err) {
+        try {
+          prevActive.focus();
+        } catch (_err2) {
+          /* ignore */
+        }
+      }
+    }
+    // Blur from select()/temp focus may have already removed isExpanded — re-apply.
+    keepResultPanelExpanded({ wasExpanded });
+  };
 
   const tryExecOnEl = (el) => {
     if (!el) return false;
@@ -782,47 +832,51 @@ async function copyTextToClipboard(text, { sourceEl = null } = {}) {
     }
   };
 
-  // 1) Prefer the visible result textarea under the click gesture.
-  if (sourceEl && String(sourceEl.value || '') === value && tryExecOnEl(sourceEl)) {
-    return true;
-  }
-  if (resultText && String(resultText.value || '').trim() === value.trim() && tryExecOnEl(resultText)) {
-    return true;
-  }
-
-  // 2) Async clipboard API (may fail in side_panel without focus/permission).
   try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-      await navigator.clipboard.writeText(value);
+    // 1) Prefer the visible result textarea under the click gesture.
+    if (sourceEl && String(sourceEl.value || '') === value && tryExecOnEl(sourceEl)) {
       return true;
     }
-  } catch (_err) {
-    /* fall through */
-  }
+    if (resultText && String(resultText.value || '').trim() === value.trim() && tryExecOnEl(resultText)) {
+      return true;
+    }
 
-  // 3) Temporary textarea kept in-viewport (off-screen left:-9999 often blocked).
-  const ta = document.createElement('textarea');
-  ta.value = value;
-  ta.setAttribute('readonly', '');
-  ta.setAttribute('aria-hidden', 'true');
-  ta.style.cssText =
-    'position:fixed;inset:0;width:calc(100% - 8px);height:48px;margin:4px;opacity:0.01;z-index:2147483647;';
-  document.body.appendChild(ta);
-  let ok = false;
-  try {
-    ok = tryExecOnEl(ta);
+    // 2) Async clipboard API (may fail in side_panel without focus/permission).
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch (_err) {
+      /* fall through */
+    }
+
+    // 3) Temporary textarea kept in-viewport (off-screen left:-9999 often blocked).
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.setAttribute('aria-hidden', 'true');
+    ta.style.cssText =
+      'position:fixed;inset:0;width:calc(100% - 8px);height:48px;margin:4px;opacity:0.01;z-index:2147483647;';
+    document.body.appendChild(ta);
+    let ok = false;
+    try {
+      ok = tryExecOnEl(ta);
+    } finally {
+      document.body.removeChild(ta);
+    }
+    if (ok) return true;
+
+    // 4) Background -> offscreen document.
+    if (typeof JR_API !== 'undefined' && typeof JR_API.copyTextViaBackground === 'function') {
+      await JR_API.copyTextViaBackground(value);
+      return true;
+    }
+
+    throw new Error('Не удалось скопировать в буфер');
   } finally {
-    document.body.removeChild(ta);
+    restoreAfterCopy();
   }
-  if (ok) return true;
-
-  // 4) Background -> offscreen document.
-  if (typeof JR_API !== 'undefined' && typeof JR_API.copyTextViaBackground === 'function') {
-    await JR_API.copyTextViaBackground(value);
-    return true;
-  }
-
-  throw new Error('Не удалось скопировать в буфер');
 }
 
 function flashCopyFeedback(btn, idleLabel, successLabel = 'Скопировано') {
@@ -2250,18 +2304,27 @@ if (sourcesListEl) {
 genCoverBtn.addEventListener('click', () => runGenerate('cover_letter'));
 genAnswersBtn.addEventListener('click', () => runGenerate('question_answers'));
 if (copyBtn) {
-  copyBtn.addEventListener('click', async () => {
+  // mousedown preventDefault keeps #resultText focused so blur doesn't shrink it before click.
+  copyBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+  });
+  copyBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const text = getResultCopyText();
     if (!isResultCopyable(text)) {
       setError('Нечего копировать - сначала нажмите «Отклик»');
       syncCopyButtonState();
+      keepResultPanelExpanded({ wasExpanded: true });
       return;
     }
     try {
-      await copyTextToClipboard(text, { sourceEl: resultText });
+      await copyTextToClipboard(text, { sourceEl: resultText, keepExpanded: true });
+      keepResultPanelExpanded({ wasExpanded: true });
       flashCopyFeedback(copyBtn, 'Копировать', 'Скопировано');
       setSuccess('Скопировано');
     } catch (err) {
+      keepResultPanelExpanded({ wasExpanded: true });
       setError(String(err.message || err));
     }
   });
@@ -2413,7 +2476,12 @@ if (resultText) {
   resultText.addEventListener('focus', () => {
     resultText.classList.add('isExpanded');
   });
-  resultText.addEventListener('blur', () => {
+  resultText.addEventListener('blur', (e) => {
+    // Don't shrink when focus moves to Copy / other controls inside the result card.
+    const genSection = document.getElementById('generateSection');
+    const next = e.relatedTarget;
+    if (genSection && next && genSection.contains(next)) return;
+    if (resultText.classList.contains('isGenerating')) return;
     resultText.classList.remove('isExpanded');
   });
 }
