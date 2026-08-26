@@ -59,6 +59,8 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 FILE_CAPTURE_BUDGET_SEC = 28.0
 # Soft wall-clock for generate: leave headroom under CF; aim for letter in <25s typical.
 GENERATE_BUDGET_SEC = 38.0
+# Low temperature: honest, RAG-faithful cover letters (less embellishment).
+JR_GENERATE_TEMPERATURE = 0.15
 # Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
 # First attempt is already aggressive - do not start at 6k and only shrink on retry.
 SELECTED_SOURCES_MAX = 40
@@ -2554,11 +2556,11 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 [INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
 
 [RULES]
-1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
+3. В письме: 3-4 коротких факта под вакансию (слова/метрики как в profile/RAG).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
-5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
@@ -2600,7 +2602,7 @@ youtube: https://...
 CONTACTS_LINKS_RULE = (
     "## Контакты: только email/Telegram/телефон. "
     "## Ссылки: все релевантные URL с подписями из template. "
-    "YouTube @ ≠ Telegram. Без приукрашивания уровней (Proficient ≠ C1). "
+    "YouTube @ ≠ Telegram. Без приукрашивания (senior/эксперт/C1 только если в profile). "
     "Без опыта, навыков, smoke URL. Не выдумывай."
 )
 
@@ -2610,43 +2612,78 @@ _CEFR_EMBELLISH_RE = re.compile(
     r"экспертн\w+\s+уровн|fluently?\s+(?:speak|master)"
 )
 
+# Seniority / expertise puffery not grounded in compact profile.
+_SENIORITY_EMBELLISH_RE = re.compile(
+    r"(?i)(?:на\s+уровне\s+)?\b(?:senior|сеньор)\b|"
+    r"уровн\w*\s+(?:senior|сеньор)|"
+    r"\bэксперт(?:н\w+)?\b|"
+    r"\bexperts?\b|"
+    r"\blead[- ]?level\b"
+)
+
 
 def strip_embellished_language_claims(letter: str, profile_blob: str) -> Tuple[str, List[str]]:
-    """Drop/soften bullets that invent CEFR/fluency not present in profile/RAG."""
+    """Drop/soften CEFR/fluency/senior/expert claims not present in profile/RAG."""
     src = (profile_blob or "").lower()
     src_has_cefr = bool(re.search(r"\b(?:c1|c2|b2|b1|a2|a1|cefr|ielts|toefl)\b", src))
-    if src_has_cefr:
-        return letter, []
+    src_has_senior = bool(re.search(r"\b(?:senior|сеньор)\b", src))
+    src_has_expert = bool(re.search(r"\b(?:эксперт|expert)\b", src))
     fixes: List[str] = []
     out_lines: List[str] = []
     for ln in (letter or "").splitlines():
-        if not _CEFR_EMBELLISH_RE.search(ln):
-            out_lines.append(ln)
-            continue
-        # Invented CEFR / "свободно" / advanced fluency
-        if re.search(r"(?i)english|английск", ln) and "proficient" in src:
-            replacement = (
-                "3. **English (Proficient)** - Английский на уровне Proficient "
-                "(формулировка как в профиле; без CEFR)."
-            )
-            # Keep list numbering if present
-            num = re.match(r"^(\s*\d+\.\s*)", ln)
-            if num:
-                replacement = num.group(1) + replacement.split(". ", 1)[-1]
-            out_lines.append(replacement)
-            fixes.append("rewrote_proficient_no_cefr")
-            continue
-        if re.search(r"(?i)english|английск|язык", ln):
-            fixes.append("dropped_embellished_language_bullet")
-            continue
-        # Non-language CEFR noise — strip tokens only
-        soft = _CEFR_EMBELLISH_RE.sub("", ln)
-        soft = re.sub(r"\s{2,}", " ", soft).strip(" -–—*")
-        if soft:
-            out_lines.append(soft)
-            fixes.append("stripped_cefr_tokens")
-        else:
-            fixes.append("dropped_embellished_line")
+        line = ln
+        # --- CEFR / fluency ---
+        if _CEFR_EMBELLISH_RE.search(line) and not src_has_cefr:
+            if re.search(r"(?i)english|английск", line) and "proficient" in src:
+                replacement = (
+                    "3. **English (Proficient)** - Английский на уровне Proficient "
+                    "(формулировка как в профиле; без CEFR)."
+                )
+                num = re.match(r"^(\s*\d+\.\s*)", line)
+                if num:
+                    replacement = num.group(1) + replacement.split(". ", 1)[-1]
+                out_lines.append(replacement)
+                fixes.append("rewrote_proficient_no_cefr")
+                continue
+            if re.search(r"(?i)english|английск|язык", line):
+                fixes.append("dropped_embellished_language_bullet")
+                continue
+            soft = _CEFR_EMBELLISH_RE.sub("", line)
+            soft = re.sub(r"\s{2,}", " ", soft).strip(" -–—*")
+            if soft:
+                line = soft
+                fixes.append("stripped_cefr_tokens")
+            else:
+                fixes.append("dropped_embellished_line")
+                continue
+
+        # --- senior / эксперт not in profile ---
+        if _SENIORITY_EMBELLISH_RE.search(line):
+            scrubbed = line
+            if not src_has_senior:
+                scrubbed = re.sub(
+                    r"(?i)(?:на\s+уровне\s+)?\b(?:senior|сеньор)\b|уровн\w*\s+(?:senior|сеньор)",
+                    "",
+                    scrubbed,
+                )
+            if not src_has_expert:
+                scrubbed = re.sub(r"(?i)\bэксперт(?:н\w+)?\b|\bexperts?\b", "", scrubbed)
+            if not src_has_senior:
+                scrubbed = re.sub(r"(?i)\blead[- ]?level\b", "", scrubbed)
+            scrubbed = re.sub(r"\s{2,}", " ", scrubbed)
+            scrubbed = re.sub(r"\s+([,.;:])", r"\1", scrubbed)
+            scrubbed = scrubbed.strip(" -–—*")
+            # Drop bullet if only embellishment remained (too short after scrub)
+            body = re.sub(r"^\s*\d+\.\s*", "", scrubbed)
+            body = re.sub(r"^\*\*[^*]+\*\*\s*-?\s*", "", body).strip()
+            if scrubbed != line:
+                fixes.append("stripped_seniority_embellish")
+            if len(body) < 12:
+                fixes.append("dropped_embellished_seniority_line")
+                continue
+            line = scrubbed
+
+        out_lines.append(line)
     return "\n".join(out_lines), fixes
 
 
@@ -3974,7 +4011,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         return {
             "ok": True,
             "prompt": ULTRA_SHORT_SYSTEM_PROMPT,
-            "promptVersion": "ultra-short-no-ai-slop-v1",
+            "promptVersion": "ultra-short-honesty-v2",
             "linksBlock": DEFAULT_LINKS_BLOCK,
             "canonicalLinks": list(DEFAULT_CANONICAL_LINKS),
         }
@@ -5173,7 +5210,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         openai_chat_completions_generic,
                         t_cap,
                         messages=messages,
-                        temperature=0.35,
+                        temperature=JR_GENERATE_TEMPERATURE,
                         max_tokens_override=max_tokens,
                         **kwargs,
                     )

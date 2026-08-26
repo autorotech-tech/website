@@ -188,11 +188,11 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 [INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
 
 [RULES]
-1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
+3. В письме: 3-4 коротких факта под вакансию (слова/метрики как в profile/RAG).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
-5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
@@ -710,6 +710,49 @@ function escapeHtml(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Clipboard for Chrome side panel / extension context.
+ * Prefer navigator.clipboard.writeText; fallback to execCommand + offscreen textarea.
+ */
+async function copyTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) throw new Error('Нечего копировать');
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (_err) {
+    /* fall through to execCommand */
+  }
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.setAttribute('readonly', '');
+  ta.setAttribute('aria-hidden', 'true');
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, value.length);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } finally {
+    document.body.removeChild(ta);
+  }
+  if (!ok) throw new Error('Не удалось скопировать в буфер');
+  return true;
+}
+
+function flashCopyFeedback(btn, idleLabel, successLabel = 'Скопировано') {
+  if (!btn) return;
+  const prev = idleLabel || btn.textContent || 'Копировать';
+  btn.textContent = successLabel;
+  setTimeout(() => {
+    btn.textContent = prev;
+  }, 1500);
 }
 
 function formatUpdatedAt(iso) {
@@ -1309,8 +1352,13 @@ function renderQaTable(rows) {
       const row = list[idx];
       const text = String(row?.answer || '').trim() || String(row?.question || '');
       try {
-        await navigator.clipboard.writeText(text);
-        setSuccess('Ответ скопирован');
+        await copyTextToClipboard(text);
+        const prev = btn.textContent;
+        btn.textContent = 'Скопировано';
+        setSuccess('Скопировано');
+        setTimeout(() => {
+          btn.textContent = prev || 'Копировать ответ';
+        }, 1500);
       } catch (err) {
         setError(String(err.message || err));
       }
@@ -2063,9 +2111,17 @@ genCoverBtn.addEventListener('click', () => runGenerate('cover_letter'));
 genAnswersBtn.addEventListener('click', () => runGenerate('question_answers'));
 copyBtn.addEventListener('click', async () => {
   const text = String(resultText.value || '').trim();
-  if (!text) return;
-  await navigator.clipboard.writeText(text);
-  setSuccess('Скопировано в буфер');
+  if (!text) {
+    setError('Нечего копировать');
+    return;
+  }
+  try {
+    await copyTextToClipboard(text);
+    flashCopyFeedback(copyBtn, 'Копировать', 'Скопировано');
+    setSuccess('Скопировано');
+  } catch (err) {
+    setError(String(err.message || err));
+  }
 });
 
 if (copyAllQaBtn) {
@@ -2081,8 +2137,9 @@ if (copyAllQaBtn) {
       .filter(Boolean)
       .join('\n\n');
     try {
-      await navigator.clipboard.writeText(text || String(resultText.value || '').trim());
-      setSuccess('Все ответы скопированы');
+      await copyTextToClipboard(text || String(resultText.value || '').trim());
+      flashCopyFeedback(copyAllQaBtn, 'Копировать все', 'Скопировано');
+      setSuccess('Скопировано');
     } catch (err) {
       setError(String(err.message || err));
     }

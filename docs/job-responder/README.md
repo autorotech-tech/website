@@ -2,6 +2,11 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.6
+
+- **Копировать**: `copyTextToClipboard` в side panel (`navigator.clipboard.writeText` + fallback `execCommand` / offscreen textarea) + краткий feedback «Скопировано»; permission `clipboardWrite`.
+- **Честность отклика**: `JR_GENERATE_TEMPERATURE = 0.15` (openmodel / gemini / glm + File Search); усилен anti-embellish в ultra-short prompt; heuristic scrub `senior` / `эксперт` / CEFR если нет в profile; `hh_format_text` по-прежнему после rewrite ## Контакты / ## Ссылки.
+
 ## v0.9.5
 
 - **Кэш релевантности списка** (`jrRelevanceCache` в `chrome.storage.local`): после «Оценить список» score по каждой вакансии сохраняется; при открытии `/vacancy/<id>` панель сразу показывает «Релевантность из списка» (зелёный индикатор) **без** вызова `/relevance`. TTL 7 дней. «Оценить предложение» перезаписывает кэш свежим score.

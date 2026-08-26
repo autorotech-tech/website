@@ -622,7 +622,7 @@ def generate_with_file_search(
         "tools": [{"fileSearch": {"fileSearchStoreNames": [store_name]}}],
         "generationConfig": _gemini_native_generation_config(
             model_use,
-            temperature=0.35,
+            temperature=0.15,
             maxOutputTokens=1200 if mode == "question_answers" else 800,
         ),
     }

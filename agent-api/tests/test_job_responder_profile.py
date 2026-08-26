@@ -666,6 +666,20 @@ def test_strip_cefr_embellish_when_profile_says_proficient():
     assert fixes
 
 
+def test_strip_senior_embellish_when_not_in_profile():
+    letter = (
+        "1. **SQL и Python для самостоятельного анализа** - работаю с данными на уровне senior.\n"
+        "2. **Опыт с рекомендательными системами** - разрабатывал и тестировал пайплайны.\n"
+        "3. **Эксперт по SEO** - ведущий эксперт рынка."
+    )
+    profile = "Skills: n8n, SEO, автоматизация; Python scripting for scrapers"
+    out, fixes = strip_embellished_language_claims(letter, profile)
+    assert "senior" not in out.lower()
+    assert "эксперт" not in out.lower()
+    assert "рекомендательными" in out  # factual bullet kept
+    assert any("seniority" in f or "embellish" in f for f in fixes)
+
+
 def test_hh_format_text_no_ai_slop():
     raw = (
         "«Процесс → результат» — автоматизация. "
@@ -685,15 +699,18 @@ def test_hh_format_text_no_ai_slop():
     # Contacts/links survive finalize + scrub
     letter = (
         "В современном быстро меняющемся мире я готов.\n\n"
+        "1. SQL на уровне senior - выдумка.\n\n"
         "## Контакты\n- Telegram: @wrong\n"
     )
     final = finalize_cover_letter_contacts_and_links(
         letter,
         contacts={"telegram": "@autoro_tech", "email": "a@b.com"},
         links=[{"label": "резюме", "url": "https://autoro.tech/resume/", "value": "https://autoro.tech/resume/"}],
+        profile_blob="Skills: n8n, SEO",
     )
     assert "—" not in final
     assert "В современном быстро меняющемся мире" not in final
+    assert "senior" not in final.lower()
     assert "@autoro_tech" in final
     assert "https://autoro.tech/resume/" in final
     assert "## Контакты" in final and "## Ссылки" in final

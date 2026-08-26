@@ -12,11 +12,11 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 [INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
 
 [RULES]
-1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
+3. В письме: 3-4 коротких факта под вакансию (слова/метрики как в profile/RAG).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок. Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
-5. Не приукрашивай уровни (Proficient ≠ C1).
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2). Proficient ≠ C1. Зеркаль RAG, не усиливай.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
@@ -25,9 +25,11 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 ...
 ```
 
+Generate temperature: `JR_GENERATE_TEMPERATURE = 0.15` (openmodel / gemini / glm + File Search).
+
 ## HH + no-ai-slop post-process
 
-Backend `hh_format_text` (вызывается из `finalize_cover_letter_contacts_and_links` и QA answers):
+Backend `hh_format_text` (вызывается из `finalize_cover_letter_contacts_and_links` **после** rewrite ## Контакты / ## Ссылки, и в QA answers):
 
 | Transform | Result |
 |---|---|
@@ -36,6 +38,7 @@ Backend `hh_format_text` (вызывается из `finalize_cover_letter_conta
 | `«»` / curly quotes | ASCII `"` |
 | RU/EN cover fluff phrases | stripped |
 | EN banned words (word-boundary): delve, leverage, utilize, cutting-edge, … | stripped |
+| `strip_embellished_language_claims` (до contacts rewrite) | CEFR / senior / эксперт без опоры в profile -> soften/drop |
 
 Skill source: [autorotech-tech/no-ai-slop](https://github.com/autorotech-tech/no-ai-slop) (локально `.cursor/skills/no-ai-slop`). Контакты/ссылки не ломаем - rewrite ## Контакты / ## Ссылки идёт до финального scrub.
 
