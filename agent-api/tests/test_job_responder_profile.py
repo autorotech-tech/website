@@ -10,11 +10,15 @@ from job_responder import (
     JobResponderVacancyStructured,
     cap_rag_items,
     collect_generate_contacts,
+    collect_generate_links,
     ensure_contacts_in_cover_letter,
+    ensure_links_in_cover_letter,
     extract_contacts_from_cover_template,
     extract_contacts_from_rag_edits,
+    extract_labeled_links_from_text,
     extract_resume_profile,
     extract_urls_from_text,
+    finalize_cover_letter_contacts_and_links,
     format_structured_overrides_document,
     merge_profiles_from_rows,
     near_duplicate_hash,
@@ -366,3 +370,78 @@ def test_semantic_hh_phrases_without_english_acronyms():
         assert phrase not in missing_joined
     assert out.get("matchedSemantic") or out.get("semanticMatches")
     assert out.get("semanticGrid", {}).get("clusterCount", 0) >= 3
+
+
+_SMOKE_LINKS_BLOCK = """## Ссылки
+резюме: https://autoro.tech/resume/
+youtube: https://www.youtube.com/@iq_boosted
+профиль на форуме по интернет маркетингу: https://www.blackhatworld.com/members/vlad_x.1811065/
+видео-демо процессов e-commerce: https://youtu.be/v2_zmJrlMks
+видео-демо рассуждение: Тестирование гипотезы "Планировщик путешествий" https://youtu.be/AJtcYfItspM
+"""
+
+
+def test_extract_labeled_links_five_urls():
+    links = extract_labeled_links_from_text(_SMOKE_LINKS_BLOCK)
+    urls = {lk["url"] for lk in links}
+    assert "https://autoro.tech/resume/" in urls
+    assert "https://www.youtube.com/@iq_boosted" in urls
+    assert "https://www.blackhatworld.com/members/vlad_x.1811065/" in urls
+    assert "https://youtu.be/v2_zmJrlMks" in urls
+    assert "https://youtu.be/AJtcYfItspM" in urls
+    assert not any("example.com" in u or "jr-smoke" in u for u in urls)
+
+
+def test_ensure_links_in_letter_from_overrides_and_instructions():
+    overrides = extract_contacts_from_rag_edits(_SMOKE_LINKS_BLOCK)
+    assert overrides.get("резюме") or any("autoro.tech/resume" in str(v) for v in overrides.values())
+    links = collect_generate_links(
+        cover_template="[CONTACTS]\nTelegram: @autoro_tech\nEmail: autoro.tech@gmail.com\n",
+        overrides=overrides,
+        merged={"rag_edits": _SMOKE_LINKS_BLOCK},
+        prompt_extra=_SMOKE_LINKS_BLOCK,
+    )
+    urls = [lk["url"] for lk in links]
+    for need in (
+        "https://autoro.tech/resume/",
+        "https://www.youtube.com/@iq_boosted",
+        "https://www.blackhatworld.com/members/vlad_x.1811065/",
+        "https://youtu.be/v2_zmJrlMks",
+        "https://youtu.be/AJtcYfItspM",
+    ):
+        assert need in urls
+    letter = "# ОТКЛИК\n\nПривет.\n\n## Контакты\n- Telegram: @autoro_tech\n"
+    contacts = collect_generate_contacts(
+        cover_template="[CONTACTS]\nTelegram: @autoro_tech\nEmail: a@b.com\n",
+        overrides=overrides,
+        merged={},
+    )
+    out = finalize_cover_letter_contacts_and_links(letter, contacts=contacts, links=links)
+    assert "## Ссылки" in out
+    assert "## Контакты" in out
+    for need in (
+        "https://autoro.tech/resume/",
+        "https://www.youtube.com/@iq_boosted",
+        "https://www.blackhatworld.com/members/vlad_x.1811065/",
+        "https://youtu.be/v2_zmJrlMks",
+        "https://youtu.be/AJtcYfItspM",
+    ):
+        assert need in out
+    assert "jr-smoke" not in out
+    assert "example.com" not in out
+
+
+def test_links_from_prompt_extra_only():
+    links = collect_generate_links(prompt_extra=_SMOKE_LINKS_BLOCK)
+    assert len(links) >= 5
+    out = ensure_links_in_cover_letter("Текст письма без ссылок.", links)
+    assert out.count("https://autoro.tech/resume/") == 1
+    assert "## Ссылки" in out
+
+
+def test_structured_overrides_document_keeps_links_section():
+    parsed = extract_contacts_from_rag_edits(_SMOKE_LINKS_BLOCK)
+    doc = format_structured_overrides_document(_SMOKE_LINKS_BLOCK, parsed)
+    assert "## Ссылки" in doc
+    assert "autoro.tech/resume" in doc
+    assert "youtu.be/v2_zmJrlMks" in doc

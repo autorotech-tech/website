@@ -15,7 +15,7 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
-4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон/портфолио/GitHub/LinkedIn/сайт из template/contacts/profile. Без опыта, навыков, описаний, smoke/test URL (example.com, jr-smoke).
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок. Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
 5. ASCII " и дефис -. Русский, если не просили иначе.
 
 [OUT cover_letter]
@@ -46,6 +46,11 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 - Email: ...
 (только известные; без пустых строк и без лишнего текста)
 
+## Ссылки
+резюме: https://...
+youtube: https://...
+(все известные релевантные URL с подписями; не выдумывай)
+
 [OUT qa] [{"question":"...","answer":"..."}]
 ```
 
@@ -66,15 +71,16 @@ LinkedIn: ...
 GitHub: ...
 ```
 
-## Contacts post-process (backend)
+## Contacts + links post-process (backend)
 
-`collect_generate_contacts` + `ensure_contacts_in_cover_letter`:
+`collect_generate_contacts` + `collect_generate_links` + `finalize_cover_letter_contacts_and_links`:
 
-- Priority: cover_template `[CONTACTS]` > `profileOverrides` > profile fields/links
-- Only telegram / email / phone / portfolio / GitHub / LinkedIn / website
-- Filter smoke/test URLs: `example.com`, `jr-smoke`, `localhost`, …
-- If LLM dumped experience/skills under `## Контакты` → strip and rebuild from known contacts
-- Never invent contacts; never append skill/experience bullets
+- Priority contacts: cover_template `[CONTACTS]` > `profileOverrides` > profile
+- Links sources: `## Ссылки` / labeled `label: url` from template, Правки профиля, инструкции генерации, `rag_edits`, profile.links
+- Contacts = Telegram / email / phone (+ classic portfolio/GitHub/LinkedIn/site if labeled as such)
+- Links = резюме, youtube, demos, forum, … (any non-smoke http URL with label)
+- Filter smoke/test URLs only: `example.com`, `jr-smoke`, `localhost`, …
+- Never invent contacts or URLs
 
 ## Fuller reference (not runtime default)
 

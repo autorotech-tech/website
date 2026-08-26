@@ -13,6 +13,72 @@ let vacancyExtractTimer = null;
 let vacancyExtractSeq = 0;
 
 const BTN_EVALUATE_LABEL = 'Оценить предложение';
+const BTN_SCORE_LIST_LABEL = 'Оценить список';
+const scoreListBtn = document.getElementById('scoreListBtn');
+const listScoreMeta = document.getElementById('listScoreMeta');
+
+function setListScoreMeta(text, { show = true } = {}) {
+  if (!listScoreMeta) return;
+  listScoreMeta.hidden = !show || !text;
+  listScoreMeta.textContent = text || '';
+}
+
+async function scoreVacancyList() {
+  setError('');
+  setSuccess('');
+  setListScoreMeta('Читаю карточки на странице…');
+  setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Список…');
+  try {
+    await JR_API.ensureWorkspace();
+    const listResp = await JR_API.fetchVacancyListFromTab();
+    const vacancies = Array.isArray(listResp.vacancies) ? listResp.vacancies : [];
+    const tabId = listResp.tabId;
+    if (!vacancies.length) {
+      setListScoreMeta(
+        listResp.pageKind === 'not_search_list'
+          ? 'Откройте страницу поиска hh.ru (/search/vacancy), затем нажмите снова.'
+          : 'На странице не найдено карточек вакансий.'
+      );
+      setError('Список вакансий пуст - откройте поиск hh.ru');
+      return;
+    }
+    setListScoreMeta(`Оцениваю ${vacancies.length} вакансий…`);
+    const selectedSourceIds = getSelectedSourceIds();
+    const batch = await JR_API.scoreRelevanceBatch({ vacancies, selectedSourceIds });
+    const scores = Array.isArray(batch.scores) ? batch.scores : [];
+    setListScoreMeta(`Вставляю бейджи (${scores.length})…`);
+    const inj = await JR_API.injectListBadges({ scores, tabId });
+    const avg =
+      scores.length > 0
+        ? Math.round(scores.reduce((s, r) => s + (Number(r.score) || 0), 0) / scores.length)
+        : 0;
+    const top = [...scores].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+    const summary = `Список: ${scores.length} оценено, бейджей: ${inj.injected || scores.length}, среднее ${avg}%${
+      top ? `, топ ${top.score}% - ${(top.title || '').slice(0, 40)}` : ''
+    }. Без LLM.`;
+    setListScoreMeta(summary);
+    setSuccess(summary);
+    if (relevanceBox && scores[0]) {
+      renderRelevance({
+        score: scores[0].score,
+        matched: scores[0].matched || [],
+        missing: scores[0].missing || [],
+        rationale: [`Пакетная оценка списка (${scores.length} вакансий)`],
+      });
+    }
+  } catch (err) {
+    setError(String(err.message || err));
+    setListScoreMeta('');
+  } finally {
+    setButtonBusy(scoreListBtn, false, BTN_SCORE_LIST_LABEL);
+  }
+}
+
+if (scoreListBtn) {
+  scoreListBtn.addEventListener('click', () => {
+    scoreVacancyList().catch((err) => setError(String(err.message || err)));
+  });
+}
 
 /** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md */
 const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
@@ -23,7 +89,7 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 1. Не выдумывай опыт, метрики, контакты, URL. Нет факта -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
-4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон/портфолио/GitHub/LinkedIn/сайт из template/contacts/profile. Без опыта, навыков, описаний, smoke/test URL (example.com, jr-smoke).
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок (резюме, youtube, демо…). Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
 5. ASCII " и дефис -. Русский, если не просили иначе.
 
 [OUT cover_letter]
@@ -53,6 +119,11 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 - Telegram: ...
 - Email: ...
 (только известные; без пустых строк и без лишнего текста)
+
+## Ссылки
+резюме: https://...
+youtube: https://...
+(все известные релевантные URL с подписями; не выдумывай)
 
 [OUT qa] [{"question":"...","answer":"..."}]`;
 
@@ -189,7 +260,7 @@ function parseProfileOverrides(text) {
     if (/phone|tel|телефон|мобильн/.test(k)) return 'phone';
     if (/github/.test(k)) return 'github';
     if (/linkedin/.test(k)) return 'linkedin';
-    if (/portfolio|портфолио|ссылка|website|сайт|\blink\b|\burl\b/.test(k)) return 'link';
+    if (/portfolio|портфолио|website|сайт|\blink\b|\burl\b|^ссылка$/.test(k)) return 'link';
     return k.slice(0, 40);
   };
   const cleanVal = (v) =>
@@ -198,12 +269,19 @@ function parseProfileOverrides(text) {
       .replace(/\s*(?:->|→)\s*$/u, '')
       .replace(/^[,;|\s]+|[,;|\s]+$/g, '')
       .slice(0, 500);
+  const extractUrl = (v) => {
+    const s = String(v || '').trim();
+    if (/^https?:\/\//i.test(s)) return s.split(/\s+/)[0].replace(/[).,;"']+$/, '');
+    const m = s.match(/https?:\/\/[^\s|>,"'\]]+/i);
+    return m ? m[0].replace(/[).,;"']+$/, '') : '';
+  };
 
   const chunks = raw.split(/[|\n]+/);
   for (const chunk of chunks) {
-    const m = String(chunk).match(/^\s*([^:]{1,80})\s*:\s*(.+?)\s*$/);
+    const m = String(chunk).match(/^\s*[-*•]?\s*([^:]{1,120})\s*:\s*(.+?)\s*$/);
     if (!m) continue;
-    const key = canonKey(m[1]);
+    const rawKey = String(m[1] || '').trim();
+    const key = canonKey(rawKey);
     let val = cleanVal(m[2]);
     if (!key || !val) continue;
     if (/всегда включай|не выдумывай|переопределения пишите/i.test(key + ' ' + val) && val.length > 80) {
@@ -217,6 +295,16 @@ function parseProfileOverrides(text) {
     if (key === 'email') {
       const em = val.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
       if (em) out.email = em[0];
+      continue;
+    }
+    const url = extractUrl(val);
+    if (url && !/example\.com|jr-smoke|localhost/i.test(url)) {
+      // Keep Russian labels (резюме, youtube, демо…) for ## Ссылки
+      const label =
+        key === 'link' || key === 'github' || key === 'linkedin' || key === 'portfolio'
+          ? key
+          : rawKey.slice(0, 40);
+      out[label] = url;
       continue;
     }
     if (key.length <= 40 && val.length <= 500) out[key] = val;

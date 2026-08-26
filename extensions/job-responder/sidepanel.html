@@ -30,7 +30,17 @@
           >
             Оценить предложение
           </button>
+          <button
+            type="button"
+            id="scoreListBtn"
+            class="secondary"
+            title="Оценить все карточки на странице поиска hh.ru и показать % на карточках"
+            aria-label="Оценить список вакансий на странице поиска"
+          >
+            Оценить список
+          </button>
         </div>
+        <p class="hint tight" id="listScoreMeta" hidden></p>
         <div id="relevanceBox" class="relevanceBox" hidden></div>
         <label class="field">
           <span>Описание вакансии</span>
@@ -172,7 +182,7 @@
           id="ragEditsInput"
           class="growOnFocus"
           rows="3"
-          placeholder="Telegram: @autoro_tech&#10;email: you@example.com"
+          placeholder="Telegram: @autoro_tech&#10;email: you@mail.com&#10;&#10;## Ссылки&#10;резюме: https://autoro.tech/resume/&#10;youtube: https://www.youtube.com/@iq_boosted"
         ></textarea>
       </label>
       <div class="row tight">

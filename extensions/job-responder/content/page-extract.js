@@ -865,7 +865,213 @@
     };
   }
 
+  function isHhSearchListPage() {
+    const path = String(location.pathname || '');
+    return /\/search\/vacancy/i.test(path) || /\/vacancies/i.test(path);
+  }
+
+  function absoluteUrl(href) {
+    try {
+      return new URL(href, location.origin).href;
+    } catch {
+      return String(href || '');
+    }
+  }
+
+  function vacancyIdFromUrl(url) {
+    const m = String(url || '').match(/\/vacancy\/(\d+)/);
+    return m ? m[1] : '';
+  }
+
+  /** HH /search/vacancy cards for batch relevance (no LLM). */
+  function extractVacancyList() {
+    if (!isHhSearchListPage()) {
+      return { pageKind: 'not_search_list', vacancies: [] };
+    }
+    const cards = Array.from(
+      document.querySelectorAll(
+        '[data-qa="vacancy-serp__vacancy"], [data-qa="vacancy-serp__vacancy_standard"], ' +
+          '[data-qa="serp-item__vacancy"], div.serp-item, [class*="vacancy-card"]'
+      )
+    );
+    const seen = new Set();
+    const vacancies = [];
+    for (const card of cards) {
+      const titleEl =
+        card.querySelector(
+          '[data-qa="serp-item__title-text"], [data-qa="serp-item__title"] span, a[data-qa="serp-item__title"], a[data-qa="vacancy-serp__vacancy-title"]'
+        ) || card.querySelector('a[href*="/vacancy/"]');
+      const linkEl =
+        card.querySelector('a[data-qa="serp-item__title"], a[href*="/vacancy/"]') || titleEl?.closest?.('a');
+      const href = absoluteUrl(linkEl?.getAttribute?.('href') || titleEl?.getAttribute?.('href') || '');
+      const id = vacancyIdFromUrl(href);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const title = textOf(titleEl) || textOf(linkEl) || `Вакансия ${id}`;
+      const company = textOf(
+        card.querySelector(
+          '[data-qa="vacancy-serp__vacancy-employer"], [data-qa="vacancy-serp__vacancy-employer-text"], a[data-qa="vacancy-serp__vacancy-employer"]'
+        )
+      );
+      const salary = textOf(
+        card.querySelector(
+          '[data-qa="vacancy-serp__vacancy-compensation"], [data-qa="vacancy-salary"], [class*="compensation"]'
+        )
+      );
+      const snippet = textOf(
+        card.querySelector(
+          '[data-qa="vacancy-serp__vacancy_snippet"], [data-qa="vacancy-serp__vacancy-snippet"], ' +
+            '[data-qa="vacancy-serp__vacancy_snippet_requirement"], [data-qa="responsibility-snippet"], ' +
+            '[class*="vacancy-snippet"], [class*="g-user-content"]'
+        )
+      );
+      const textBits = [title, company, salary, snippet].filter(Boolean).join('\n');
+      vacancies.push({
+        id,
+        title: title.slice(0, 500),
+        company: company.slice(0, 300),
+        salary: salary.slice(0, 200),
+        text: textBits.slice(0, 4000),
+        description: textBits.slice(0, 4000),
+        url: href || `https://hh.ru/vacancy/${id}`,
+      });
+      card.setAttribute('data-jr-vacancy-id', id);
+    }
+    return { pageKind: 'hh_search_list', vacancies };
+  }
+
+  function ensureBadgeStyles() {
+    if (document.getElementById('jr-relevance-badge-style')) return;
+    const style = document.createElement('style');
+    style.id = 'jr-relevance-badge-style';
+    style.textContent = `
+      .jr-relevance-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.4;
+        white-space: nowrap;
+        vertical-align: middle;
+        border: 1px solid transparent;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      .jr-relevance-badge[data-score-tier="high"] {
+        background: #dcfce7;
+        color: #166534;
+        border-color: #86efac;
+      }
+      .jr-relevance-badge[data-score-tier="mid"] {
+        background: #fef9c3;
+        color: #854d0e;
+        border-color: #fde047;
+      }
+      .jr-relevance-badge[data-score-tier="low"] {
+        background: #fee2e2;
+        color: #991b1b;
+        border-color: #fca5a5;
+      }
+      .jr-relevance-badge-wrap {
+        display: inline-flex;
+        align-items: center;
+        float: right;
+        margin: 2px 0 2px 8px;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+
+  function scoreTier(score) {
+    const n = Number(score) || 0;
+    if (n >= 70) return 'high';
+    if (n >= 40) return 'mid';
+    return 'low';
+  }
+
+  function findCardByVacancyId(id) {
+    const sid = String(id || '');
+    if (!sid) return null;
+    const marked = document.querySelector(`[data-jr-vacancy-id="${sid}"]`);
+    if (marked) return marked;
+    const link = document.querySelector(`a[href*="/vacancy/${sid}"]`);
+    return (
+      link?.closest?.('[data-qa="vacancy-serp__vacancy"], [data-qa="serp-item__vacancy"], div.serp-item') ||
+      link?.closest?.('[class*="vacancy"]') ||
+      null
+    );
+  }
+
+  /** Inject / update relevance % badge on the right side of each HH list card. */
+  function injectRelevanceBadges(scores) {
+    ensureBadgeStyles();
+    let injected = 0;
+    for (const row of scores || []) {
+      const id = String(row?.id || '').trim();
+      if (!id) continue;
+      const card = findCardByVacancyId(id);
+      if (!card) continue;
+      card.setAttribute('data-jr-vacancy-id', id);
+      let wrap = card.querySelector('.jr-relevance-badge-wrap');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'jr-relevance-badge-wrap';
+        const header =
+          card.querySelector('[data-qa="serp-item__title"], [class*="serp-item__title"], h2, h3') ||
+          card.firstElementChild ||
+          card;
+        if (header && header !== card) {
+          header.appendChild(wrap);
+        } else {
+          card.insertBefore(wrap, card.firstChild);
+        }
+      }
+      let badge = wrap.querySelector('.jr-relevance-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'jr-relevance-badge';
+        wrap.appendChild(badge);
+      }
+      const score = Math.round(Number(row.score) || 0);
+      badge.textContent = `${score}%`;
+      badge.title = `Релевантность ${score}`;
+      badge.setAttribute('aria-label', `Релевантность ${score}`);
+      badge.setAttribute('data-score-tier', scoreTier(score));
+      injected += 1;
+    }
+    return injected;
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === 'JR_EXTRACT_VACANCY_LIST') {
+      try {
+        const list = extractVacancyList();
+        sendResponse({
+          ok: true,
+          vacancies: list.vacancies,
+          pageKind: list.pageKind,
+          count: list.vacancies.length,
+          url: location.href,
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err?.message || err) });
+      }
+      return true;
+    }
+
+    if (message?.type === 'JR_INJECT_RELEVANCE_BADGES') {
+      try {
+        const n = injectRelevanceBadges(message.scores || []);
+        sendResponse({ ok: true, injected: n });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err?.message || err) });
+      }
+      return true;
+    }
+
     if (message?.type !== 'JR_EXTRACT_VACANCY') return false;
     try {
       const vacancy = extractVacancy();

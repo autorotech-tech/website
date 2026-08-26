@@ -9,6 +9,11 @@ Chrome MV3 extension: персонализированные отклики с �
 - Без имён моделей и слова RAG в user-visible labels.
 - Результат: focus -> ~2/3 высоты панели.
 
+## v0.9.0
+
+- **## Ссылки** в отклике: post-process после LLM собирает labeled URLs из `[CONTACTS]` / `## Ссылки`, правок профиля, инструкций генерации и KB. Контакты (Telegram/email/phone) отдельно от ссылок (резюме, youtube, демо, форум…). Фильтр только smoke (`example.com`, `jr-smoke`, localhost) - autoro.tech / youtube / youtu.be / blackhatworld OK.
+- **Оценить список**: на `/search/vacancy` парсит все карточки, `POST /relevance/batch` (semantic score, 0 LLM), бейджи `%` на карточках HH.
+
 ## Установка
 
 1. Chrome -> `chrome://extensions` -> Load unpacked
@@ -169,6 +174,7 @@ Chrome MV3 extension: персонализированные отклики с �
 | POST | `/api/v1/job-responder/resume/link-capture` |
 | POST | `/api/v1/job-responder/resume/drive-import` |
 | POST | `/api/v1/job-responder/relevance` |
+| POST | `/api/v1/job-responder/relevance/batch` (список карточек HH search) |
 | POST | `/api/v1/job-responder/generate` (`mode`: `cover_letter` \| `qa` \| `question_answers`; `questions` optional; `coverTemplate` / `baseLetter` optional; `useGeminiRag` optional) |
 | GET | `/api/v1/job-responder/gemini-rag/status?workspaceId=` |
 | POST | `/api/v1/job-responder/gemini-rag/sync` (`workspaceId`, `poll`) |

@@ -474,6 +474,55 @@ const JR_API = (() => {
     });
   }
 
+  async function scoreRelevanceBatch({ vacancies = [], selectedSourceIds = [] }) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/relevance/batch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workspaceId, vacancies, selectedSourceIds }),
+      timeoutMs: 60000,
+      errorKind: 'relevance',
+      retries: 1,
+    });
+  }
+
+  function fetchVacancyListFromTab() {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'JR_GET_VACANCY_LIST' }, (resp) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message || 'Не удалось прочитать список'));
+          return;
+        }
+        if (!resp?.ok) {
+          reject(new Error(resp?.error || 'Список вакансий не найден'));
+          return;
+        }
+        resolve(resp);
+      });
+    });
+  }
+
+  function injectListBadges({ scores, tabId } = {}) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'JR_INJECT_LIST_BADGES', scores: scores || [], tabId },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message || 'Не удалось вставить бейджи'));
+            return;
+          }
+          if (!resp?.ok) {
+            reject(new Error(resp?.error || 'Inject failed'));
+            return;
+          }
+          resolve(resp);
+        }
+      );
+    });
+  }
+
   async function geminiRagStatus() {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
@@ -617,11 +666,13 @@ const JR_API = (() => {
     driveImport,
     ensureWorkspace,
     fetchVacancyFromTab,
+    fetchVacancyListFromTab,
     geminiRagStatus,
     geminiRagSync,
     generateResponse,
     getApiBase,
     getWorkspaceId,
+    injectListBadges,
     isTestMode,
     listSources,
     logout,
@@ -632,6 +683,7 @@ const JR_API = (() => {
     resumeTextCapture,
     resumeLinkCapture,
     scoreRelevance,
+    scoreRelevanceBatch,
     setWorkspaceId,
   };
 })();

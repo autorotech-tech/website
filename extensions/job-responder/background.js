@@ -43,6 +43,33 @@ function extractFromTab(tabId, sendResponse) {
   });
 }
 
+function sendTabMessageWithInject(tabId, message, sendResponse) {
+  chrome.tabs.sendMessage(tabId, message, (resp) => {
+    if (chrome.runtime.lastError) {
+      chrome.scripting.executeScript(
+        { target: { tabId }, files: [PAGE_EXTRACT_FILE] },
+        () => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          setTimeout(() => {
+            chrome.tabs.sendMessage(tabId, message, (resp2) => {
+              if (chrome.runtime.lastError) {
+                sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+                return;
+              }
+              sendResponse(resp2 || { ok: false, error: 'Empty response' });
+            });
+          }, 150);
+        }
+      );
+      return;
+    }
+    sendResponse(resp || { ok: false, error: 'Empty response' });
+  });
+}
+
 /** Notify side panel about active tab changes - DOM re-read, clear stale letter. */
 function broadcastActiveTab(tab, reason) {
   if (!tab?.id) return;
@@ -120,6 +147,54 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           url: tab.url || resp?.vacancy?.url || '',
         });
       });
+    });
+    return true;
+  }
+
+  if (message?.type === 'JR_GET_VACANCY_LIST') {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: 'No active tab' });
+        return;
+      }
+      if (!canInjectIntoUrl(tab.url)) {
+        sendResponse({
+          ok: false,
+          error: 'Откройте страницу поиска вакансий hh.ru (/search/vacancy)',
+          tabId: tab.id,
+          url: tab.url || '',
+        });
+        return;
+      }
+      sendTabMessageWithInject(tab.id, { type: 'JR_EXTRACT_VACANCY_LIST' }, (resp) => {
+        sendResponse({
+          ...(resp || { ok: false, error: 'Empty response' }),
+          tabId: tab.id,
+          url: tab.url || resp?.url || '',
+        });
+      });
+    });
+    return true;
+  }
+
+  if (message?.type === 'JR_INJECT_LIST_BADGES') {
+    const scores = Array.isArray(message.scores) ? message.scores : [];
+    const tabId = Number(message.tabId);
+    const run = (id) => {
+      sendTabMessageWithInject(id, { type: 'JR_INJECT_RELEVANCE_BADGES', scores }, sendResponse);
+    };
+    if (Number.isFinite(tabId) && tabId > 0) {
+      run(tabId);
+      return true;
+    }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: 'No active tab' });
+        return;
+      }
+      run(tab.id);
     });
     return true;
   }
