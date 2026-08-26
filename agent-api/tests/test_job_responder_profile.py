@@ -445,3 +445,97 @@ def test_structured_overrides_document_keeps_links_section():
     assert "## Ссылки" in doc
     assert "autoro.tech/resume" in doc
     assert "youtu.be/v2_zmJrlMks" in doc
+
+
+_YOUTUBE_FOOTER_DUMP = """
+## Ссылки
+Ссылка: https://youtu.be/AJtcYfItspM
+Ссылка: https://youtu.be/
+Ссылка: https://www.youtube.com/about/
+Ссылка: https://www.youtube.com/about/press/
+Ссылка: https://www.youtube.com/about/copyright/
+Ссылка: https://www.youtube.com/creators/
+Ссылка: https://www.youtube.com/ads/
+Ссылка: https://developers.google.com/youtube
+Ссылка: https://www.youtube.com/t/terms
+Ссылка: https://www.youtube.com/about/policies/
+https://www.youtube.com/about/press/
+"""
+
+
+def test_reject_youtube_footer_crawl_links():
+    """Cover letter must never append YouTube about/footer crawl URLs."""
+    from job_responder import is_junk_profile_link_url, is_relevant_link_url
+
+    junk = [
+        "https://youtu.be/",
+        "https://www.youtube.com/about/",
+        "https://www.youtube.com/about/press/",
+        "https://www.youtube.com/about/copyright/",
+        "https://www.youtube.com/creators/",
+        "https://www.youtube.com/ads/",
+        "https://developers.google.com/youtube",
+        "https://www.youtube.com/t/terms",
+        "https://www.youtube.com/about/policies/",
+    ]
+    for u in junk:
+        assert is_junk_profile_link_url(u), u
+        assert not is_relevant_link_url(u), u
+
+    # Polluted profile.links (empty titles = crawl dump) must not enter ## Ссылки
+    polluted = {
+        "links": [{"url": u, "title": ""} for u in junk]
+        + [{"url": "https://www.youtube.com/about/", "title": "About"}]
+        + [{"url": "https://youtu.be/AJtcYfItspM", "title": "Ссылка"}],
+        "rag_edits": _SMOKE_LINKS_BLOCK,
+    }
+    links = collect_generate_links(
+        cover_template=_SMOKE_LINKS_BLOCK,
+        overrides=extract_contacts_from_rag_edits(_SMOKE_LINKS_BLOCK),
+        merged=polluted,
+        prompt_extra="",
+    )
+    urls = [lk["url"] for lk in links]
+    for need in (
+        "https://autoro.tech/resume/",
+        "https://www.youtube.com/@iq_boosted",
+        "https://www.blackhatworld.com/members/vlad_x.1811065/",
+        "https://youtu.be/v2_zmJrlMks",
+        "https://youtu.be/AJtcYfItspM",
+    ):
+        assert need in urls
+    for bad in junk:
+        assert bad not in urls
+    assert "youtube.com/about" not in " ".join(urls)
+    assert "developers.google.com" not in " ".join(urls)
+
+    dirty_letter = (
+        "# ОТКЛИК\n\nHi\n\n## Ссылки\n"
+        + "\n".join(f"Ссылка: {u}" for u in junk)
+    )
+    out = ensure_links_in_cover_letter(dirty_letter, links)
+    assert "## Ссылки" in out
+    assert "autoro.tech/resume" in out
+    section = out.split("## Ссылки")[-1]
+    assert "youtube.com/about" not in section
+    assert "developers.google.com" not in section
+    assert "https://youtu.be/\n" not in section and "https://youtu.be/ " not in section
+    # Labels preserved
+    assert "резюме:" in section.lower() or "резюме:" in section
+    assert "youtube:" in section.lower()
+    for need in (
+        "https://autoro.tech/resume/",
+        "https://www.youtube.com/@iq_boosted",
+        "https://youtu.be/v2_zmJrlMks",
+        "https://youtu.be/AJtcYfItspM",
+    ):
+        assert need in section
+
+
+def test_bare_urls_not_harvested_from_blob():
+    blob = "See also https://www.youtube.com/about/press/ and https://developers.google.com/youtube"
+    assert extract_labeled_links_from_text(blob) == []
+    from job_responder import extract_urls_from_text
+
+    extracted = extract_urls_from_text(blob)
+    assert extracted == []

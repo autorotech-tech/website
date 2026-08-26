@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html as html_lib
@@ -20,7 +21,7 @@ from urllib.request import urlopen
 
 from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 import os
 
@@ -61,6 +62,10 @@ GENERATE_BUDGET_SEC = 38.0
 # Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
 # First attempt is already aggressive - do not start at 6k and only shrink on retry.
 SELECTED_SOURCES_MAX = 40
+# Relevance hot path: fewer/lighter rows so nginx/CF never see origin crash→HTML 502
+RELEVANCE_SOURCES_MAX = 16
+RELEVANCE_CONTENT_CHARS = 6000
+RELEVANCE_VACANCY_CHARS = 8000
 COMPACT_PROFILE_CHARS = 2200
 COMPACT_PROFILE_CHARS_MANY = 1700
 COMPACT_PROFILE_CHARS_RETRY = 1400
@@ -440,9 +445,48 @@ class JobResponderResumeLinkCapturePayload(BaseModel):
     category: str = Field(default="experience", max_length=128)
 
 
+class JobResponderRelevanceVacancyPayload(BaseModel):
+    """Forgiving vacancy for /relevance - never 422 on empty description / bad structured."""
+
+    url: Optional[str] = Field(default=None, max_length=4000)
+    title: str = Field(default="Вакансия", min_length=1, max_length=1000)
+    company: Optional[str] = Field(default=None, max_length=500)
+    description: str = Field(default="", max_length=50000)
+    questions: List[Any] = Field(default_factory=list)
+    structured: Optional[Any] = None
+    source: Optional[str] = Field(default=None, max_length=64)
+
+    def to_score_vacancy(self) -> "JobResponderVacancyPayload":
+        title = (self.title or "Вакансия").strip()[:1000] or "Вакансия"
+        desc = (self.description or "").strip()
+        if not desc:
+            desc = title
+        desc = desc[:RELEVANCE_VACANCY_CHARS]
+        structured = None
+        if isinstance(self.structured, dict):
+            try:
+                structured = JobResponderVacancyStructured.model_validate(self.structured)
+            except Exception:
+                structured = None
+        elif self.structured is not None:
+            try:
+                structured = JobResponderVacancyStructured.model_validate(self.structured)
+            except Exception:
+                structured = None
+        return JobResponderVacancyPayload(
+            url=self.url,
+            title=title,
+            company=self.company,
+            description=desc,
+            questions=list(self.questions or [])[:40],
+            structured=structured,
+            source=self.source,
+        )
+
+
 class JobResponderRelevancePayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
-    vacancy: JobResponderVacancyPayload
+    vacancy: JobResponderRelevanceVacancyPayload
     selectedSourceIds: List[int] = Field(default_factory=list)
 
 
@@ -497,7 +541,10 @@ def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
 
 
 def extract_urls_from_text(text: str, limit: int = 20) -> List[str]:
-    """Extract unique http(s) URLs from free text / OCR / CV content."""
+    """Extract unique http(s) URLs from free text / OCR / CV content.
+
+    Filters smoke + YouTube/Google footer crawl junk so profile.links stays clean.
+    """
     if not text:
         return []
     out: List[str] = []
@@ -505,6 +552,8 @@ def extract_urls_from_text(text: str, limit: int = 20) -> List[str]:
     for m in _URL_RE.finditer(text):
         raw = m.group(0).rstrip(".,;:!?)]}>\"'")
         if not raw or len(raw) < 8:
+            continue
+        if is_junk_profile_link_url(raw):
             continue
         key = raw.lower().rstrip("/")
         if key in seen:
@@ -543,6 +592,22 @@ _JUNK_CONTACT_URL_RE = re.compile(
     r"(?i)(?:\bexample\.com\b|\bjr-smoke\b|\blocalhost\b|\b127\.0\.0\.1\b|"
     r"\b0\.0\.0\.0\b|\btest\.local\b|\bsmoke[-_]?test\b)"
 )
+# Footer/nav/legal crawl junk (YouTube about, Google developers, bare youtu.be/, …)
+_JUNK_PROFILE_LINK_RE = re.compile(
+    r"(?i)(?:"
+    r"developers\.google\.com|"
+    r"accounts\.google\.com|"
+    r"support\.google\.com|"
+    r"policies\.google\.com|"
+    r"(?:^|/)(?:about|press|copyright|creators|ads|terms|privacy|howto_youtube|"
+    r"static|t(?:/|$)|embed|iframe_api|s(?:/|$)|feed)(?:/|$|\?|#)|"
+    r"youtu\.be/?$|"
+    r"youtube\.com/?$|"
+    r"youtube\.com/(?:about|press|copyright|creators|ads|t(?:/|$)|howyoutubeworks|"
+    r"new|upload|premium|kids|tv|music|gaming|channel)/|"
+    r"www\.youtube\.com/(?:about|press|copyright|creators|ads)/"
+    r")"
+)
 _KNOWN_CONTACT_HOST_RE = re.compile(
     r"(?i)https?://(?:www\.)?(?:linkedin\.com|github\.com|t\.me)/"
 )
@@ -556,31 +621,65 @@ _LINKS_HEADING_RE = re.compile(
 )
 _CONTACTS_HEADING_RE = re.compile(r"(?im)^#{1,6}\s*контакты\s*$")
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s|>,\"'\)\]]+", re.I)
+# Generic labels that mean "unlabeled crawl dump" - never trust for ## Ссылки
+_GENERIC_LINK_LABELS = frozenset(
+    {
+        "",
+        "ссылка",
+        "link",
+        "url",
+        "links",
+        "ссылки",
+        "http",
+        "https",
+        "website",
+        "сайт",
+        "site",
+    }
+)
 
 
 def is_junk_contact_url(url: str) -> bool:
     return bool(_JUNK_CONTACT_URL_RE.search(url or ""))
 
 
+def is_junk_profile_link_url(url: str) -> bool:
+    """Reject smoke + YouTube/Google footer/nav crawl URLs."""
+    u = (url or "").strip()
+    if not u or is_junk_contact_url(u):
+        return True
+    if _JUNK_PROFILE_LINK_RE.search(u):
+        return True
+    # Bare youtu.be/ or youtube.com/ with no video/channel id
+    low = u.lower().rstrip("/")
+    if re.fullmatch(r"https?://(?:www\.)?youtu\.be", low):
+        return True
+    if re.fullmatch(r"https?://(?:www\.)?youtube\.com", low):
+        return True
+    if re.fullmatch(r"https?://(?:www\.)?youtu\.be/(?:t)?", low):
+        return True
+    return False
+
+
 def extract_http_url(value: str) -> str:
-    """First non-smoke http(s) URL from a value (label line / freeform)."""
+    """First non-junk http(s) URL from a labeled value (not page HTML dumps)."""
     raw = (value or "").strip()
     if not raw:
         return ""
     if raw.startswith("http://") or raw.startswith("https://"):
         url = raw.split()[0].rstrip(").,;\"'")
-        return "" if is_junk_contact_url(url) else url
+        return "" if is_junk_profile_link_url(url) else url
     m = _URL_IN_TEXT_RE.search(raw)
     if not m:
         return ""
     url = m.group(0).rstrip(").,;\"'")
-    return "" if is_junk_contact_url(url) else url
+    return "" if is_junk_profile_link_url(url) else url
 
 
 def is_contact_url(url: str, *, title: str = "") -> bool:
     """Accept portfolio/GitHub/LinkedIn/site URLs; reject smoke/test dumps."""
     u = (url or "").strip()
-    if not u or is_junk_contact_url(u):
+    if not u or is_junk_profile_link_url(u):
         return False
     low = u.lower()
     if low.startswith("mailto:") or "t.me/" in low:
@@ -594,14 +693,24 @@ def is_contact_url(url: str, *, title: str = "") -> bool:
 
 
 def is_relevant_link_url(url: str) -> bool:
-    """Accept any real http(s) link for ## Ссылки; only filter smoke/test hosts."""
+    """Accept real http(s) for ## Ссылки; reject smoke + footer/nav crawl junk."""
     u = (url or "").strip()
-    if not u or is_junk_contact_url(u):
+    if not u or is_junk_profile_link_url(u):
         return False
     low = u.lower()
     if low.startswith("mailto:") or "t.me/" in low:
         return False
     return low.startswith("http://") or low.startswith("https://")
+
+
+def _is_meaningful_link_label(label: str) -> bool:
+    lab = _normalize_link_label(label).lower().replace("ё", "е")
+    if lab in _GENERIC_LINK_LABELS:
+        return False
+    # Footer chrome labels
+    if lab in ("about", "press", "copyright", "creators", "privacy", "terms", "ads"):
+        return False
+    return len(lab) >= 2
 
 
 def filter_contact_dict(contacts: Optional[Dict[str, str]]) -> Dict[str, str]:
@@ -630,6 +739,8 @@ def filter_contact_dict(contacts: Optional[Dict[str, str]]) -> Dict[str, str]:
         elif key in ("portfolio", "github", "linkedin", "website", "site", "link"):
             if not (val.startswith("http://") or val.startswith("https://")):
                 continue
+            if is_junk_profile_link_url(val):
+                continue
         canon_key = "website" if key == "site" else key
         if canon_key not in ordered:
             ordered[canon_key] = val[:500]
@@ -641,7 +752,7 @@ def is_contact_bullet_line(line: str) -> bool:
     s = (line or "").strip()
     if not s or len(s) > 220:
         return False
-    if is_junk_contact_url(s):
+    if is_junk_contact_url(s) or is_junk_profile_link_url(s):
         return False
     if _CONTACT_LINE_LABEL_RE.match(s):
         return True
@@ -671,15 +782,18 @@ def _upsert_labeled_link(
     *,
     label: str,
     url: str,
+    require_meaningful_label: bool = True,
 ) -> None:
     if not is_relevant_link_url(url):
         return
+    lab = _normalize_link_label(label)
+    if require_meaningful_label and not _is_meaningful_link_label(lab):
+        return
     clean_url = url.strip()[:500]
     key = _link_url_key(clean_url)
-    lab = _normalize_link_label(label)
     for item in bucket:
         if _link_url_key(str(item.get("url") or "")) == key:
-            if lab and lab.lower() not in ("ссылка", "link", "url"):
+            if _is_meaningful_link_label(lab):
                 item["label"] = lab
             item["url"] = clean_url
             return
@@ -687,33 +801,32 @@ def _upsert_labeled_link(
 
 
 def extract_labeled_links_from_text(text: str) -> List[Dict[str, str]]:
-    """Parse labeled links (RU/EN labels + URLs) from ## Ссылки / [CONTACTS] / freeform."""
+    """Parse ONLY labeled links (label: url). Never bare/footer crawl URLs."""
     raw = (text or "").strip()
     if not raw:
         return []
     out: List[Dict[str, str]] = []
 
-    def _consume_block(block: str) -> None:
+    def _consume_block(block: str, *, labeled_only: bool = True) -> None:
         for line in (block or "").splitlines():
             s = line.strip()
             if not s or s.startswith("#") or s.startswith("["):
                 continue
             # "- label: url" or "label: optional text https://..."
             m = re.match(r"^\s*[-*•]?\s*([^:]{1,120})\s*[:：]\s*(.+?)\s*$", s)
-            if m:
-                label = m.group(1).strip()
-                val = m.group(2).strip()
-                ck = _canonical_override_key(label)
-                if ck in _CONTACT_CHANNEL_KEYS:
-                    continue
-                url = extract_http_url(val)
-                if url:
-                    _upsert_labeled_link(out, label=label, url=url)
+            if not m:
+                # Never harvest bare http lines (YouTube footer dumps)
                 continue
-            # Bare URL line
-            url = extract_http_url(s)
-            if url and s.startswith("http"):
-                _upsert_labeled_link(out, label="Ссылка", url=url)
+            label = m.group(1).strip()
+            val = m.group(2).strip()
+            ck = _canonical_override_key(label)
+            if ck in _CONTACT_CHANNEL_KEYS:
+                continue
+            if not _is_meaningful_link_label(label):
+                continue
+            url = extract_http_url(val)
+            if url:
+                _upsert_labeled_link(out, label=label, url=url, require_meaningful_label=True)
 
     # Prefer ## Ссылки / Relevant links sections
     for m in _LINKS_HEADING_RE.finditer(raw):
@@ -728,7 +841,7 @@ def extract_labeled_links_from_text(text: str) -> List[Dict[str, str]]:
         if cm:
             _consume_block(cm.group(1))
 
-    # Whole text: any label: url (covers Правки профиля / Инструкции without heading)
+    # Whole text: labeled lines only (Правки профиля / инструкции)
     _consume_block(raw)
     return out[:24]
 
@@ -768,7 +881,7 @@ def collect_generate_contacts(
             continue
         url = str(lk.get("url") or "").strip()
         title = str(lk.get("title") or "").strip().lower()
-        if not url or is_junk_contact_url(url):
+        if not url or is_junk_profile_link_url(url):
             continue
         if "t.me/" in url.lower() or title == "telegram":
             hm = _TG_HANDLE_EXTRACT_RE.search(url)
@@ -798,7 +911,10 @@ def collect_generate_contacts(
             continue
         if ck not in _CONTACT_KEYS_ALLOWED:
             continue
-        if is_junk_contact_url(v):
+        if is_junk_contact_url(v) or (
+            ck in ("portfolio", "github", "linkedin", "website", "site", "link")
+            and is_junk_profile_link_url(v)
+        ):
             continue
         if ck == "telegram":
             hm = _TG_HANDLE_EXTRACT_RE.search(v) or re.match(r"^@?([A-Za-z0-9_]{4,64})$", v)
@@ -822,6 +938,10 @@ def collect_generate_contacts(
 
     for key, val in extract_contacts_from_cover_template(cover_template).items():
         if val and key in _CONTACT_KEYS_ALLOWED and not is_junk_contact_url(val):
+            if key in ("portfolio", "github", "linkedin", "website", "link") and is_junk_profile_link_url(
+                val
+            ):
+                continue
             out[key] = val
 
     return filter_contact_dict(out)
@@ -834,32 +954,30 @@ def collect_generate_links(
     merged: Optional[Dict[str, Any]] = None,
     prompt_extra: str = "",
 ) -> List[Dict[str, str]]:
-    """Collect labeled relevant links for ## Ссылки.
+    """Collect ## Ссылки from authoritative labeled sources only.
 
-    Sources (merged, first label wins unless later is more specific):
-    profile links, rag_edits, profileOverrides, promptExtra/instructions, cover_template.
-    Contacts (telegram/email/phone) are excluded. Smoke URLs filtered.
+    Allowed: cover_template [CONTACTS]/## Ссылки, profileOverrides / rag_edits labeled
+    lines, promptExtra labeled lines, structured profile links WITH a real title.
+    Never: vacancy HTML, YouTube footer crawl, unlabeled regex dumps from RAG blobs.
     """
     out: List[Dict[str, str]] = []
     profile = merged or {}
 
-    for lk in profile.get("links") or []:
-        if not isinstance(lk, dict):
-            continue
-        url = str(lk.get("url") or "").strip()
-        title = str(lk.get("title") or lk.get("label") or "").strip()
-        if not is_relevant_link_url(url):
-            continue
-        _upsert_labeled_link(out, label=title or "Ссылка", url=url)
-
+    # 1) Authoritative text blocks first (template / overrides / instructions)
     for blob in (
-        str(profile.get("rag_edits") or ""),
         cover_template or "",
+        str(profile.get("rag_edits") or ""),
         prompt_extra or "",
     ):
         for item in extract_labeled_links_from_text(blob):
-            _upsert_labeled_link(out, label=item.get("label") or "Ссылка", url=item.get("url") or "")
+            _upsert_labeled_link(
+                out,
+                label=item.get("label") or "",
+                url=item.get("url") or "",
+                require_meaningful_label=True,
+            )
 
+    # 2) Explicit overrides dict keys (Russian labels preserved)
     for key, val in (overrides or {}).items():
         ck = str(key or "").strip()
         if not ck or ck.startswith("_") or ck == "rag_edits":
@@ -871,17 +989,33 @@ def collect_generate_links(
         url = extract_http_url(v)
         if not url:
             continue
-        label = ck
-        if canon in ("github", "linkedin", "portfolio", "website", "site", "link"):
+        if canon in ("github", "linkedin", "portfolio", "website", "site"):
             label = {
                 "github": "GitHub",
                 "linkedin": "LinkedIn",
                 "portfolio": "Portfolio",
                 "website": "Сайт",
                 "site": "Сайт",
-                "link": "Ссылка",
             }.get(canon, ck)
-        _upsert_labeled_link(out, label=label, url=url)
+        elif canon == "link":
+            # Generic "link" key without specific label - skip unless URL is clearly personal
+            continue
+        else:
+            label = ck
+        _upsert_labeled_link(out, label=label, url=url, require_meaningful_label=True)
+
+    # 3) Structured profile links ONLY when they carry a meaningful user title
+    #    (skip empty-title crawl dumps from YouTube/Jina page HTML)
+    for lk in profile.get("links") or []:
+        if not isinstance(lk, dict):
+            continue
+        url = str(lk.get("url") or "").strip()
+        title = str(lk.get("title") or lk.get("label") or "").strip()
+        if not title or not _is_meaningful_link_label(title):
+            continue
+        if not is_relevant_link_url(url):
+            continue
+        _upsert_labeled_link(out, label=title, url=url, require_meaningful_label=True)
 
     return out[:20]
 
@@ -1005,21 +1139,18 @@ def ensure_contacts_in_cover_letter(text: str, contacts: Dict[str, str]) -> str:
 
 
 def ensure_links_in_cover_letter(text: str, links: List[Dict[str, str]]) -> str:
-    """Ensure ## Ссылки lists all known non-smoke labeled URLs (post-LLM)."""
+    """Rebuild ## Ссылки from authoritative labeled links only (never LLM/crawl dumps)."""
     body = strip_empty_markdown_headings(text or "")
-    clean = []
+    clean: List[Dict[str, str]] = []
     for item in links or []:
         url = str(item.get("url") or "").strip()
-        if is_relevant_link_url(url):
-            _upsert_labeled_link(clean, label=str(item.get("label") or "Ссылка"), url=url)
-    if not clean:
-        return body
-    # Merge any LLM-emitted link lines we already know about, then rebuild
-    existing = extract_labeled_links_from_text(body)
-    for item in existing:
-        _upsert_labeled_link(clean, label=item.get("label") or "Ссылка", url=item.get("url") or "")
+        label = str(item.get("label") or item.get("title") or "").strip()
+        _upsert_labeled_link(clean, label=label, url=url, require_meaningful_label=True)
+    # Always strip any LLM/crawl ## Ссылки section, then append authoritative block only
     body = strip_links_section(body)
     body = strip_empty_markdown_headings(body)
+    if not clean:
+        return body
     block = format_links_block(clean)
     if not block:
         return body
@@ -2697,6 +2828,57 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         )
         return cur.fetchall()
 
+    def _resume_rows_for_relevance(
+        cur,
+        workspace_id: int,
+        selected_ids: Optional[List[int]] = None,
+        *,
+        limit: int = RELEVANCE_SOURCES_MAX,
+    ) -> List[Dict[str, Any]]:
+        """Light rows for /relevance: truncated content_text, capped count (no OOM)."""
+        lim = max(1, min(int(limit), RELEVANCE_SOURCES_MAX))
+        cut = int(RELEVANCE_CONTENT_CHARS)
+        ids = [int(x) for x in (selected_ids or []) if int(x) > 0][:lim]
+        if ids:
+            cur.execute(
+                """
+                select
+                  k.id, k.source, k.title, k.url, k.ai_summary, k.category, k.tags,
+                  k.status, k.note_path, k.kind,
+                  left(coalesce(k.content_text, ''), %s) as content_text,
+                  null::float8 as distance, k.updated_at
+                from public.knowledge_items k
+                where k.workspace_id = %s and k.source = %s and k.id = any(%s)
+                order by case when k.kind = %s then 0 else 1 end, k.updated_at desc
+                limit %s
+                """,
+                (cut, workspace_id, RESUME_SOURCE, ids, PRIMARY_CV_KIND, lim),
+            )
+            rows = list(cur.fetchall() or [])
+        else:
+            cur.execute(
+                """
+                select
+                  k.id, k.source, k.title, k.url, k.ai_summary, k.category, k.tags,
+                  k.status, k.note_path, k.kind,
+                  left(coalesce(k.content_text, ''), %s) as content_text,
+                  null::float8 as distance, k.updated_at
+                from public.knowledge_items k
+                where k.workspace_id = %s and k.source = %s and k.kind = any(%s)
+                order by case when k.kind = %s then 0 else 1 end, k.updated_at desc
+                limit %s
+                """,
+                (
+                    cut,
+                    workspace_id,
+                    RESUME_SOURCE,
+                    list(RESUME_KINDS),
+                    PRIMARY_CV_KIND,
+                    lim,
+                ),
+            )
+            rows = list(cur.fetchall() or [])
+        return _ensure_overrides_in_rows(cur, workspace_id, rows)
     def _embed_resume_item(cur, kid: int, title: str, ai_summary: str, text: str) -> bool:
         if kid <= 0:
             return False
@@ -4120,35 +4302,60 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
-        auth_ctx = _auth(request, x_api_key, authorization)
-        workspace_id = _parse_workspace_id(payload.workspaceId)
-        _guard_workspace(auth_ctx, workspace_id)
-
-        conn = pg_connect()
+        """Deterministic semantic relevance. Never LLM. Always JSON (no origin 502 HTML)."""
+        started = time.monotonic()
         try:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if payload.selectedSourceIds:
-                    rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
-                else:
-                    rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
-                rows = _ensure_overrides_in_rows(cur, workspace_id, rows)
-        finally:
-            conn.close()
+            auth_ctx = _auth(request, x_api_key, authorization)
+            workspace_id = _parse_workspace_id(payload.workspaceId)
+            _guard_workspace(auth_ctx, workspace_id)
+            vacancy = payload.vacancy.to_score_vacancy()
 
-        rag_items, _truncated = cap_rag_items(list(rows), max_n=SELECTED_SOURCES_MAX)
-        merged = merge_profiles_from_rows(rag_items)
-        result = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
-        result["workspaceId"] = str(workspace_id)
-        result["sourcesUsed"] = [
-            {
-                "knowledgeItemId": int(r.get("id")),
-                "title": r.get("title"),
-                "kind": r.get("kind"),
+            def _compute() -> Dict[str, Any]:
+                conn = pg_connect()
+                try:
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                        rows = _resume_rows_for_relevance(
+                            cur,
+                            workspace_id,
+                            list(payload.selectedSourceIds or []),
+                            limit=RELEVANCE_SOURCES_MAX,
+                        )
+                finally:
+                    conn.close()
+                rag_items, _truncated = cap_rag_items(list(rows), max_n=RELEVANCE_SOURCES_MAX)
+                merged = merge_profiles_from_rows(rag_items)
+                scored = score_resume_vs_vacancy(vacancy, rag_items, merged_profile=merged)
+                scored["workspaceId"] = str(workspace_id)
+                scored["ok"] = True
+                scored["sourcesUsed"] = [
+                    {
+                        "knowledgeItemId": int(r.get("id")),
+                        "title": r.get("title"),
+                        "kind": r.get("kind"),
+                    }
+                    for r in rag_items[:12]
+                ]
+                scored["usedUnifiedProfile"] = True
+                scored["elapsedSec"] = round(time.monotonic() - started, 3)
+                return scored
+
+            return await asyncio.to_thread(_compute)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _LOG.exception("relevance failed soft: %s", exc)
+            # Never let uvicorn 500 become Cloudflare HTML 502 for the extension
+            return {
+                "ok": False,
+                "score": 0,
+                "rationale": ["Оценка временно недоступна - повторите"],
+                "matched": [],
+                "missing": [],
+                "error": "relevance_failed",
+                "message": "Не удалось посчитать релевантность. Нажмите «Оценить предложение» ещё раз.",
+                "workspaceId": str(getattr(payload, "workspaceId", "") or ""),
+                "elapsedSec": round(time.monotonic() - started, 3),
             }
-            for r in rag_items[:12]
-        ]
-        result["usedUnifiedProfile"] = True
-        return result
 
     @app.post("/api/v1/job-responder/relevance/batch")
     async def job_responder_relevance_batch(
@@ -4158,79 +4365,97 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         authorization: Optional[str] = Header(None, alias="Authorization"),
     ):
         """Score many HH search-list cards vs Resume KB (deterministic, zero LLM)."""
-        auth_ctx = _auth(request, x_api_key, authorization)
-        workspace_id = _parse_workspace_id(payload.workspaceId)
-        _guard_workspace(auth_ctx, workspace_id)
-
-        vacancies = list(payload.vacancies or [])[:80]
-        if not vacancies:
-            return {
-                "ok": True,
-                "scores": [],
-                "workspaceId": str(workspace_id),
-                "count": 0,
-                "message": "empty vacancies",
-            }
-
-        conn = pg_connect()
+        started = time.monotonic()
         try:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if payload.selectedSourceIds:
-                    rows = _resume_selected_rows(cur, workspace_id, payload.selectedSourceIds)
-                else:
-                    rows = _resume_workspace_rows(cur, workspace_id, SELECTED_SOURCES_MAX)
-                rows = _ensure_overrides_in_rows(cur, workspace_id, rows)
-        finally:
-            conn.close()
+            auth_ctx = _auth(request, x_api_key, authorization)
+            workspace_id = _parse_workspace_id(payload.workspaceId)
+            _guard_workspace(auth_ctx, workspace_id)
 
-        rag_items, _truncated = cap_rag_items(list(rows), max_n=SELECTED_SOURCES_MAX)
-        merged = merge_profiles_from_rows(rag_items)
-        # Build semantic grid once for the batch
-        if not isinstance(merged.get("jr_semantic_grid"), dict):
-            merged["jr_semantic_grid"] = build_semantic_grid(merged)
-
-        scores: List[Dict[str, Any]] = []
-        for item in vacancies:
-            title = str(item.title or "").strip() or "Вакансия"
-            desc = (
-                str(item.description or "").strip()
-                or str(item.text or "").strip()
-                or title
-            )
-            if item.salary:
-                desc = f"{desc}\nЗарплата: {item.salary}".strip()
-            vac = JobResponderVacancyPayload(
-                url=item.url,
-                title=title[:1000],
-                company=item.company,
-                description=desc[:50000] if desc else title,
-                source="hh_search_list",
-            )
-            scored = score_resume_vs_vacancy(vac, rag_items, merged_profile=merged)
-            vid = str(item.id or "").strip()
-            if not vid and item.url:
-                m = re.search(r"/vacancy/(\d+)", str(item.url))
-                if m:
-                    vid = m.group(1)
-            scores.append(
-                {
-                    "id": vid or None,
-                    "url": item.url,
-                    "title": title,
-                    "score": int(scored.get("score") or 0),
-                    "matched": list(scored.get("matched") or [])[:8],
-                    "missing": list(scored.get("missing") or [])[:8],
+            vacancies = list(payload.vacancies or [])[:80]
+            if not vacancies:
+                return {
+                    "ok": True,
+                    "scores": [],
+                    "workspaceId": str(workspace_id),
+                    "count": 0,
+                    "message": "empty vacancies",
                 }
-            )
 
-        return {
-            "ok": True,
-            "scores": scores,
-            "workspaceId": str(workspace_id),
-            "count": len(scores),
-            "sourcesUsed": len(rag_items),
-            "usedUnifiedProfile": True,
-        }
+            def _compute_batch() -> Dict[str, Any]:
+                conn = pg_connect()
+                try:
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                        rows = _resume_rows_for_relevance(
+                            cur,
+                            workspace_id,
+                            list(payload.selectedSourceIds or []),
+                            limit=RELEVANCE_SOURCES_MAX,
+                        )
+                finally:
+                    conn.close()
+
+                rag_items, _truncated = cap_rag_items(list(rows), max_n=RELEVANCE_SOURCES_MAX)
+                merged = merge_profiles_from_rows(rag_items)
+                if not isinstance(merged.get("jr_semantic_grid"), dict):
+                    merged["jr_semantic_grid"] = build_semantic_grid(merged)
+
+                scores: List[Dict[str, Any]] = []
+                for item in vacancies:
+                    title = str(item.title or "").strip() or "Вакансия"
+                    desc = (
+                        str(item.description or "").strip()
+                        or str(item.text or "").strip()
+                        or title
+                    )[:RELEVANCE_VACANCY_CHARS]
+                    if item.salary:
+                        desc = f"{desc}\nЗарплата: {item.salary}".strip()
+                    vac = JobResponderVacancyPayload(
+                        url=item.url,
+                        title=title[:1000],
+                        company=item.company,
+                        description=desc if desc else title,
+                        source="hh_search_list",
+                    )
+                    scored = score_resume_vs_vacancy(vac, rag_items, merged_profile=merged)
+                    vid = str(item.id or "").strip()
+                    if not vid and item.url:
+                        m = re.search(r"/vacancy/(\d+)", str(item.url))
+                        if m:
+                            vid = m.group(1)
+                    scores.append(
+                        {
+                            "id": vid or None,
+                            "url": item.url,
+                            "title": title,
+                            "score": int(scored.get("score") or 0),
+                            "matched": list(scored.get("matched") or [])[:8],
+                            "missing": list(scored.get("missing") or [])[:8],
+                        }
+                    )
+                return {
+                    "ok": True,
+                    "scores": scores,
+                    "workspaceId": str(workspace_id),
+                    "count": len(scores),
+                    "sourcesUsed": len(rag_items),
+                    "usedUnifiedProfile": True,
+                    "elapsedSec": round(time.monotonic() - started, 3),
+                }
+
+            return await asyncio.to_thread(_compute_batch)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _LOG.exception("relevance batch failed soft: %s", exc)
+            return {
+                "ok": False,
+                "scores": [],
+                "count": 0,
+                "error": "relevance_batch_failed",
+                "message": "Пакетная оценка временно недоступна. Повторите «Оценить список».",
+                "workspaceId": str(getattr(payload, "workspaceId", "") or ""),
+                "elapsedSec": round(time.monotonic() - started, 3),
+            }
 
     @app.get("/api/v1/job-responder/gemini-rag/status")
     async def job_responder_gemini_rag_status(
