@@ -1,0 +1,3 @@
+# Placeholder so Docker COPY demo/ works before the frontend UI lands.
+# Drop index.html (and assets) here; the API serves them at /.
+# See ../VIBE.md

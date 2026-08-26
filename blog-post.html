@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog Post - Autoro Tech</title>
+    <meta name="description" content="Autoro Tech Blog Post">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0F172A; color: #e2e8f0; margin: 0; min-height: 100vh; }
+        .glass-card { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(0, 245, 212, 0.12); }
+        .gradient-text { background: linear-gradient(135deg, #00F5D4 0%, #38bdf8 50%, #818cf8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .prose { max-width: 65ch; margin: 0 auto; }
+        .prose h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2rem; font-weight: 700; margin-top: 2rem; margin-bottom: 1rem; color: #f1f5f9; }
+        .prose h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.5rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #e2e8f0; }
+        .prose h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+        .prose p { margin-bottom: 1rem; line-height: 1.75; color: #cbd5e1; }
+        .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; color: #cbd5e1; }
+        .prose ol { padding-left: 1.5rem; margin-bottom: 1rem; color: #cbd5e1; }
+        .prose li { margin-bottom: 0.5rem; }
+        .prose a { color: #00F5D4; text-decoration: none; }
+        .prose a:hover { text-decoration: underline; }
+        .prose strong { color: #e2e8f0; }
+        .prose pre { background: #1e293b; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin-bottom: 1rem; border: 1px solid rgba(255,255,255,0.06); }
+        .prose code { background: #1e293b; padding: 0.2rem 0.4rem; border-radius: 0.25rem; font-size: 0.875em; color: #94a3b8; }
+        .prose pre code { background: none; padding: 0; }
+        .prose blockquote { border-left: 4px solid rgba(0,245,212,0.5); padding-left: 1rem; margin: 1rem 0; color: #94a3b8; }
+        .lang-dropdown { display: none; position: absolute; top: 100%; right: 0; margin-top: 0.5rem; min-width: 10rem; background: rgba(15,23,42,0.95); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.75rem; padding: 0.5rem 0; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); z-index: 50; }
+        .lang-dropdown.open { display: block; }
+        .lang-dropdown a { display: block; padding: 0.5rem 1rem; color: #94a3b8; text-decoration: none; font-size: 0.875rem; }
+        .lang-dropdown a:hover { color: #00F5D4; background: rgba(0,245,212,0.08); }
+        .app-layout { max-width: 48rem; margin-left: auto; margin-right: auto; width: 100%; padding-left: 1rem; padding-right: 1rem; }
+        .active-nav { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 8px; text-decoration-color: #00F5D4; }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 transition-all duration-300 glass-card border-b border-white/5">
+        <div class="app-layout">
+            <div class="flex items-center justify-between h-20">
+                <a href="/" id="nav-home" class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-[#00F5D4] to-sky-500 flex items-center justify-center">
+                        <span class="text-[#0F172A] font-bold text-lg">A</span>
+                    </div>
+                    <span class="font-bold text-xl text-white">Autoro<span class="text-[#00F5D4]">.</span></span>
+                </a>
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="/#features" id="nav-features" class="text-slate-300 hover:text-[#00F5D4] transition-colors text-sm font-medium">Features</a>
+                    <a href="/#solutions" id="nav-solutions" class="text-slate-300 hover:text-[#00F5D4] transition-colors text-sm font-medium">Solutions</a>
+                    <a href="/blog" id="nav-blog" class="text-[#00F5D4] font-medium text-sm active-nav">Blog</a>
+                    <div class="relative">
+                        <button type="button" id="lang-btn" class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 text-sm font-medium">
+                            <span id="lang-current">EN</span>
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </button>
+                        <div class="lang-dropdown" id="lang-dropdown">
+                            <a href="/blog" data-lang="en">English</a>
+                            <a href="/ru/blog" data-lang="ru">Русский</a>
+                            <a href="/es/blog" data-lang="es">Español</a>
+                            <a href="/it/blog" data-lang="it">Italiano</a>
+                            <a href="/vi/blog" data-lang="vi">Tiếng Việt</a>
+                        </div>
+                    </div>
+                </div>
+                <a href="https://cal.com/autoro/30min" target="_blank" rel="noopener" class="hidden md:inline-block bg-white/10 hover:bg-white/20 text-white px-5 py-2.5 rounded-full text-sm font-semibold border border-white/10">Book Demo</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-grow pt-24 pb-16 w-full app-layout">
+        <article id="post-container" class="glass-card rounded-2xl p-8 md:p-12">
+            <div id="loading" class="flex justify-center items-center py-20">
+                <div class="animate-spin rounded-full h-10 w-10 border-2 border-[#00F5D4] border-t-transparent"></div>
+            </div>
+
+            <div id="content" class="hidden">
+                <a href="/blog" id="back-blog" class="inline-flex items-center gap-2 text-slate-400 hover:text-[#00F5D4] text-sm font-medium mb-8 transition-colors">← Back to Blog</a>
+                <header class="mb-10">
+                    <div class="flex items-center gap-2 text-sm text-slate-500 mb-4">
+                        <span id="post-date"></span>
+                        <span>·</span>
+                        <span id="post-read-time"></span>
+                    </div>
+                    <h1 id="post-title" class="text-3xl md:text-4xl font-bold text-white mb-6 leading-tight"></h1>
+                    <div id="post-tags" class="flex flex-wrap gap-2 mb-6"></div>
+                    <img id="post-image" class="w-full h-64 md:h-96 object-cover rounded-xl mb-8 hidden" alt="">
+                </header>
+
+                <div id="post-body" class="prose max-w-none">
+                </div>
+            </div>
+
+            <div id="error" class="hidden text-center py-20">
+                <p class="text-red-400 text-lg mb-4">Failed to load post.</p>
+                <a href="/blog" id="error-back" class="text-[#00F5D4] hover:underline">Back to Blog</a>
+            </div>
+        </article>
+    </main>
+
+    <footer class="border-t border-white/5 bg-slate-950 py-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-slate-500 text-sm">
+            © 2025 Autoro Tech. All rights reserved.
+        </div>
+    </footer>
+
+    <script>
+        (function() {
+            function getLocaleFromPath() {
+                var m = window.location.pathname.match(/^\/(en|ru|es|it|vi)\//);
+                return m ? m[1] : 'en';
+            }
+            function getHomeBase() {
+                var loc = getLocaleFromPath();
+                return loc === 'en' ? '' : '/' + loc;
+            }
+            function getBlogUrl() {
+                var loc = getLocaleFromPath();
+                return loc === 'en' ? '/blog' : '/' + loc + '/blog';
+            }
+            function applyLocale() {
+                var homeBase = getHomeBase();
+                var homeUrl = homeBase === '' ? '/' : '/' + homeBase + '/';
+                var blogUrl = getBlogUrl();
+                document.getElementById('nav-home').href = homeUrl;
+                document.getElementById('nav-features').href = homeUrl + '#features';
+                document.getElementById('nav-solutions').href = homeUrl + '#solutions';
+                document.getElementById('nav-blog').href = blogUrl;
+                document.getElementById('back-blog').href = blogUrl;
+                document.getElementById('error-back').href = blogUrl;
+                var labels = { en: 'EN', ru: 'RU', es: 'ES', it: 'IT', vi: 'VI' };
+                var cur = document.getElementById('lang-current');
+                if (cur) cur.textContent = labels[getLocaleFromPath()] || 'EN';
+            }
+            document.getElementById('lang-btn').addEventListener('click', function(e) {
+                e.stopPropagation();
+                document.getElementById('lang-dropdown').classList.toggle('open');
+            });
+            document.addEventListener('click', function() { document.getElementById('lang-dropdown').classList.remove('open'); });
+            document.getElementById('lang-dropdown').addEventListener('click', function(e) { e.stopPropagation(); });
+            applyLocale();
+        })();
+
+        async function loadPost() {
+            var loadingEl = document.getElementById('loading');
+            var contentEl = document.getElementById('content');
+            var errorEl = document.getElementById('error');
+            var pathSegments = window.location.pathname.split('/').filter(Boolean);
+            var slug = pathSegments[pathSegments.length - 1];
+            if (slug === 'blog') {
+                window.location.href = document.getElementById('nav-blog').href;
+                return;
+            }
+            try {
+                var response = await fetch('/api/blog/posts/' + slug);
+                if (!response.ok) throw new Error('Post not found');
+                var post = await response.json();
+
+                document.title = (post.title || 'Post') + ' - Autoro Tech Blog';
+                var metaDesc = document.querySelector('meta[name="description"]');
+                if (metaDesc) metaDesc.content = post.excerpt || post.meta_description || post.title || '';
+
+                document.getElementById('post-title').textContent = post.title || '';
+                document.getElementById('post-date').textContent = new Date(post.published_at || post.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+                document.getElementById('post-read-time').textContent = '5 min read';
+
+                var tagsContainer = document.getElementById('post-tags');
+                if (post.tags && Array.isArray(post.tags)) {
+                    tagsContainer.innerHTML = post.tags.map(function(tag) {
+                        return '<span class="px-2 py-1 bg-white/5 border border-white/10 text-slate-400 text-xs rounded-full">#' + tag + '</span>';
+                    }).join('');
+                }
+
+                var imgEl = document.getElementById('post-image');
+                var imgUrl = post.featured_image_url || post.featured_image;
+                if (imgUrl) {
+                    imgEl.src = imgUrl;
+                    imgEl.alt = post.title || '';
+                    imgEl.classList.remove('hidden');
+                }
+
+                var bodyEl = document.getElementById('post-body');
+                bodyEl.innerHTML = (typeof marked !== 'undefined' ? marked.parse(post.content || '') : post.content || '');
+
+                loadingEl.classList.add('hidden');
+                contentEl.classList.remove('hidden');
+            } catch (err) {
+                console.error('Error loading post:', err);
+                loadingEl.classList.add('hidden');
+                errorEl.classList.remove('hidden');
+            }
+        }
+        document.addEventListener('DOMContentLoaded', loadPost);
+    </script>
+</body>
+</html>

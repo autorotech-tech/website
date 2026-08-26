@@ -11,6 +11,63 @@ const searchModeSelect = document.getElementById('searchModeSelect');
 const statusEl = document.getElementById('status');
 const lastJobEl = document.getElementById('lastJob');
 const lastSyncEl = document.getElementById('lastSync');
+const popupShell = document.getElementById('popupShell');
+const workBarEl = document.getElementById('workBar');
+const workBarTextEl = document.getElementById('workBarText');
+
+let processBusyCount = 0;
+let processBusyLabel = '';
+let lastToast = { kind: '', text: '' };
+
+function withPreservedScroll(fn) {
+  const top = popupShell ? popupShell.scrollTop : 0;
+  fn();
+  if (popupShell) popupShell.scrollTop = top;
+}
+
+function renderWorkBar() {
+  if (!workBarEl || !workBarTextEl) return;
+  workBarEl.classList.remove('is-busy', 'is-ok', 'is-error');
+  if (processBusyCount > 0) {
+    workBarEl.classList.add('is-busy');
+    workBarEl.setAttribute('aria-busy', 'true');
+    workBarTextEl.textContent = processBusyLabel || 'Работаю…';
+    return;
+  }
+  workBarEl.setAttribute('aria-busy', 'false');
+  if (lastToast.kind === 'error') {
+    workBarEl.classList.add('is-error');
+    workBarTextEl.textContent = lastToast.text.split('\n')[0];
+    return;
+  }
+  if (lastToast.kind === 'ok') {
+    workBarEl.classList.add('is-ok');
+    workBarTextEl.textContent = lastToast.text.split('\n')[0];
+    return;
+  }
+  workBarTextEl.textContent = 'Готово к работе';
+}
+
+function setButtonBusy(btn, busy, idleLabel, busyLabel) {
+  if (!btn) return;
+  const wasBusy = btn.dataset.busy === '1';
+  btn.disabled = Boolean(busy);
+  if (busy) {
+    btn.dataset.busy = '1';
+    if (idleLabel) btn.dataset.idleLabel = idleLabel;
+    else if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    const label = busyLabel || 'Загрузка…';
+    btn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${label}`;
+    processBusyLabel = label;
+    if (!wasBusy) processBusyCount += 1;
+    renderWorkBar();
+  } else {
+    btn.dataset.busy = '0';
+    btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
+    if (wasBusy) processBusyCount = Math.max(0, processBusyCount - 1);
+    renderWorkBar();
+  }
+}
 
 let currentJobId = null;
 const DEFAULTS = {
@@ -32,8 +89,22 @@ function detectBrowserType() {
   return 'chrome';
 }
 
-function setStatus(text) {
-  statusEl.textContent = text;
+function setStatus(text, kind = '') {
+  withPreservedScroll(() => {
+    statusEl.textContent = text;
+    const first = String(text || '').trim();
+    if (!first) {
+      lastToast = { kind: '', text: '' };
+    } else if (kind === 'error' || /^ошибка/i.test(first)) {
+      lastToast = { kind: 'error', text: first };
+    } else if (kind === 'busy' || /…$|\.\.\.$/.test(first.split('\n')[0])) {
+      lastToast = { kind: '', text: first };
+      processBusyLabel = first.split('\n')[0];
+    } else {
+      lastToast = { kind: 'ok', text: first };
+    }
+    renderWorkBar();
+  });
 }
 
 function toEpochFromExpiresIn(expiresInSec) {
@@ -183,9 +254,9 @@ async function updateAuthHint() {
       ? `Аккаунт: ${String(saved.userEmail || 'вход выполнен')}`
       : 'Не авторизован. Sync откроет окно входа.';
   }
-  syncBtn.disabled = false;
-  statusBtn.disabled = false;
-  aiSearchBtn.disabled = false;
+  if (syncBtn.dataset.busy !== '1') syncBtn.disabled = false;
+  if (statusBtn.dataset.busy !== '1') statusBtn.disabled = false;
+  if (aiSearchBtn.dataset.busy !== '1') aiSearchBtn.disabled = false;
 }
 
 async function saveUserSession(data, fallbackEmail = '') {
@@ -358,13 +429,13 @@ async function syncBookmarks() {
     return;
   }
 
-  syncBtn.disabled = true;
-  setStatus('Сбор закладок…');
+  setButtonBusy(syncBtn, true, 'Sync → Vector + Obsidian', 'Сбор закладок…');
+  setStatus('Сбор закладок…', 'busy');
 
   try {
     const tree = await chrome.bookmarks.getTree();
     const bookmarks = flattenBookmarks(tree);
-    setStatus(`Найдено ${bookmarks.length} закладок. Отправка…`);
+    setStatus(`Найдено ${bookmarks.length} закладок. Отправка…`, 'busy');
 
     const headers = await getAuthorizedHeaders(apiBase);
     const syncData = await fetchAgentJson(`${apiBase}/api/v1/bookmarks/sync/start`, {
@@ -406,7 +477,7 @@ async function syncBookmarks() {
   } catch (err) {
     setStatus(`Ошибка sync: ${err.message || err}`);
   } finally {
-    syncBtn.disabled = false;
+    setButtonBusy(syncBtn, false, 'Sync → Vector + Obsidian');
   }
 }
 
@@ -455,8 +526,8 @@ async function aiSearchBookmarks() {
     return;
   }
 
-  aiSearchBtn.disabled = true;
-  setStatus('AI-поиск…');
+  setButtonBusy(aiSearchBtn, true, 'AI Search', 'AI-поиск…');
+  setStatus('AI-поиск…', 'busy');
   try {
     const searchMode = String(searchModeSelect?.value || DEFAULTS.searchMode);
     await chrome.storage.local.set({ searchMode });
@@ -495,7 +566,7 @@ async function aiSearchBookmarks() {
   } catch (err) {
     setStatus(`Ошибка AI-поиска: ${err.message || err}`);
   } finally {
-    aiSearchBtn.disabled = false;
+    setButtonBusy(aiSearchBtn, false, 'AI Search');
   }
 }
 
@@ -508,8 +579,8 @@ async function refreshJobStatus() {
     return;
   }
 
-  statusBtn.disabled = true;
-  setStatus('Загрузка статуса job…');
+  setButtonBusy(statusBtn, true, 'Статус job', 'Загрузка…');
+  setStatus('Загрузка статуса job…', 'busy');
   try {
     const headers = await getAuthorizedHeaders(apiBase);
     const data = await fetchAgentJson(`${apiBase}/api/v1/bookmarks/sync/jobs/${jobId}`, {
@@ -521,7 +592,7 @@ async function refreshJobStatus() {
   } catch (err) {
     setStatus(`Ошибка статуса: ${err.message || err}`);
   } finally {
-    statusBtn.disabled = false;
+    setButtonBusy(statusBtn, false, 'Статус job');
   }
 }
 

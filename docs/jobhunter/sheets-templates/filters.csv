@@ -1,0 +1,4 @@
+host,search_url,area_id,text,employment_form,work_format,exclude_keywords,agency_employer_types,min_score,daily_cap,auto_apply,auto_email,pause_on_block,apify_fallback,apify_actor_id
+uz,https://hh.uz/search/vacancy?employment_form=PROJECT&work_format=REMOTE,97,,PROJECT,REMOTE,"агентство;кадровое;ai recruiter;только бот;screening bot;рекрутинговое агентство",agency,40,5,FALSE,FALSE,TRUE,TRUE,easyapi/hh-ru-job-scraper
+kz,https://hh.kz/search/vacancy?employment_form=PROJECT&work_format=REMOTE,40,,PROJECT,REMOTE,"агентство;кадровое;ai recruiter;только бот;screening bot;рекрутинговое агентство",agency,40,5,FALSE,FALSE,TRUE,TRUE,easyapi/hh-ru-job-scraper
+ru,https://hh.ru/search/vacancy?employment_form=PROJECT&work_format=REMOTE,113,,PROJECT,REMOTE,"агентство;кадровое;ai recruiter;только бот;screening bot;рекрутинговое агентство",agency,40,5,FALSE,FALSE,TRUE,TRUE,easyapi/hh-ru-job-scraper

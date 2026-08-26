@@ -1,6 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+
+const DEFAULT_AFTER_LOGIN = '/chat-agent'
+
+function safeNextPath(raw: string | null, fallback: string): string {
+  if (!raw) return fallback
+  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('://')) return fallback
+  return raw
+}
 
 export function Login() {
   const [loading, setLoading] = useState(false)
@@ -9,69 +17,91 @@ export function Login() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const googleStarted = useRef(false)
   const isSignUp = searchParams.get('mode') === 'signup'
-  const authRedirectTo = import.meta.env.VITE_AUTH_REDIRECT_TO || `${window.location.origin}/`
-  const googleCallbackUrl = `${import.meta.env.VITE_SUPABASE_URL || 'https://swoop.autoro.tech/supabase'}/auth/v1/callback`
+  const nextPath = safeNextPath(searchParams.get('next'), DEFAULT_AFTER_LOGIN)
+  const authRedirectTo = `${window.location.origin}${nextPath}`
 
-  // Check for OAuth error in URL
   useEffect(() => {
     const errorParam = searchParams.get('error')
     const errorDesc = searchParams.get('error_description')
     if (errorParam) {
       setError(
-        errorDesc 
-          ? decodeURIComponent(errorDesc) 
-          : 'Произошла ошибка при входе. Проверьте настройки OAuth в Supabase.'
+        errorDesc
+          ? decodeURIComponent(errorDesc)
+          : 'Произошла ошибка при входе. Попробуйте ещё раз или войдите по email.'
       )
     }
   }, [searchParams])
 
-  // Cloudflare Turnstile disabled — no verification at login
-  // To re-enable: add turnstileToken state, load Turnstile script, show cf-turnstile widget, check token before login
+  useEffect(() => {
+    let cancelled = false
+
+    const boot = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (cancelled) return
+      if (session) {
+        navigate(nextPath, { replace: true })
+        return
+      }
+      if (searchParams.get('google') === '1' && !searchParams.get('error')) {
+        void handleGoogleLogin()
+      }
+    }
+
+    void boot()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleGoogleLogin = async () => {
+    if (googleStarted.current) return
+    googleStarted.current = true
     try {
       setLoading(true)
       setError(null)
       setSuccess(null)
-      
-      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
+
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: authRedirectTo,
           queryParams: {
             access_type: 'offline',
-            prompt: 'consent',
+            prompt: 'select_account',
           },
-        }
+        },
       })
-      
+
       if (oauthError) {
+        googleStarted.current = false
         console.error('OAuth error:', oauthError)
-        setError(`Ошибка OAuth: ${oauthError.message}`)
-        
-        // Specific error messages
-        if (oauthError.message.includes('redirect_uri') || oauthError.message.includes('redirect_uri_mismatch')) {
-          setError(
-            'Google OAuth misconfigured (redirect_uri_mismatch). ' +
-            `Проверьте в Google Cloud Authorized redirect URI: ${googleCallbackUrl} и в Supabase Site URL/Redirect URLs: ${authRedirectTo}`
-          )
+        if (
+          oauthError.message.includes('redirect_uri') ||
+          oauthError.message.includes('redirect_uri_mismatch')
+        ) {
+          setError('Google OAuth misconfigured (redirect_uri_mismatch). Сообщите в поддержку Autoro.')
         } else if (oauthError.message.includes('invalid_client')) {
-          setError('Ошибка: Неверный Client ID или Secret. Проверьте настройки Google OAuth в Supabase.')
+          setError('Ошибка входа через Google. Сообщите в поддержку Autoro.')
+        } else {
+          setError(`Ошибка OAuth: ${oauthError.message}`)
         }
-      } else if (data) {
-        // OAuth redirect will happen automatically
-        console.log('OAuth initiated successfully')
-        // Don't set loading to false here - redirect is coming
+        setLoading(false)
       }
-    } catch (error: any) {
-      console.error('Error logging in:', error)
-      setError(error.message || 'Не удалось выполнить вход. Проверьте консоль браузера для деталей.')
+    } catch (loginError: unknown) {
+      googleStarted.current = false
+      const message = loginError instanceof Error ? loginError.message : 'Не удалось выполнить вход.'
+      console.error('Error logging in:', loginError)
+      setError(message)
       setLoading(false)
     }
   }
 
-  const handleEmailAuth = async () => {
+  const handleEmailAuth = async (event: FormEvent) => {
+    event.preventDefault()
     try {
       setLoading(true)
       setError(null)
@@ -83,7 +113,7 @@ export function Login() {
       }
 
       if (isSignUp) {
-        const { error: signUpError } = await supabase.auth.signUp({
+        const { data, error: signUpError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
@@ -92,6 +122,10 @@ export function Login() {
         })
         if (signUpError) {
           setError(`Supabase sign up failed: ${signUpError.message}`)
+          return
+        }
+        if (data.session) {
+          navigate(nextPath, { replace: true })
           return
         }
         setSuccess('Registration successful. Check your email for confirmation.')
@@ -111,10 +145,10 @@ export function Login() {
           }
           return
         }
-        setSuccess('Login successful. Redirecting...')
+        navigate(nextPath, { replace: true })
       }
-    } catch (authError: any) {
-      setError(authError?.message || 'Authentication request failed.')
+    } catch (authError: unknown) {
+      setError(authError instanceof Error ? authError.message : 'Authentication request failed.')
     } finally {
       setLoading(false)
     }
@@ -144,11 +178,15 @@ export function Login() {
         )}
 
         <button
-          onClick={handleGoogleLogin}
+          type="button"
+          onClick={() => {
+            googleStarted.current = false
+            void handleGoogleLogin()
+          }}
           disabled={loading}
           className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors bg-white text-gray-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-6 h-6" />
+          <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="" className="w-6 h-6" />
           {loading ? 'Connecting...' : 'Continue with Google'}
         </button>
 
@@ -158,39 +196,44 @@ export function Login() {
           <div className="flex-1 border-t border-gray-200" />
         </div>
 
-        <div className="space-y-3">
+        <form className="space-y-3" onSubmit={handleEmailAuth}>
+          <label className="block text-sm font-medium text-gray-700" htmlFor="email">
+            Email
+          </label>
           <input
+            id="email"
+            name="email"
             type="email"
+            autoComplete="username"
+            inputMode="email"
+            required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Email"
             className="w-full px-4 py-3 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-gray-300"
           />
+          <label className="block text-sm font-medium text-gray-700" htmlFor={isSignUp ? 'new-password' : 'current-password'}>
+            Password
+          </label>
           <input
+            id={isSignUp ? 'new-password' : 'current-password'}
+            name="password"
             type="password"
+            autoComplete={isSignUp ? 'new-password' : 'current-password'}
+            required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Password"
             className="w-full px-4 py-3 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-gray-300"
           />
           <button
-            onClick={handleEmailAuth}
+            type="submit"
             disabled={loading}
             className="w-full px-4 py-3 rounded-lg bg-gray-900 text-white font-medium hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In with Email'}
           </button>
-        </div>
-
-        <div className="mt-4 text-xs text-gray-500 text-center">
-          <p>OAuth config hints:</p>
-          <p className="mt-1">
-            Supabase redirect target: <code className="bg-gray-100 px-1 rounded">{authRedirectTo}</code>
-          </p>
-          <p className="mt-1">
-            Google Authorized redirect URI: <code className="bg-gray-100 px-1 rounded">{googleCallbackUrl}</code>
-          </p>
-        </div>
+        </form>
       </div>
     </div>
   )

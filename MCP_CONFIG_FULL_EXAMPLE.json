@@ -1,0 +1,80 @@
+{
+  "mcpServers": {
+    "browsermcp": {
+      "command": "npx",
+      "args": [
+        "@browsermcp/mcp@latest"
+      ]
+    },
+    "Hugging Face": {
+      "url": "https://hf.co/mcp"
+    },
+    "DBHub": {
+      "command": "npx",
+      "args": [
+        "@bytebase/dbhub"
+      ],
+      "env": {
+        "TRANSPORT": "stdio",
+        "DSN": "postgres://user:password@localhost:5432/dbname?sslmode=disable",
+        "READONLY": "true"
+      }
+    },
+    "Playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
+    },
+    "n8n-mcp": {
+      "url": "http://46.250.228.229:3011/mcp",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhMmZlMmQ1MS00NDU0LTRiODYtOGViYi1lMTEzYmFlNzNkNzciLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzU2NTg4NjIyLCJleHAiOjE3NjE3MTA0MDB9.R8QjZSGUORnZkM63dCOh0-KOFfx9Z85MKdQplJePzM0"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "working-mcp-docker": {
+      "command": "ssh",
+      "args": [
+        "-i",
+        "~/.ssh/id_ed25519_autoro",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-T",
+        "vladx@46.250.228.229",
+        "docker",
+        "exec",
+        "-i",
+        "-w",
+        "/app",
+        "mcp-god-mode-lazy",
+        "node",
+        "dist/server-lazy.js"
+      ]
+    },
+    "tailwindcss": {
+      "command": "npx",
+      "args": ["-y", "tailwindcss-mcp-server"]
+    },
+    "nextjs-docs": {
+      "command": "npx",
+      "args": ["-y", "@taiyokimura/nextjs-docs-mcp@latest"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "--allowed-directories", "/Users/vlad_x/Desktop/n8n/autoro.tech/website"]
+    }
+  }
+}
+
+
+
+
+

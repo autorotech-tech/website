@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>Autoro Swoop - Портфолио MVP</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #111; line-height: 1.45; font-size: 11pt; margin: 0; padding: 0;
+    }
+    .hero {
+      background: linear-gradient(135deg, #0f172a, #1e1b4b);
+      color: #fff; padding: 28px 24px; margin-bottom: 20px; border-radius: 12px;
+    }
+    .hero h1 { margin: 0 0 4px; font-size: 28pt; letter-spacing: -0.02em; }
+    .hero .sub { color: #c4b5fd; font-size: 13pt; margin: 0 0 12px; }
+    .hero .lead { max-width: 820px; margin: 0 0 12px; color: #e2e8f0; }
+    .hero .meta { font-size: 9.5pt; color: #94a3b8; }
+    .hero a { color: #a5b4fc; }
+    .platform {
+      border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; margin-bottom: 22px;
+      background: #f8fafc;
+    }
+    .platform h3 { margin: 0 0 6px; font-size: 11pt; text-transform: uppercase; letter-spacing: .08em; }
+    .project { margin: 0 0 24px; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+    .project img { width: 100%; display: block; background: #f3f4f6; }
+    .project .body { padding: 14px 16px 16px; }
+    .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .head h2 { margin: 0; font-size: 16pt; flex: 1 1 auto; }
+    .badge {
+      background: #7c3aed; color: #fff; font-size: 8pt; font-weight: 700;
+      padding: 4px 10px; border-radius: 999px; text-transform: uppercase;
+    }
+    .url { font-size: 9pt; color: #4f46e5; text-decoration: none; width: 100%; }
+    .lead { margin: 0 0 10px; color: #374151; }
+    dl { margin: 0; display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; }
+    dt { font-weight: 700; color: #6b7280; font-size: 9pt; text-transform: uppercase; letter-spacing: .04em; }
+    dd { margin: 0; }
+    .assistant-banner {
+      display: flex; gap: 16px; align-items: flex-start;
+      background: #0ea5e9; color: #fff; padding: 20px 16px;
+    }
+    .assistant-banner h2 { margin: 0 0 6px; color: #fff; }
+    .assistant-banner p { margin: 0; color: #e0f2fe; font-size: 10pt; }
+    .icon {
+      width: 52px; height: 52px; border-radius: 12px; background: rgba(255,255,255,.2);
+      display: grid; place-items: center; font-weight: 800; font-size: 14pt; flex-shrink: 0;
+    }
+    .flow {
+      margin-top: 12px; background: #0f172a; color: #e2e8f0; padding: 12px;
+      border-radius: 8px; font-size: 9pt; line-height: 1.5; white-space: pre-wrap;
+    }
+    .section-label {
+      font-size: 10pt; text-transform: uppercase; letter-spacing: .12em;
+      color: #6b7280; margin: 28px 0 10px; font-weight: 700;
+    }
+    footer { margin-top: 24px; text-align: center; color: #9ca3af; font-size: 9pt; }
+    .page-break { break-inside: avoid; page-break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <h1>Autoro Swoop</h1>
+    <p class="sub">AI Marketing Platform - прототипы и MVP</p>
+    <p class="lead">Модульная B2B-платформа для marketing automation, RAG chat agents, research, scraping и voice AI. Сборка через vibecoding (Cursor, Antigravity) + production backend на FastAPI.</p>
+    <p class="meta">Владислав Холодин · autoro.tech@gmail.com · t.me/vlad_xg · linkedin.com/in/vlad-autoro-tech<br />
+      <a href="https://autoro.tech">https://autoro.tech</a> ·
+      <a href="https://swoop.autoro.tech">https://swoop.autoro.tech</a> ·
+      <a href="https://autoro.tech/resume/">https://autoro.tech/resume/</a>
+    </p>
+  </header>
+
+  <section class="platform">
+    <h3>Общий стек платформы</h3>
+    <p style="margin:0">React 18 · TypeScript · Vite · Tailwind · FastAPI agent-api · PostgreSQL/Supabase · pgvector · Docker · n8n · OpenRouter/Gemini/GLM · Cursor · Antigravity · MCP</p>
+  </section>
+
+  
+    <article class="project page-break">
+      <img src="screenshots/01_Deep-Search-ed004188-4952-4c2b-b242-02fca7d2136d.png" alt="Deep Search" />
+      <div class="body">
+        <div class="head">
+          <h2>Deep Search</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/deep-search">swoop.autoro.tech/admin/deep-search</a>
+        </div>
+        <p class="lead">Deep Research для маркетинга: параллельный поиск по SearXNG, Brave, Wikipedia, ArXiv и News, загрузка 25+ страниц, re-rank и структурированный отчёт с цитатами.</p>
+        <dl>
+          <dt>Задача</dt><dd>Дать маркетологу Perplexity-уровень research внутри Swoop без смены инструментов.</dd>
+          <dt>Моя роль</dt><dd>Product-архитектура, UI, worker pipeline, routing моделей через OpenRouter.</dd>
+          <dt>Стек</dt><dd>React · TypeScript · FastAPI · deep-search-worker · OpenRouter · Gemini · SearXNG · Brave API · PostgreSQL</dd>
+          <dt>Результат</dt><dd>Live-модуль в админке swoop.autoro.tech; история запросов в deep_search_history.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/02_Chat-Agent-RAG-9fb9239c-a8a6-4e86-b6d1-acc2753866fd.png" alt="Chat Agent (RAG)" />
+      <div class="body">
+        <div class="head">
+          <h2>Chat Agent (RAG)</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/chat-agent">swoop.autoro.tech/admin/chat-agent</a>
+        </div>
+        <p class="lead">Клиентские AI-боты с knowledge base: Base RAG по ролям, загрузка файлов/URL, виджет на сайт, Telegram/WhatsApp и webhook-интеграции.</p>
+        <dl>
+          <dt>Задача</dt><dd>Мультитenant chat-агенты для сайтов клиентов: RAG, embed-виджет и handoff оператору.</dd>
+          <dt>Моя роль</dt><dd>End-to-end: admin UI, chat-gateway, n8n-шаблоны, pgvector indexing, provisioning доменов.</dd>
+          <dt>Стек</dt><dd>React · TypeScript · Node.js chat-gateway · n8n · Supabase · pgvector · Gemini · Telegram Bot API</dd>
+          <dt>Результат</dt><dd>Production-боты на autoro.tech, compod.us, pquoc.com; client admin: email &gt; bot &gt; domains &gt; embed snippet.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/03_AI-Blog-Engine-f82ca279-5506-490f-bfeb-95f49cf2fc86.png" alt="AI Blog Engine" />
+      <div class="body">
+        <div class="head">
+          <h2>AI Blog Engine</h2>
+          <span class="badge">Beta</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/blog">swoop.autoro.tech/admin/blog</a>
+        </div>
+        <p class="lead">Генерация и публикация постов: SEO-мета, optimize content, AI-изображения, аудио Deep Dive и мультиязык (EN/RU/ES/IT/FR/VI/KZ).</p>
+        <dl>
+          <dt>Задача</dt><dd>Автоматизировать SEO-блог для marketing-команды: LLM + media pipeline.</dd>
+          <dt>Моя роль</dt><dd>Blog admin UI, редактор постов, SEO analyzer, translation flow, blog API.</dd>
+          <dt>Стек</dt><dd>React · TypeScript · LLM (Gemini/OpenRouter) · blog API · SEO scoring · image generation</dd>
+          <dt>Результат</dt><dd>Beta-модуль в Swoop admin; workflow мультиязычного контента.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/04_Expired-Domains-Hunter-9cb1c66b-f53c-450a-9a6f-71010abf00f6.png" alt="Expired Domains Hunter" />
+      <div class="body">
+        <div class="head">
+          <h2>Expired Domains Hunter</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/expired-domains">swoop.autoro.tech/admin/expired-domains</a>
+        </div>
+        <p class="lead">Поиск expired-доменов по ключам и бизнес-теме: фильтры TF/BL, spam score, business score (Majestic) для SEO / PBN и brandable-доменов.</p>
+        <dl>
+          <dt>Задача</dt><dd>Находить ценные expired-домены для SEO и brand acquisition с автоматическим scoring.</dd>
+          <dt>Моя роль</dt><dd>Scoring-модель, admin UI, интеграция ExpiredDomains.net, API endpoints.</dd>
+          <dt>Стек</dt><dd>React · FastAPI · ExpiredDomains.net API · Majestic metrics · PostgreSQL</dd>
+          <dt>Результат</dt><dd>Live-поиск с business score sorting и историей запросов.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/05_Marketing-Audit-17e27bf7-b9db-4ef1-9ea7-b2bc50ee30bb.png" alt="Marketing Audit" />
+      <div class="body">
+        <div class="head">
+          <h2>Marketing Audit</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/">swoop.autoro.tech/</a>
+        </div>
+        <p class="lead">AI-аудит загруженных данных и каталогов: промпт + LLM (Gemini/GLM), очередь анализа и выгрузка результата для маркетинговых решений.</p>
+        <dl>
+          <dt>Задача</dt><dd>Анализировать ad exports, каталоги и spreadsheets с vector RAG и multi-LLM отчётами.</dd>
+          <dt>Моя роль</dt><dd>Task pipeline, file upload, vector store, processor worker, task detail UI.</dd>
+          <dt>Стек</dt><dd>React · FastAPI · marketing-audit-processor · pgvector · Gemini · GLM · CSV/XLSX/PDF ingest</dd>
+          <dt>Результат</dt><dd>Production flow: upload &gt; queue &gt; AI analysis &gt; downloadable report.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/06_LLM-Routing-Settings-9570ede9-2362-4984-a643-830d63348262.png" alt="LLM Routing &amp; API Keys · AUTORO-API" />
+      <div class="body">
+        <div class="head">
+          <h2>LLM Routing &amp; API Keys · AUTORO-API</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/settings">swoop.autoro.tech/admin/settings</a>
+        </div>
+        <p class="lead">AUTORO-API: наш OpenAI-compatible gateway с авто-выбором модели, tier routing, ротацией ключей (round-robin) и failover провайдеров. Integration Center для Gemini/OpenRouter/Groq и search-ключей (Brave/Tavily).</p>
+        <dl>
+          <dt>Задача</dt><dd>Собрать AUTORO-API - единый OpenAI-compatible LLM gateway с автоматическим выбором модели/провайдера и ротацией ключей для всех модулей Swoop.</dd>
+          <dt>Моя роль</dt><dd>Архитектура AUTORO-API, POST /api/v1/chat/completions, provider panel UI, key health API, tier routing, round-robin failover, DeerFlow sync.</dd>
+          <dt>Стек</dt><dd>AUTORO-API · FastAPI · OpenAI-compatible API · React · Supabase · OpenRouter · Gemini · Groq · GLM · round-robin · tier routing · key health</dd>
+          <dt>Результат</dt><dd>Live AUTORO-API на swoop.autoro.tech/api/v1/chat/completions; все Swoop workers используют key pools с auto-routing и failover провайдеров.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/07_Web-Scraping-Automation-f334a2d8-7f52-4ae7-bf02-a86a58c55126.png" alt="Web Scraping &amp; Automation" />
+      <div class="body">
+        <div class="head">
+          <h2>Web Scraping &amp; Automation</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://swoop.autoro.tech/admin/web-scraping">swoop.autoro.tech/admin/web-scraping</a>
+        </div>
+        <p class="lead">Единый scraping-сервис: Scrapling/GoLogin Cloud Browser, CSV-шаблоны, proxy rotation, AI extraction (Gemini) и сценарии в browser profiles.</p>
+        <dl>
+          <dt>Задача</dt><dd>Собирать structured data из web для marketing, research и catalog pipelines.</dd>
+          <dt>Моя роль</dt><dd>Scrape API, job queue, admin UI, GoLogin stealth mode, Gemini extract prompts.</dd>
+          <dt>Стек</dt><dd>React · FastAPI · scrapling-worker · GoLogin API · Gemini · PostgreSQL · proxy rotation</dd>
+          <dt>Результат</dt><dd>Live jobs: режимы fetcher, stealth, dynamic, gologin; batch и crawl.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/08_Realtime-Call-Translation-0fab89e0-afda-48a0-9a67-f82676d2fb5c.png" alt="Keept - Realtime Voice AI" />
+      <div class="body">
+        <div class="head">
+          <h2>Keept - Realtime Voice AI</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://keept.me">keept.me</a>
+        </div>
+        <p class="lead">Keept: realtime voice AI - TTS (Google Journey / ElevenLabs), SIP/VoIP, Zoom/Teams/Telegram/WhatsApp для перевода и голосовых агентов.</p>
+        <dl>
+          <dt>Задача</dt><dd>Realtime перевод звонков и голосовые агенты через SIP, Zoom, Teams и мессенджеры.</dd>
+          <dt>Моя роль</dt><dd>Keept Admin console, TTS routing, gateway settings, интеграция с Swoop LLM.</dd>
+          <dt>Стек</dt><dd>React · LiveKit · Google Cloud TTS · ElevenLabs · SIP/VoIP · RTMP · FastAPI</dd>
+          <dt>Результат</dt><dd>Keept Admin live; streaming TTS sub-200ms; multi-gateway architecture.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/09_FinDefender-2e711d60-d94e-4db3-8cc0-f70107871fd8.png" alt="FinDefender" />
+      <div class="body">
+        <div class="head">
+          <h2>FinDefender</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://t.me/FinDefender_bot">t.me/FinDefender_bot</a>
+        </div>
+        <p class="lead">Бот квалификации по банкротству: Telegram + HITL-эскалация, backend API и RAG/KB (sync из файлов) для legal-воронки.</p>
+        <dl>
+          <dt>Задача</dt><dd>Квалифицировать лиды по банкротству через Telegram-бот с legal KB и human handoff.</dd>
+          <dt>Моя роль</dt><dd>Интеграция в Swoop admin, KB proxy, bot settings, FinDefender FastAPI upstream.</dd>
+          <dt>Стек</dt><dd>React · FastAPI · Telegram Bot API · RAG · HITL group · Python FinDefender service</dd>
+          <dt>Результат</dt><dd>Live-бот @FinDefender_bot; HITL-группа @findefender; KB ingest через admin panel.</dd>
+        </dl>
+      </div>
+    </article>
+
+    <article class="project page-break">
+      <img src="screenshots/image-52911f40-ba63-49b7-a7b6-3eeca769c302.png" alt="pquoc.com - туристическая платформа Phu Quoc" />
+      <div class="body">
+        <div class="head">
+          <h2>pquoc.com - туристическая платформа Phu Quoc</h2>
+          <span class="badge">Live</span>
+          <a class="url" href="https://pquoc.com">pquoc.com</a>
+        </div>
+        <p class="lead">785 отелей с weighted rating из Google, Booking, Trip.com, Tripadvisor, Klook; карта, фильтры, статический сайт на 8 языках.</p>
+        <dl>
+          <dt>Задача</dt><dd>Tourism GTM для Phu Quoc: hotel discovery, multilingual SEO, RAG chat assistant, репутация Maps/отзовиков.</dd>
+          <dt>Моя роль</dt><dd>PM, marketing, static site build, chat widget, content pipeline, VPS deploy.</dd>
+          <dt>Стек</dt><dd>Static HTML/CSS/JS · nginx · Docker · n8n · Supabase pgvector · Gemini · chat-gateway · Cloudflare</dd>
+          <dt>Результат</dt><dd>Live pquoc.com (8 языков, 785 отелей); чат Ask Phu Quoc + Telegram RAG bot.</dd>
+        </dl>
+      </div>
+    </article>
+
+  <p class="section-label">Дополнительный модуль (без скриншота)</p>
+  
+    <article class="project assistant page-break">
+      <div class="assistant-banner">
+        <div class="icon">TG</div>
+        <div>
+          <h2>Личный Telegram-ассистент</h2>
+          <p>Единый webhook /api/v1/telegram/autoro-gateway: команды ассистента и память уходят в n8n (/research, /context), остальное - fallback Hermes. Assistant Memory UI синхронизирует задачи и заметки в Obsidian.</p>
+        </div>
+      </div>
+      <div class="body">
+        <dl>
+          <dt>Задача</dt><dd>Личный productivity-ассистент в Telegram с долгой памятью, research-командами и sync в Obsidian.</dd>
+          <dt>Моя роль</dt><dd>Gateway routing в agent-api, n8n workflows, Assistant Memory admin UI, интеграция Obsidian MCP.</dd>
+          <dt>Стек</dt><dd>Telegram Bot API · FastAPI agent-api · n8n · Supabase personal_assistant_memory · Obsidian MCP · Hermes fallback</dd>
+          <dt>Результат</dt><dd>Ежедневное использование: capture задач/заметок из Telegram, research-команды, memory dashboard в Swoop admin.</dd>
+        </dl>
+        <pre class="flow">Telegram Bot
+  → agent-api /api/v1/telegram/autoro-gateway
+  → n8n (assistant + memory commands)
+  → Supabase personal_assistant_memory
+  → Obsidian vault sync
+  → fallback: Hermes webhook</pre>
+      </div>
+    </article>
+
+  <footer>Портфолио по live-модулям Swoop admin · 2026</footer>
+</body>
+</html>

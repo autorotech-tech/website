@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { Copy, Plus, Trash2, Globe, Link as LinkIcon, Save, Upload, FileText, AlertCircle, CheckCircle, Play } from 'lucide-react'
+import { Copy, Plus, Trash2, Globe, Link as LinkIcon, Save, Upload, FileText, AlertCircle, CheckCircle, Play, Send } from 'lucide-react'
 
 type ChatAgent = {
   id: string
@@ -9,6 +9,9 @@ type ChatAgent = {
   default_lang: string
   data_region: string
   n8n_webhook_url: string | null
+  telegram_bot_token?: string | null
+  telegram_bot_username?: string | null
+  telegram_webhook_url?: string | null
   bot_role?: string | null
   created_at: string
 }
@@ -28,7 +31,9 @@ type ChatAgentSource = {
   title: string | null
   url: string | null
   storage_path: string | null
+  markdown_path?: string | null
   status: string
+  error?: string | null
   bytes: number
   created_at: string
 }
@@ -73,6 +78,46 @@ function isSafeHttpUrl(input: string) {
   }
 }
 
+type TelegramLiveStatus = {
+  connected: boolean
+  bot_username: string | null
+  webhook_url: string | null
+  last_error: string | null
+}
+
+function sourceStatusBadge(status: string): { label: string; className: string } {
+  switch (status) {
+    case 'done':
+      return { label: 'В RAG', className: 'bg-green-100 text-green-800' }
+    case 'converting':
+      return { label: 'PDF → Markdown', className: 'bg-sky-100 text-sky-800' }
+    case 'error':
+      return { label: 'Ошибка', className: 'bg-red-100 text-red-800' }
+    case 'pending':
+      return { label: 'Загружен, ждёт индексации', className: 'bg-amber-100 text-amber-800' }
+    default:
+      return { label: status || 'неизвестно', className: 'bg-gray-100 text-gray-700' }
+  }
+}
+
+function telegramBadge(
+  live: TelegramLiveStatus | null,
+  agent: ChatAgent,
+): { label: string; className: string } {
+  const uname = live?.bot_username || agent.telegram_bot_username
+  const connected = live?.connected || Boolean(agent.telegram_bot_username && agent.telegram_webhook_url)
+  if (connected) {
+    return {
+      label: `Подключён${uname ? ` @${String(uname).replace(/^@/, '')}` : ''}`,
+      className: 'bg-green-100 text-green-800',
+    }
+  }
+  if ((agent.telegram_bot_token || '').trim()) {
+    return { label: 'Токен есть, webhook не подтверждён', className: 'bg-amber-100 text-amber-800' }
+  }
+  return { label: 'Не подключён', className: 'bg-gray-100 text-gray-700' }
+}
+
 export function ChatAgents() {
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -94,10 +139,14 @@ export function ChatAgents() {
   const [addingUrl, setAddingUrl] = useState(false)
   const [indexing, setIndexing] = useState(false)
   const [jobs, setJobs] = useState<ChatAgentIndexJob[]>([])
+  const [telegramBusy, setTelegramBusy] = useState(false)
+  const [telegramMsg, setTelegramMsg] = useState<string | null>(null)
+  const [telegramLive, setTelegramLive] = useState<TelegramLiveStatus | null>(null)
 
   const selected = useMemo(() => agents.find(a => a.id === selectedBotId) || null, [agents, selectedBotId])
   const selectedDomains = useMemo(() => domains.filter(d => d.bot_id === selectedBotId), [domains, selectedBotId])
   const selectedSources = useMemo(() => (selected ? sources.filter(s => s.bot_id === selected.id) : []), [sources, selected])
+  const telegramBadgeView = selected ? telegramBadge(telegramLive, selected) : null
   const selectedLastJob = useMemo(() => {
     if (!selected) return null
     const list = jobs.filter(j => j.bot_id === selected.id)
@@ -105,8 +154,8 @@ export function ChatAgents() {
     return list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]
   }, [jobs, selected])
 
-  const fetchAll = async () => {
-    setLoading(true)
+  const fetchAll = async (opts?: { quiet?: boolean }) => {
+    if (!opts?.quiet) setLoading(true)
 
     const { data: auth } = await supabase.auth.getUser()
     const user = auth?.user
@@ -128,8 +177,25 @@ export function ChatAgents() {
       .order('created_at', { ascending: false })
 
     if (aErr) console.error(aErr)
-    setAgents((aData || []) as any)
-    if (!selectedBotId && aData && aData.length > 0) setSelectedBotId(aData[0].id)
+    let list = (aData || []) as ChatAgent[]
+    if (!aErr && list.length === 0 && user) {
+      const { data: created, error: createErr } = await supabase
+        .from('chat_agents')
+        .insert({
+          owner_user_id: user.id,
+          name: 'Sales consultant',
+          status: 'active',
+          default_lang: 'ru',
+          data_region: 'global',
+          bot_role: 'sales',
+        })
+        .select('*')
+        .single()
+      if (createErr) console.error(createErr)
+      else if (created) list = [created as ChatAgent]
+    }
+    setAgents(list)
+    if (!selectedBotId && list.length > 0) setSelectedBotId(list[0].id)
 
     const { data: dData, error: dErr } = await supabase
       .from('chat_agent_domains')
@@ -152,13 +218,57 @@ export function ChatAgents() {
     if (jErr) console.error(jErr)
     setJobs((jData || []) as any)
 
-    setLoading(false)
+    if (!opts?.quiet) setLoading(false)
+  }
+
+  const fetchTelegramStatus = async (botId: string) => {
+    try {
+      const res = await fetch(
+        `https://chat.autoro.tech/v1/chat-agent/telegram/status?bot_id=${encodeURIComponent(botId)}`,
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data) {
+        setTelegramLive({ connected: false, bot_username: null, webhook_url: null, last_error: data?.error || `HTTP ${res.status}` })
+        return
+      }
+      setTelegramLive({
+        connected: Boolean(data.connected),
+        bot_username: data.bot_username || null,
+        webhook_url: data.webhook_url || null,
+        last_error: data.last_error || null,
+      })
+    } catch (e: unknown) {
+      setTelegramLive({
+        connected: false,
+        bot_username: null,
+        webhook_url: null,
+        last_error: e instanceof Error ? e.message : 'не удалось проверить Telegram',
+      })
+    }
   }
 
   useEffect(() => {
     fetchAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!selectedBotId) {
+      setTelegramLive(null)
+      return
+    }
+    void fetchTelegramStatus(selectedBotId)
+  }, [selectedBotId])
+
+  useEffect(() => {
+    if (!selectedLastJob) return
+    if (selectedLastJob.status !== 'queued' && selectedLastJob.status !== 'running') return
+    const timer = window.setInterval(() => {
+      void fetchAll({ quiet: true })
+    }, 3000)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLastJob?.id, selectedLastJob?.status])
 
   const installSnippet = useMemo(() => {
     if (!selected) return ''
@@ -189,6 +299,7 @@ export function ChatAgents() {
           status: 'active',
           default_lang: newLang,
           data_region: 'global',
+          bot_role: 'sales',
           // Клиент не должен знать про n8n: webhook назначается админом позже.
           n8n_webhook_url: isAdmin ? (newWebhookUrl.trim() || null) : null,
         })
@@ -220,6 +331,7 @@ export function ChatAgents() {
           default_lang: selected.default_lang,
           status: selected.status,
           bot_role: selected.bot_role || 'support',
+          telegram_bot_token: selected.telegram_bot_token || null,
         })
         .eq('id', selected.id)
       if (error) throw error
@@ -229,6 +341,46 @@ export function ChatAgents() {
       alert(`Не удалось сохранить: ${e.message || 'unknown error'}`)
     } finally {
       setSavingBot(false)
+    }
+  }
+
+  const connectTelegram = async () => {
+    if (!selected) return
+    const token = (selected.telegram_bot_token || '').trim()
+    if (!token) return alert('Сначала вставьте токен от @BotFather и нажмите Save')
+    setTelegramBusy(true)
+    setTelegramMsg(null)
+    try {
+      const { error } = await supabase
+        .from('chat_agents')
+        .update({ telegram_bot_token: token })
+        .eq('id', selected.id)
+      if (error) throw error
+      const res = await fetch(
+        `https://chat.autoro.tech/v1/chat-agent/telegram/setup?bot_id=${encodeURIComponent(selected.id)}`,
+        { method: 'POST' },
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        setTelegramMsg(data?.error || data?.description || `HTTP ${res.status}`)
+        return
+      }
+      const uname = data.bot_username ? `@${data.bot_username}` : 'бот'
+      setTelegramMsg(`Подключено: ${uname}`)
+      setTelegramLive({
+        connected: Boolean(data.connected ?? data.ok),
+        bot_username: data.bot_username || null,
+        webhook_url: data.webhook_url || null,
+        last_error: data.description || null,
+      })
+      setAgents(prev => prev.map(a => a.id === selected.id
+        ? { ...a, telegram_bot_username: data.bot_username || a.telegram_bot_username, telegram_webhook_url: data.webhook_url || a.telegram_webhook_url }
+        : a))
+      await fetchTelegramStatus(selected.id)
+    } catch (e: any) {
+      setTelegramMsg(e.message || 'не удалось подключить Telegram')
+    } finally {
+      setTelegramBusy(false)
     }
   }
 
@@ -328,6 +480,7 @@ export function ChatAgents() {
         setSources(prev => [rec as any, ...prev])
         setUploadStatus(prev => ({ ...prev, [key]: 'success' }))
       }
+      await indexNow({ silent: true })
     } finally {
       setUploading(false)
     }
@@ -367,6 +520,7 @@ export function ChatAgents() {
       if (error) throw error
       setSources(prev => [rec as any, ...prev])
       setUrlInput('')
+      await indexNow({ silent: true })
     } catch (e: any) {
       console.error(e)
       alert('Не удалось добавить ссылку')
@@ -391,13 +545,13 @@ export function ChatAgents() {
     }
   }
 
-  const indexNow = async () => {
+  const indexNow = async (opts?: { silent?: boolean }) => {
     if (!selected) return
     const { data: auth } = await supabase.auth.getUser()
     const user = auth?.user
     if (!user) return alert('Сессия не найдена. Перезайдите.')
 
-    if (selectedSources.length === 0) {
+    if (selectedSources.length === 0 && !opts?.silent) {
       alert('Сначала добавьте хотя бы один источник (файл или ссылка).')
       return
     }
@@ -416,10 +570,10 @@ export function ChatAgents() {
         .single()
       if (error) throw error
       setJobs(prev => [job as any, ...prev])
-      alert('Индексация поставлена в очередь (queued).')
+      if (!opts?.silent) alert('Индексация поставлена в очередь. PDF конвертируется в Markdown локально, без LLM-токенов.')
     } catch (e) {
       console.error(e)
-      alert('Не удалось создать задачу индексации')
+      if (!opts?.silent) alert('Не удалось создать задачу индексации')
     } finally {
       setIndexing(false)
     }
@@ -624,9 +778,49 @@ export function ChatAgents() {
                     </div>
                   ) : (
                     <div className="md:col-span-3 text-xs border rounded-md px-3 py-2 bg-gray-50 text-gray-600">
-                      Статус подключения: {selected.n8n_webhook_url ? 'Connected' : 'Pending (ожидает назначения админом)'}
+                      Сайт-виджет работает через Chat Agent. Для Telegram админ не нужен — статус ниже.
                     </div>
                   )}
+
+                  <div className="md:col-span-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-xs text-gray-500">Telegram</div>
+                      {telegramBadgeView && (
+                        <span className={`text-xs px-2 py-1 rounded-full ${telegramBadgeView.className}`}>
+                          {telegramBadgeView.label}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500">Токен от @BotFather</div>
+                    <input
+                      className="border rounded-md px-3 py-2 text-sm w-full"
+                      type="password"
+                      autoComplete="off"
+                      placeholder="123456:ABC... токен от @BotFather"
+                      value={selected.telegram_bot_token || ''}
+                      onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, telegram_bot_token: e.target.value } : a))}
+                    />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={connectTelegram}
+                        disabled={telegramBusy || !(selected.telegram_bot_token || '').trim()}
+                        className="px-3 py-2 bg-sky-600 text-white rounded-md hover:bg-sky-700 disabled:opacity-60 text-sm flex items-center gap-2"
+                      >
+                        <Send size={16} />
+                        {telegramBusy ? 'Подключаю…' : 'Подключить Telegram'}
+                      </button>
+                      <div className="text-xs text-gray-400">
+                        Бот отвечает в личке всегда; в группе - только на @mention или reply на своё сообщение.
+                      </div>
+                    </div>
+                    {telegramMsg && (
+                      <pre className="text-xs font-mono bg-gray-50 border rounded-md p-2 overflow-x-auto whitespace-pre-wrap">{telegramMsg}</pre>
+                    )}
+                    {telegramLive?.last_error && !telegramLive.connected && (
+                      <div className="text-xs text-red-600">Telegram: {telegramLive.last_error}</div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="bg-gray-50 border rounded-lg p-3">
@@ -660,12 +854,26 @@ export function ChatAgents() {
                   <div className="flex items-center gap-2">
                     {selectedLastJob && (
                       <div className="text-xs text-gray-500">
-                        <div>Last job: <span className={`font-medium ${selectedLastJob.status === 'done' ? 'text-green-600' : selectedLastJob.status === 'error' ? 'text-red-600' : 'text-gray-700'}`}>{selectedLastJob.status}</span></div>
+                        <div>
+                          Индексация:{' '}
+                          <span className={`font-medium ${
+                            selectedLastJob.status === 'done' ? 'text-green-600' :
+                            selectedLastJob.status === 'error' ? 'text-red-600' :
+                            selectedLastJob.status === 'running' ? 'text-sky-700' :
+                            'text-amber-700'
+                          }`}>
+                            {selectedLastJob.status === 'queued' ? 'в очереди' :
+                              selectedLastJob.status === 'running' ? 'идёт (PDF → Markdown → RAG)' :
+                              selectedLastJob.status === 'done' ? 'готово' :
+                              selectedLastJob.status === 'error' ? 'ошибка' :
+                              selectedLastJob.status}
+                          </span>
+                        </div>
                         {selectedLastJob.error && <div className="text-red-600 mt-1">{selectedLastJob.error}</div>}
                       </div>
                     )}
                     <button
-                      onClick={indexNow}
+                      onClick={() => { void indexNow() }}
                       disabled={indexing || selectedSources.length === 0}
                       className="px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-sm flex items-center gap-2"
                       title={selectedSources.length === 0 ? 'Сначала добавьте хотя бы один источник (файл или ссылку)' : 'Запустить индексацию всех источников'}
@@ -723,7 +931,8 @@ export function ChatAgents() {
                     <li><span className="font-medium">Лимиты</span>: максимум <span className="font-semibold">10 источников</span> на бота, максимум <span className="font-semibold">10MB</span> на один файл. При достижении лимита кнопки загрузки будут отключены.</li>
                     <li><span className="font-medium">Типы файлов</span>: поддерживаются <span className="font-semibold">PDF, CSV, TXT, MD</span>. PDF по ссылке не поддерживается — загружайте PDF файлом через "Upload files".</li>
                     <li><span className="font-medium">Ссылки (URL)</span>: разрешены только <span className="font-semibold">http/https</span> и только <span className="font-semibold">HTML-страницы</span>. Запрещены: localhost, приватные IP-адреса (127.0.0.1, 192.168.x.x и т.д.).</li>
-                    <li><span className="font-medium">Индексация</span>: после добавления источников нажмите <span className="font-semibold">Index now</span> для запуска индексации. Статус последней задачи отображается рядом с кнопкой. Индексация может занять несколько минут.</li>
+                    <li><span className="font-medium">PDF</span>: файл конвертируется в Markdown локально (pdftotext), без LLM-токенов, затем чанки попадают в RAG.</li>
+                    <li><span className="font-medium">Индексация</span>: после загрузки стартует автоматически. Статус каждого файла: загружен / PDF→Markdown / в RAG / ошибка.</li>
                     <li><span className="font-medium">Безопасность</span>: ссылки <span className="font-semibold">не исполняются как код</span>, JavaScript не выполняется. Мы извлекаем только текстовое содержимое HTML-страниц безопасным способом.</li>
                     <li><span className="font-medium">Base RAG</span>: администратор может загрузить базовые материалы для ролей (support/sales), которые автоматически подмешиваются при индексации всем ботам соответствующей роли.</li>
                   </ul>
@@ -750,7 +959,9 @@ export function ChatAgents() {
                   )}
                   {sources
                     .filter(s => s.bot_id === selected.id)
-                    .map((s) => (
+                    .map((s) => {
+                      const badge = sourceStatusBadge(s.status)
+                      return (
                       <div key={s.id} className="flex items-center justify-between bg-white border rounded-md px-3 py-2">
                         <div className="flex items-center gap-3 min-w-0">
                           <FileText size={16} className="text-blue-600 shrink-0" />
@@ -759,19 +970,25 @@ export function ChatAgents() {
                               {s.source_type === 'url' ? s.url : s.title}
                             </div>
                             <div className="text-xs text-gray-500">
-                              {s.source_type} • {s.status}
+                              {s.source_type === 'upload' ? 'файл' : 'ссылка'}
+                              {s.markdown_path ? ' • Markdown сохранён' : ''}
+                              {s.error ? ` • ${s.error}` : ''}
                             </div>
                           </div>
                         </div>
-                        <button
-                          onClick={() => deleteSource(s)}
-                          className="text-red-600 hover:text-red-800 p-1"
-                          title="Delete source"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-xs px-2 py-1 rounded-full ${badge.className}`}>{badge.label}</span>
+                          <button
+                            onClick={() => deleteSource(s)}
+                            className="text-red-600 hover:text-red-800 p-1"
+                            title="Delete source"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
-                    ))}
+                      )
+                    })}
                 </div>
               </div>
 

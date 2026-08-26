@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bookmarks Bro Settings</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      .hint { color: #475569; font-size: 13px; margin-bottom: 16px; }
+      .field { margin-bottom: 12px; }
+      label { display: block; font-size: 13px; margin-bottom: 6px; color: #111827; }
+      input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; }
+      .check { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; }
+      .actions { display: flex; gap: 10px; margin-top: 14px; }
+      button { border: none; border-radius: 8px; padding: 10px 14px; color: #fff; cursor: pointer; }
+      .save { background: #4f46e5; }
+      .test { background: #0f766e; }
+      #status { margin-top: 16px; white-space: pre-wrap; font-size: 13px; color: #334155; }
+    </style>
+  </head>
+  <body>
+    <h1>Bookmarks Bro Settings</h1>
+    <p class="hint">User flow in popup is one-click. Configure integration settings here.</p>
+
+    <div class="field">
+      <label for="apiBase">API Base</label>
+      <input id="apiBase" type="text" placeholder="https://swoop.autoro.tech" />
+    </div>
+    <div class="field">
+      <label for="workspaceId">Workspace ID</label>
+      <input id="workspaceId" type="text" placeholder="1" />
+    </div>
+    <div class="field">
+      <label for="profileId">Profile ID</label>
+      <input id="profileId" type="text" placeholder="chrome-xxxx" />
+    </div>
+    <label class="check">
+      <input type="checkbox" id="autoSync" />
+      Enable auto-sync every 30 minutes
+    </label>
+
+    <div class="actions">
+      <button id="saveBtn" class="save">Save Settings</button>
+      <button id="testBtn" class="test">Test Connection</button>
+    </div>
+    <div id="status"></div>
+
+    <script src="options.js"></script>
+  </body>
+  </html>

@@ -1,0 +1,10 @@
+# BB pooler: avoid host port 5433/6543 conflict with main Supabase stack.
+# Usage on VPS:
+#   cd /home/vladx/supabase-bookmarks-prod/docker
+#   docker-compose -p supabase-bookmarks -f docker-compose.bookmarks.yml \
+#     -f /path/to/docker-compose.pooler-port-override.yml up -d supavisor storage
+services:
+  supavisor:
+    ports:
+      - "5434:5432"
+      - "6544:6543"

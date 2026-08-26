@@ -1,0 +1,18 @@
+{
+  "update_id": 987654321,
+  "message": {
+    "message_id": 101,
+    "from": {
+      "id": 555000111,
+      "is_bot": false,
+      "first_name": "Vlad",
+      "username": "vlad_x"
+    },
+    "chat": {
+      "id": 555000111,
+      "type": "private"
+    },
+    "date": 1777777777,
+    "text": "Проверка e2e синхронизации в knowledge base: https://example.com/test-link AI automation pipeline"
+  }
+}

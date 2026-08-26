@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { Copy, Save, Trash2, ShieldAlert, Search, Users, Upload, FileText, Link as LinkIcon, ChevronDown, ChevronRight } from 'lucide-react'
+import { Copy, Save, Trash2, ShieldAlert, Search, Users, Upload, FileText, Link as LinkIcon, ChevronDown, ChevronRight, Send } from 'lucide-react'
 
 type Profile = { id: string; email: string; role: string }
 
@@ -14,6 +14,7 @@ type ChatAgent = {
   n8n_webhook_url: string | null
   telegram_bot_token: string | null
   whatsapp_phone_id: string | null
+  bot_role: string | null
   created_at: string
 }
 
@@ -60,6 +61,8 @@ export function AdminChatAgents() {
 
   // domainInput removed (admin UI does not edit per-bot domains)
   const [saving, setSaving] = useState(false)
+  const [telegramBusy, setTelegramBusy] = useState(false)
+  const [telegramMsg, setTelegramMsg] = useState<string | null>(null)
   const [baseKb, setBaseKb] = useState<BaseKbItem[]>([])
   const [baseKbUploading, setBaseKbUploading] = useState(false)
   const [baseKbUrl, setBaseKbUrl] = useState('')
@@ -223,6 +226,7 @@ export function AdminChatAgents() {
           n8n_webhook_url: selected.n8n_webhook_url,
           telegram_bot_token: selected.telegram_bot_token,
           whatsapp_phone_id: selected.whatsapp_phone_id,
+          bot_role: selected.bot_role === 'sales' ? 'sales' : 'support',
         })
         .eq('id', selected.id)
       if (error) throw error
@@ -232,6 +236,36 @@ export function AdminChatAgents() {
       alert(`Ошибка сохранения: ${e.message || 'unknown error'}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const connectTelegram = async () => {
+    if (!selected) return
+    const token = (selected.telegram_bot_token || '').trim()
+    if (!token) return alert('Сначала вставьте Telegram Bot Token и сохраните')
+    setTelegramBusy(true)
+    setTelegramMsg(null)
+    try {
+      const { error } = await supabase
+        .from('chat_agents')
+        .update({ telegram_bot_token: token })
+        .eq('id', selected.id)
+      if (error) throw error
+      const res = await fetch(
+        `https://chat.autoro.tech/v1/chat-agent/telegram/setup?bot_id=${encodeURIComponent(selected.id)}`,
+        { method: 'POST' },
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        setTelegramMsg(data?.error || data?.description || `HTTP ${res.status}`)
+        return
+      }
+      const uname = data.bot_username ? `@${data.bot_username}` : 'бот'
+      setTelegramMsg(`Подключено: ${uname}\n${data.webhook_url}`)
+    } catch (e: any) {
+      setTelegramMsg(e.message || 'не удалось подключить Telegram')
+    } finally {
+      setTelegramBusy(false)
     }
   }
 
@@ -621,6 +655,15 @@ export function AdminChatAgents() {
                           <option value="ru">ru</option>
                         </select>
 
+                        <select
+                          className="border rounded-md px-3 py-2 text-sm md:col-span-2"
+                          value={selected.bot_role || 'support'}
+                          onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, bot_role: e.target.value } : a))}
+                        >
+                          <option value="support">support — ответы по базе знаний, без воронки</option>
+                          <option value="sales">sales — консультант, ведёт к заявке / покупке</option>
+                        </select>
+
                         <input
                           className="border rounded-md px-3 py-2 text-sm md:col-span-2"
                           placeholder="n8n Webhook Production URL"
@@ -633,6 +676,15 @@ export function AdminChatAgents() {
                           value={selected.telegram_bot_token || ''}
                           onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, telegram_bot_token: e.target.value } : a))}
                         />
+                        <button
+                          type="button"
+                          onClick={connectTelegram}
+                          disabled={telegramBusy || !(selected.telegram_bot_token || '').trim()}
+                          className="border rounded-md px-3 py-2 text-sm bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 flex items-center gap-2 justify-center"
+                        >
+                          <Send size={16} />
+                          {telegramBusy ? 'Connecting…' : 'Connect Telegram'}
+                        </button>
                         <input
                           className="border rounded-md px-3 py-2 text-sm"
                           placeholder="WhatsApp Phone ID (Optional)"
@@ -640,6 +692,9 @@ export function AdminChatAgents() {
                           onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, whatsapp_phone_id: e.target.value } : a))}
                         />
                       </div>
+                      {telegramMsg && (
+                        <pre className="text-xs font-mono bg-gray-50 border rounded-md p-2 overflow-x-auto whitespace-pre-wrap">{telegramMsg}</pre>
+                      )}
 
                       <div className="bg-gray-50 border rounded-lg p-3">
                         <div className="flex items-center justify-between gap-3 flex-wrap">

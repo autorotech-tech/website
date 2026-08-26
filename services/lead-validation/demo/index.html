@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Lead Validation demo — score and gate inbound leads before they hit your CRM."
+    />
+    <title>Lead Validation · Autoro demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#try">Skip to form</a>
+
+    <div class="atmosphere" aria-hidden="true">
+      <div class="atmosphere__glow atmosphere__glow--a"></div>
+      <div class="atmosphere__glow atmosphere__glow--b"></div>
+      <div class="atmosphere__grid"></div>
+    </div>
+
+    <header class="topbar">
+      <p class="topbar__brand">
+        <span class="topbar__mark" aria-hidden="true"></span>
+        Autoro
+      </p>
+      <p
+        class="api-status"
+        id="api-status"
+        role="status"
+        aria-live="polite"
+        data-state="checking"
+      >
+        <span class="api-status__dot" aria-hidden="true"></span>
+        <span class="api-status__text">Checking API…</span>
+      </p>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="product-name">
+        <p class="hero__eyebrow">Turnkey microservice demo</p>
+        <h1 id="product-name" class="hero__name">Lead Validation</h1>
+        <p class="hero__headline">
+          Gate junk leads before they waste a sales cycle.
+        </p>
+        <p class="hero__support">
+          Drop a lead in, get status, score, and check details from the local
+          API in one round trip.
+        </p>
+        <p class="hero__cta-row">
+          <a class="btn btn--primary" href="#try">Try a lead</a>
+        </p>
+      </section>
+
+      <section class="workspace" id="try" aria-labelledby="form-heading">
+        <div class="workspace__form">
+          <header class="section-head">
+            <h2 id="form-heading">Sample lead</h2>
+            <p>
+              Posts to
+              <code>POST /v1/leads/validate</code>
+              on
+              <code>127.0.0.1:3105</code>.
+            </p>
+          </header>
+
+          <div
+            class="banner"
+            id="api-down-banner"
+            hidden
+            role="alert"
+          >
+            <strong>API unreachable.</strong>
+            Start the service on port 3105, then retry. See demo README.
+          </div>
+
+          <form
+            id="lead-form"
+            class="lead-form"
+            action="http://127.0.0.1:3105/v1/leads/validate"
+            method="post"
+            novalidate
+          >
+            <fieldset>
+              <legend class="visually-hidden">Lead fields</legend>
+
+              <div class="field">
+                <label for="email">
+                  Email
+                  <span class="req" aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  inputmode="email"
+                  enterkeyhint="next"
+                  required
+                  aria-required="true"
+                  aria-describedby="email-hint"
+                  placeholder="alex@acme.com"
+                />
+                <p class="hint" id="email-hint">Required. Disposable domains score as risky.</p>
+              </div>
+
+              <div class="field">
+                <label for="phone">Phone</label>
+                <input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  autocomplete="tel"
+                  inputmode="tel"
+                  enterkeyhint="next"
+                  aria-describedby="phone-hint"
+                  placeholder="+1 202 555 0123"
+                />
+                <p class="hint" id="phone-hint">Optional. Normalized to E.164 when valid.</p>
+              </div>
+
+              <div class="field-row">
+                <div class="field">
+                  <label for="name">Name</label>
+                  <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    autocomplete="name"
+                    enterkeyhint="next"
+                    placeholder="Alex Rivera"
+                  />
+                </div>
+                <div class="field">
+                  <label for="company">Company</label>
+                  <input
+                    id="company"
+                    name="company"
+                    type="text"
+                    autocomplete="organization"
+                    enterkeyhint="next"
+                    placeholder="Acme Labs"
+                  />
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="source">Source</label>
+                <input
+                  id="source"
+                  name="source"
+                  type="text"
+                  autocomplete="off"
+                  enterkeyhint="done"
+                  placeholder="landing"
+                  value="demo"
+                />
+              </div>
+            </fieldset>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn--primary" id="submit-btn">
+                Validate lead
+              </button>
+              <button type="button" class="btn btn--ghost" id="fill-sample">
+                Fill sample
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <aside
+          class="workspace__result"
+          aria-labelledby="result-heading"
+        >
+          <header class="section-head">
+            <h2 id="result-heading">Result</h2>
+            <p>Status, score, and per-check detail from the API.</p>
+          </header>
+
+          <div
+            id="result-panel"
+            class="result"
+            data-state="idle"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <div class="result__idle" id="result-idle">
+              <p>Submit a lead to see validation output here.</p>
+            </div>
+
+            <div class="result__body" id="result-body" hidden>
+              <div class="result__top">
+                <p class="result__status" id="result-status">
+                  <span class="result__status-label" id="result-status-label"
+                    >—</span
+                  >
+                </p>
+                <div
+                  class="score"
+                  id="score-wrap"
+                  role="img"
+                  aria-label="Score 0 percent"
+                >
+                  <svg class="score__ring" viewBox="0 0 96 96" aria-hidden="true">
+                    <circle class="score__track" cx="48" cy="48" r="40" />
+                    <circle
+                      class="score__fill"
+                      id="score-fill"
+                      cx="48"
+                      cy="48"
+                      r="40"
+                      pathLength="100"
+                    />
+                  </svg>
+                  <p class="score__value">
+                    <span id="score-value">0</span
+                    ><span class="score__unit">%</span>
+                  </p>
+                </div>
+              </div>
+
+              <ul class="checks" id="checks-list"></ul>
+
+              <details class="raw">
+                <summary>Raw JSON</summary>
+                <pre id="raw-json" tabindex="0"></pre>
+              </details>
+            </div>
+
+            <div class="result__error" id="result-error" hidden>
+              <p id="result-error-text"></p>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        Static demo for
+        <code>services/lead-validation</code>
+        · API default
+        <code>http://127.0.0.1:3105</code>
+      </p>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+keyword,tier,page,region,wordstat_demand,wordstat_clicks,wordstat_query,wordstat_competition,serp_askona_host,serp_lamoda_host,serp_target_url,wordstat_source,notes
+дешевые матрасы,HF,askona,213,184,110,дешевые матрасы,HIGH,yes,no,yes,wordcraft-20260722,Wordstat WS — все формы; целевая /matrasy/deshevye-matrasy/
+недорогие матрасы,HF,askona,213,447,310,недорогие матрасы,HIGH,yes,no,yes,wordcraft-20260722,каннибализация с nedorogie-matrasy
+матрасы купить,HF,askona,213,7751,4042,матрасы купить,HIGH,yes,yes,yes,wordcraft-20260722,широкий транзакционный
+дешевые матрасы askona,MF,askona,213,10,,,,,,,,wordstat-proxy-20260722,бренд+категория; proxy ≤10 (аналог «недорогие матрасы аскона»=2); SerpAPI Wordstat ❌; Google Trends via Swoop 502
+недорогие матрасы аскона,MF,askona,213,2,1,недорогие матрасы аскона,HIGH,no,no,no,wordcraft-20260722,бренд + категория
+матрас недорого москва,MF,askona,213,20,12,матрас недорого москва,HIGH,yes,no,no,wordcraft-20260722,гео + price intent
+дешевый матрас 160x200 купить,LF,askona,213,71683,,,,,,,,wordstat-proxy-20260722,размер+price; proxy кластер 160×200 ~71 683 (openbusiness.ru 2021); точный WS — wordstat.yandex.com вручную
+матрас эконом класса askona,LF,askona,213,5,,,,,,,,wordstat-proxy-20260722,конкурирует /matrasy-ekonom-klassa/; proxy ≤5 (НЧ бренд); SerpAPI Wordstat ❌
+дешевые матрасы от производителя,MF,askona,213,,,,,no,no,no,wordcraft-20260722,единственный запрос с target в Brave #2
+женские спортивные брюки,HF,lamoda,213,147,79,женские спортивные брюки,HIGH,no,yes,yes,wordcraft-20260722,основной кластер; H1/Title рекомендуется «брюки»
+спортивные штаны женские,HF,lamoda,213,508,313,спортивные штаны женские,HIGH,no,yes,yes,wordcraft-20260722,синоним; target стабилен в Brave/Tavily
+спортивные брюки купить,HF,lamoda,213,31,21,спортивные брюки купить,HIGH,no,yes,yes,wordcraft-20260722,транзакционный без пола
+женские спортивные штаны lamoda,MF,lamoda,213,20,,,,,,,,wordstat-proxy-20260722,бренд+категория; proxy ≤20 (НЧ–СЧ бренд); target #1 Brave+Tavily+DDG; точный WS — wordstat.yandex.com вручную
+спортивные брюки женские купить интернет магазин,MF,lamoda,213,3,4,спортивные брюки женские купить в интернет магазине,HIGH,no,yes,yes,wordcraft-20260722,длинный коммерческий; близкий запрос в Wordcraft
+джоггеры женские купить,LF,lamoda,213,63,46,джоггеры женские купить,HIGH,no,yes,no,wordcraft-20260722,подкатегория Lamoda
+спортивные штаны для фитнеса женские,LF,lamoda,213,1,1,спортивные штаны для фитнеса женские,HIGH,no,yes,no,wordcraft-20260722,сценарий / FAQ
+утепленные спортивные брюки женские,LF,lamoda,213,9,14,утепленные спортивные брюки женские,HIGH,no,yes,yes,wordcraft-20260722,сезонный long-tail

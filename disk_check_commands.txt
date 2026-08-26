@@ -1,0 +1,47 @@
+# Команды для проверки использования диска на сервере
+# Скопируйте и выполните на сервере
+
+# 1. Общее использование диска
+df -h
+
+# 2. Самые большие директории в /home/vladx
+du -h --max-depth=1 /home/vladx 2>/dev/null | sort -hr | head -20
+
+# 3. Docker использование
+docker system df
+
+# 4. Остановленные контейнеры
+docker ps -a --filter "status=exited"
+
+# 5. Неиспользуемые образы
+docker images --filter "dangling=true"
+
+# 6. Размер Docker образов
+docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | sort -k3 -hr | head -10
+
+# 7. Размер логов Docker
+du -sh /var/lib/docker/containers/*/*-json.log 2>/dev/null | sort -hr | head -10
+
+# 8. Большие файлы (>100MB)
+find /home/vladx -type f -size +100M -exec ls -lh {} \; 2>/dev/null | awk '{print $5, $9}'
+
+# === ОЧИСТКА ===
+
+# Безопасная очистка Docker (остановленные контейнеры и неиспользуемые сети)
+docker system prune -f
+
+# Очистка build cache
+docker builder prune -f
+
+# Очистка неиспользуемых образов (ОСТОРОЖНО - может удалить нужные)
+docker image prune -a -f
+
+# Полная очистка Docker (кроме используемых volumes)
+docker system prune -a -f --volumes
+
+# Очистка логов journald (последние 7 дней)
+sudo journalctl --vacuum-time=7d
+
+# Очистка старых Docker логов (>100MB)
+sudo find /var/lib/docker/containers -name "*.log" -size +100M -exec truncate -s 0 {} \;
+

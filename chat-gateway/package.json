@@ -1,0 +1,13 @@
+{
+  "name": "autoro-chat-gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test telegram-addressed.test.mjs telegram-prompt.test.mjs telegram-history.test.mjs telegram-rag.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.129",
+    "typescript": "^5.9.2"
+  }
+}

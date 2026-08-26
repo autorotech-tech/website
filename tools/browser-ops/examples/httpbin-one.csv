@@ -1,0 +1,2 @@
+profile_id,url,email,password,name,phone,company,website,message,extra_json
+local-demo,https://httpbin.org/forms/post,form@example.com,,Alice Example,+79007654321,Example Co,https://example.org,Hello from browser-ops,"{""input[name=custname]"":""Alice Example"",""input[name=custtel]"":""+79007654321"",""input[name=custemail]"":""form@example.com""}"

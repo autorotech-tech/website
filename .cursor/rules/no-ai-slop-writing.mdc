@@ -1,0 +1,39 @@
+---
+description: Письма, отклики HH, сопроводительные, WhatsApp, email, outreach - убирать AI-slop через skill no-ai-slop перед финальной версией текста
+alwaysApply: false
+---
+
+# No AI slop - тексты, письма, отклики
+
+## Когда применять
+
+Перед финализацией прозы (RU/EN) для:
+
+- откликов на вакансии (hh.ru и др.)
+- сопроводительных писем и cover letters
+- email / outreach
+- коротких сообщений WhatsApp / Telegram
+- ответов в анкетах и полях заявки
+
+## Что делать
+
+1. Прочитай и следуй skill **no-ai-slop**:
+   - глобально: `~/.cursor/skills/skills/no-ai-slop/SKILL.md`
+   - в проекте: `.cursor/skills/no-ai-slop/SKILL.md`
+   - самопроверка: рядом `eval.md`
+2. После черновика сделай минимум правок по skill: убрать throat-clearing, puffery, colon reveals, decorative bold, banned words, пустые обороты.
+3. Верни готовый к копированию текст (и при необходимости краткий **What changed**).
+
+Явный вызов: `/no-ai-slop` (правки) или `/no-ai-slop is this AI slop?` (только аудит).
+
+## Совместимость с HH-форматированием
+
+Параллельно с no-ai-slop соблюдай `.cursor/rules/hh-vacancy-responses.mdc`:
+
+| Было | Нужно |
+|---|---|
+| длинное тире `—` | короткое `-` |
+| стрелка `→` | `->` |
+| «ёлочки» | `"` (ASCII) |
+
+Em dash из no-ai-slop тоже не использовать как ритмический костыль - для HH/откликов предпочитай `-`, точку или запятую.

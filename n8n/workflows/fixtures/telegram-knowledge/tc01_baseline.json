@@ -1,0 +1,15 @@
+{
+  "update_id": 100001,
+  "message": {
+    "message_id": 1,
+    "from": {
+      "id": 90001,
+      "is_bot": false,
+      "first_name": "Test",
+      "username": "qa_baseline"
+    },
+    "chat": { "id": 90001, "type": "private" },
+    "date": 1777777777,
+    "text": "TC-01: ссылка и контекст для knowledge base — https://example.com/tc01 LLM pipeline n8n"
+  }
+}

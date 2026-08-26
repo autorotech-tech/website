@@ -1,0 +1,11 @@
+node_modules
+npm-debug.log
+.env
+*.log
+.DS_Store
+.demo-api.pid
+.git
+tests
+coverage
+README.md
+VIBE.md

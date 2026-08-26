@@ -1,0 +1,41 @@
+use_default_settings: true
+
+server:
+  secret_key: "autoro_deep_search_secret_$(openssl rand -hex 16)"
+  limiter: false
+  image_proxy: false
+  port: 8080
+  bind_address: "0.0.0.0"
+
+general:
+  debug: false
+  instance_name: "Autoro Deep Search"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: ""
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+
+ui:
+  static_use_hash: true
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    api_key: ~
+
+  - name: bing
+    engine: bing
+    shortcut: b
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: d
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: w
+    base_url: "https://en.wikipedia.org/"
