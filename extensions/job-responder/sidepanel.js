@@ -6,24 +6,43 @@ let lastIngestSummary = '';
 let geminiRagReady = false;
 let lastTabUrl = '';
 
-/** Default generation instruction - contacts + links from RAG profile. */
-const DEFAULT_PROMPT_EXTRA =
+/** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md */
+const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов на вакансии. Пишешь отклик/ответы только по фактам кандидата.
+
+[INPUT] vacancy_data | candidate_profile (Resume/File Search) | cover_template? | custom_instructions?
+
+[RULES]
+1. Только факты из входа. Не выдумывай опыт, метрики, контакты, URL.
+2. Всегда включай контакты/ссылки из профиля, если есть: email, Telegram, телефон, портфолио, GitHub, LinkedIn, сайт.
+3. Контакты из cover_template - приоритет, сохрани.
+4. Нет данных -> "нет данных в профиле".
+
+[FLOW]
+1) mode=cover_letter|qa
+2) Выбери 3-6 релевантных фактов под требования
+3) cover_letter: адаптируй template или короткий отклик
+4) qa: краткие ответы по фактам
+5) Блок контактов/ссылок без дублей
+
+[OUT]
+cover_letter: привет -> релевантность (2-4) -> опыт/метрики (1-3) -> следующий шаг -> контакты
+qa: [{"question":"...","answer":"..."}]
+Стиль: кратко, по делу, русский (если не просили иначе). ASCII " и дефис -, без длинных тире.`;
+
+/** Legacy default contact line - migrate storage to ultra-short on load. */
+const LEGACY_PROMPT_EXTRA =
   'Всегда включай контакты и релевантные ссылки из профиля (email, Telegram, телефон, портфолио, GitHub, LinkedIn). ' +
   'Не выдумывай. Для переопределения добавьте строки вида ключ: значение (см. placeholder).';
 
+function isJrSystemPromptText(text) {
+  const t = String(text || '');
+  return /\[ROLE\]/.test(t) && /\[RULES\]/.test(t) && /\[FLOW\]/.test(t);
+}
 /** Keys expanded after generate / with answers (not forced closed by restore). */
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
 
 /** Default-open sections when no saved collapse state for the key. */
-const JR_DEFAULT_OPEN = new Set([
-  'sync',
-  'ragEdits',
-  'vacancy',
-  'relevance',
-  'description',
-  'generate',
-]);
-
+const JR_DEFAULT_OPEN = new Set(['vacancy', 'generate']);
 /**
  * Parse free-text overrides: "Telegram: @x | email: a@b" and free-form RU
  * ("Поменяй контакты… Telegram: @autoro_tech").
@@ -173,7 +192,7 @@ function showIngestBanner({ addedCount = 0, total = currentSources.length, summa
   const when = lastAddedAt ? formatUpdatedAt(lastAddedAt.toISOString()) : '';
   const lines = [];
   if (lastIngestSummary) lines.push(lastIngestSummary);
-  lines.push(`В RAG сейчас: ${total} источник(ов)`);
+  lines.push(`В базе: ${total} источник(ов)`);
   if (when) lines.push(`Последнее добавление: ${when}`);
   ingestBanner.hidden = false;
   ingestBanner.textContent = lines.join(' · ');
@@ -293,7 +312,7 @@ async function maybePrefillCoverTemplate(items, { force = false } = {}) {
   if (!body || body.length < 40) return false;
   coverTemplateEl.value = body;
   await chrome.storage.local.set({ jrCoverTemplate: body });
-  setSuccess(`Шаблон сопроводительного взят из RAG: ${sourceTitleRaw(picked)}`);
+  setSuccess(`Шаблон взят из базы: ${sourceTitleRaw(picked)}`);
   return true;
 }
 
@@ -361,24 +380,24 @@ async function refreshGeminiRagStatus({ quiet = false } = {}) {
     const st = await JR_API.geminiRagStatus();
     geminiRagReady = Boolean(st.enabled && st.ready);
     if (!st.enabled) {
-      geminiRagStatusEl.textContent = 'Gemini RAG: выключен на сервере (JOB_RESPONDER_GEMINI_RAG=0)';
+      geminiRagStatusEl.textContent = 'База: расширенный поиск выключен на сервере';
       return st;
     }
     if (!st.hasGeminiKeys) {
-      geminiRagStatusEl.textContent = 'Gemini RAG: нет gemini_keys в Swoop Admin -> Settings';
+      geminiRagStatusEl.textContent = 'База: нет ключей в Swoop Admin -> Settings';
       return st;
     }
     const syncNote = st.lastSyncAt ? `, sync: ${formatUpdatedAt(st.lastSyncAt)}` : '';
     geminiRagStatusEl.textContent = st.ready
-      ? `Gemini RAG: OK · ${st.docCount || 0} док.${syncNote}`
-      : `Gemini RAG: store ${st.storeName ? 'есть' : 'нет'} · ${st.docCount || 0} док. · нажмите «Синхронизировать»${syncNote}`;
+      ? `База: OK · ${st.docCount || 0} док.${syncNote}`
+      : `База: ${st.docCount || 0} док. · нажмите «Синхр.»${syncNote}`;
     if (!quiet && st.ready) {
-      setSuccess(`Gemini RAG готов: ${st.docCount} док.`);
+      setSuccess(`База готова: ${st.docCount} док.`);
     }
     return st;
   } catch (err) {
     geminiRagReady = false;
-    geminiRagStatusEl.textContent = `Gemini RAG: ${err.message}`;
+    geminiRagStatusEl.textContent = `База: ${err.message}`;
     return null;
   }
 }
@@ -389,11 +408,11 @@ async function refreshResumeStatus() {
     const ws = st.workspaceId || (await JR_API.getWorkspaceId());
     const lastAdd = lastAddedAt ? `, добавлено: ${formatUpdatedAt(lastAddedAt.toISOString())}` : '';
     resumeStatus.textContent = st.hasPrimaryCv
-      ? `Resume RAG ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}${lastAdd}`
-      : `Resume RAG ws=${ws}: загрузите основное резюме (сейчас ${st.count} док.)${lastAdd}`;
+      ? `База резюме ws=${ws}: ${st.count} док., CV: OK, обновлено: ${st.lastUpdated || '-'}${lastAdd}`
+      : `База резюме ws=${ws}: загрузите CV (сейчас ${st.count} док.)${lastAdd}`;
     await refreshGeminiRagStatus({ quiet: true });
   } catch (err) {
-    resumeStatus.textContent = `Resume RAG: ${err.message}`;
+    resumeStatus.textContent = `База резюме: ${err.message}`;
   }
 }
 
@@ -499,11 +518,11 @@ function renderRelevance(data) {
   relevanceBox.hidden = false;
   relevanceBox.innerHTML = `
     <div class="relevanceScore">${Number(data.score)} / 100</div>
-    <div>Релевантность Resume ↔ вакансия</div>
+    <div>Релевантность профиля ↔ вакансия</div>
     ${bullets ? `<ul>${bullets}</ul>` : ''}
     ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
-    ${sem && !/семантика/i.test(matchedJoined) ? `<div><b>Совпало (семантика)</b><ul>${sem}</ul></div>` : ''}
-    ${missing ? `<div><b>Не хватает в RAG</b><ul>${missing}</ul></div>` : ''}
+    ${sem && !/смысл|семантика/i.test(matchedJoined) ? `<div><b>Совпало (смысл)</b><ul>${sem}</ul></div>` : ''}
+    ${missing ? `<div><b>Не хватает в профиле</b><ul>${missing}</ul></div>` : ''}
   `;
 }
 
@@ -703,17 +722,20 @@ async function runGenerate(mode) {
   try {
     await runRelevanceScore().catch(() => {});
     const coverTemplate = String(coverTemplateEl?.value || '').trim();
-    const promptExtra = String(promptExtraEl?.value || '').trim();
+    const promptExtraRaw = String(promptExtraEl?.value || '').trim();
     const ragEditsText = String(ragEditsInput?.value || '').trim();
+    const systemAsExtra = isJrSystemPromptText(promptExtraRaw);
+    // Default ultra-short lives in backend system; skip duplicate CUSTOM + override parse.
+    const promptExtra = systemAsExtra ? '' : promptExtraRaw;
     const profileOverrides = {
       ...parseProfileOverrides(ragEditsText),
-      ...parseProfileOverrides(promptExtra),
+      ...(systemAsExtra ? {} : parseProfileOverrides(promptExtraRaw)),
     };
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
     if (promptExtraEl) {
-      await chrome.storage.local.set({ jrPromptExtra: promptExtra });
+      await chrome.storage.local.set({ jrPromptExtra: promptExtraRaw });
     }
     const data = await JR_API.generateResponse({
       mode: isQa ? 'qa' : 'cover_letter',
@@ -727,8 +749,6 @@ async function runGenerate(mode) {
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
-    const resultDetails = document.getElementById('resultDetails');
-    if (resultDetails && letter) resultDetails.open = true;
     if (Array.isArray(data.answers) && data.answers.length) {
       const mapped = data.answers.map((a, i) => {
         let question = String(a.question || a.text || '').trim();
@@ -744,30 +764,22 @@ async function runGenerate(mode) {
       renderQaTable(vacancy.questions.map((q) => ({ question: q.text, answer: letter || '' })));
     }
     if (data.relevance) renderRelevance(data.relevance);
-    const tplNote = data.usedCoverTemplate ? ' | template: yes' : '';
-    const profileNote =
-      data.compactProfileChars != null
-        ? ` | profile: ${data.compactProfileChars}c / ${data.sourcesMerged ?? (data.sources || []).length} src`
-        : '';
-    const compressNote = data.profileCompressed ? ' | compressed' : '';
-    const elapsedNote = data.elapsedSec != null ? ` | ${data.elapsedSec}s` : '';
-    const provNote = data.provider ? ` | ${data.provider}` : '';
-    const ragNote = data.usedGeminiRag ? ' | gemini_rag' : '';
-    genMeta.textContent = `model: ${data.model || '-'}${provNote}${ragNote} | sources: ${(data.sources || []).length} | score: ${
-      data.relevance?.score ?? '-'
-    }${tplNote}${profileNote}${compressNote}${elapsedNote}`;
-    if (data.limitMessage) {
-      genMeta.textContent += ` | ${data.limitMessage}`;
-    }
+    const bits = [];
+    bits.push(`источники: ${(data.sources || []).length}`);
+    if (data.relevance?.score != null) bits.push(`score: ${data.relevance.score}`);
+    if (data.usedCoverTemplate) bits.push('шаблон: да');
+    if (data.elapsedSec != null) bits.push(`${data.elapsedSec}s`);
+    if (data.limitMessage) bits.push(String(data.limitMessage));
+    genMeta.textContent = bits.join(' · ');
     if (data.ok === false && data.message) {
       setError(String(data.message));
       return;
     }
     if (!letter && !(Array.isArray(data.answers) && data.answers.length)) {
-      setError(data.message || 'API ответил без текста. Повторите - профиль уже сжатый.');
+      setError(data.message || 'API ответил без текста. Повторите.');
       return;
     }
-    setSuccess(isQa ? 'Ответы готовы - копируйте из таблицы «Вопросы формы»' : 'Готово - проверьте текст и скопируйте');
+    setSuccess(isQa ? 'Ответы готовы' : 'Готово');
   } catch (err) {
     genMeta.textContent = '';
     setError(String(err.message || err));
@@ -1044,7 +1056,7 @@ if (addRagTextBtn) {
       setError('Вставьте текст (мин. 20 символов)');
       return;
     }
-    setButtonBusy(addRagTextBtn, true, 'Добавить в RAG', 'Добавление…');
+    setButtonBusy(addRagTextBtn, true, 'Добавить текст', 'Добавление…');
     try {
       await JR_API.ensureWorkspace();
       const res = await JR_API.resumeTextCapture({
@@ -1054,7 +1066,7 @@ if (addRagTextBtn) {
         category: 'notes',
       });
       const ids = collectLinkedIds(res);
-      const summary = `Текст в RAG (id=${res.knowledgeItemId})${formatLinkedNote(res)}`;
+      const summary = `Текст в базе (id=${res.knowledgeItemId})${formatLinkedNote(res)}`;
       setSuccess(summary);
       await refreshResumeStatus();
       await refreshSources({ highlightIds: ids, quiet: true });
@@ -1064,7 +1076,7 @@ if (addRagTextBtn) {
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      setButtonBusy(addRagTextBtn, false, 'Добавить в RAG');
+      setButtonBusy(addRagTextBtn, false, 'Добавить текст');
     }
   });
 }
@@ -1095,7 +1107,7 @@ if (saveRagEditsBtn) {
       setError('Введите правки (мин. 3 символа), например: Telegram: @autoro_tech');
       return;
     }
-    setButtonBusy(saveRagEditsBtn, true, 'Сохранить в RAG', 'Сохранение…');
+    setButtonBusy(saveRagEditsBtn, true, 'Сохранить правки', 'Сохранение…');
     try {
       await JR_API.ensureWorkspace();
       await persistRagEditsLocal(text);
@@ -1109,12 +1121,12 @@ if (saveRagEditsBtn) {
       const preview = formatParsedContactsPreview(parsed);
       const syncNote = res.geminiSync?.awaited
         ? res.geminiSync?.ok === false
-          ? ' Gemini sync: ошибка (overrides всё равно в prompt).'
-          : ' Gemini sync: ok.'
-        : ' Gemini sync в очереди.';
+          ? ' Синхр. базы: ошибка (правки всё равно в отклике).'
+          : ' Синхр. базы: ok.'
+        : ' Синхр. базы в очереди.';
       const summary = preview
-        ? `Правки RAG ${action} (id=${kid}). Сохранено: ${preview}.${syncNote}`
-        : `Правки RAG ${action} (id=${kid}).${syncNote}`;
+        ? `Правки профиля ${action}. Сохранено: ${preview}.${syncNote}`
+        : `Правки профиля ${action}.${syncNote}`;
       setSuccess(summary);
       setRagEditsMeta(summary);
       await refreshResumeStatus();
@@ -1123,7 +1135,6 @@ if (saveRagEditsBtn) {
         quiet: true,
       });
       showIngestBanner({ addedCount: 1, summary });
-      // Optional: refresh Gemini RAG status badge after patch sync
       if (typeof refreshGeminiRagStatus === 'function') {
         await refreshGeminiRagStatus().catch(() => {});
       }
@@ -1131,7 +1142,7 @@ if (saveRagEditsBtn) {
       setError(String(err.message || err));
       setRagEditsMeta('');
     } finally {
-      setButtonBusy(saveRagEditsBtn, false, 'Сохранить в RAG');
+      setButtonBusy(saveRagEditsBtn, false, 'Сохранить правки');
     }
   });
 }
@@ -1284,21 +1295,21 @@ refreshSourcesBtn.addEventListener('click', () => {
 if (geminiRagSyncBtn) {
   geminiRagSyncBtn.addEventListener('click', async () => {
     setError('');
-    setButtonBusy(geminiRagSyncBtn, true, 'Gemini', '…');
-    if (geminiRagStatusEl) geminiRagStatusEl.textContent = 'Синхронизация с Gemini…';
+    setButtonBusy(geminiRagSyncBtn, true, 'Синхр.', '…');
+    if (geminiRagStatusEl) geminiRagStatusEl.textContent = 'Синхронизация…';
     try {
       const res = await JR_API.geminiRagSync({ poll: true });
       await refreshGeminiRagStatus({ quiet: true });
       setSuccess(
         res.queued
-          ? 'Синхронизация Gemini RAG поставлена в очередь'
-          : `Gemini RAG: synced ${res.synced || 0}, skipped ${res.skipped || 0}`
+          ? 'Синхронизация базы поставлена в очередь'
+          : `Синхр. базы: ${res.synced || 0} / пропущено ${res.skipped || 0}`
       );
     } catch (err) {
       setError(String(err.message || err));
       await refreshGeminiRagStatus({ quiet: true });
     } finally {
-      setButtonBusy(geminiRagSyncBtn, false, 'Gemini');
+      setButtonBusy(geminiRagSyncBtn, false, 'Синхр.');
     }
   });
 }
@@ -1311,7 +1322,7 @@ if (sourcesListEl) {
     const id = Number(btn.getAttribute('data-id') || 0);
     const title = String(btn.getAttribute('data-title') || 'источник');
     if (!id) return;
-    if (!window.confirm(`Удалить «${title}» из Resume RAG?`)) return;
+    if (!window.confirm(`Удалить «${title}» из базы резюме?`)) return;
     setError('');
     setSuccess('');
     btn.disabled = true;
@@ -1439,7 +1450,7 @@ if (resetPromptBtn) {
   resetPromptBtn.addEventListener('click', async () => {
     if (promptExtraEl) promptExtraEl.value = DEFAULT_PROMPT_EXTRA;
     await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
-    setSuccess('Инструкции сброшены (контакты + подсказка по переопределениям)');
+    setSuccess('Инструкции сброшены (ultra-short default)');
   });
 }
 
@@ -1452,10 +1463,19 @@ if (promptExtraEl) {
   });
 }
 
+if (resultText) {
+  resultText.addEventListener('focus', () => {
+    resultText.classList.add('isExpanded');
+  });
+  resultText.addEventListener('blur', () => {
+    resultText.classList.remove('isExpanded');
+  });
+}
+
 if (coverFromRagBtn) {
   coverFromRagBtn.addEventListener('click', async () => {
     setError('');
-    setButtonBusy(coverFromRagBtn, true, 'Взять из RAG', 'Ищу…');
+    setButtonBusy(coverFromRagBtn, true, 'Взять из базы', 'Ищу…');
     try {
       let items = currentSources;
       if (!items.length) {
@@ -1464,13 +1484,13 @@ if (coverFromRagBtn) {
       const ok = await maybePrefillCoverTemplate(items, { force: true });
       if (!ok) {
         setError(
-          'В Resume RAG не найдено сопроводительное (ищите в названии/категории: "сопроводительн", cover letter).'
+          'В базе не найдено сопроводительное (название/категория: "сопроводительн", cover letter).'
         );
       }
     } catch (err) {
       setError(String(err.message || err));
     } finally {
-      setButtonBusy(coverFromRagBtn, false, 'Взять из RAG');
+      setButtonBusy(coverFromRagBtn, false, 'Взять из базы');
     }
   });
 }
@@ -1484,11 +1504,13 @@ if (coverFromRagBtn) {
       coverTemplateEl.value = String(savedTpl.jrCoverTemplate);
     }
     if (promptExtraEl) {
-      promptExtraEl.value =
-        savedTpl.jrPromptExtra != null && String(savedTpl.jrPromptExtra).length
-          ? String(savedTpl.jrPromptExtra)
-          : DEFAULT_PROMPT_EXTRA;
-      if (savedTpl.jrPromptExtra == null || !String(savedTpl.jrPromptExtra).length) {
+      const savedExtra = savedTpl.jrPromptExtra != null ? String(savedTpl.jrPromptExtra) : '';
+      const isLegacy =
+        !savedExtra.trim() ||
+        savedExtra.trim() === LEGACY_PROMPT_EXTRA.trim() ||
+        /^Всегда включай контакты и релевантные ссылки из профиля/.test(savedExtra.trim());
+      promptExtraEl.value = isLegacy ? DEFAULT_PROMPT_EXTRA : savedExtra;
+      if (isLegacy) {
         await chrome.storage.local.set({ jrPromptExtra: DEFAULT_PROMPT_EXTRA });
       }
     }
@@ -1505,7 +1527,7 @@ if (coverFromRagBtn) {
       if (fromRag) {
         ragEditsInput.value = fromRag;
         await persistRagEditsLocal(fromRag);
-        setRagEditsMeta('Подтянуто из Resume RAG (overrides)');
+        setRagEditsMeta('Подтянуто из базы (overrides)');
       }
     }
   } catch (err) {

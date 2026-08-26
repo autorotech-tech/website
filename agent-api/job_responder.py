@@ -1422,16 +1422,50 @@ def build_resume_search_query(vacancy: JobResponderVacancyPayload) -> str:
     return " | ".join(p for p in parts if p)
 
 
+# Ultra-short runtime system (token-efficient). Fuller notes: docs/job-responder/prompts-ultra-short.md
+ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов на вакансии. Пишешь отклик/ответы только по фактам кандидата.
+
+[INPUT] vacancy_data | candidate_profile (Resume/File Search) | cover_template? | custom_instructions?
+
+[RULES]
+1. Только факты из входа. Не выдумывай опыт, метрики, контакты, URL.
+2. Всегда включай контакты/ссылки из профиля, если есть: email, Telegram, телефон, портфолио, GitHub, LinkedIn, сайт.
+3. Контакты из cover_template - приоритет, сохрани.
+4. Нет данных -> "нет данных в профиле".
+
+[FLOW]
+1) mode=cover_letter|qa
+2) Выбери 3-6 релевантных фактов под требования
+3) cover_letter: адаптируй template или короткий отклик
+4) qa: краткие ответы по фактам
+5) Блок контактов/ссылок без дублей
+
+[OUT]
+cover_letter: привет -> релевантность (2-4) -> опыт/метрики (1-3) -> следующий шаг -> контакты
+qa: [{"question":"...","answer":"..."}]
+Стиль: кратко, по делу, русский (если не просили иначе). ASCII " и дефис -, без длинных тире."""
+
 CONTACTS_LINKS_RULE = (
-    "Всегда включай в текст отклика / ответов контакты и релевантные ссылки "
-    "из профиля / RESUME CONTEXT / File Search (email, Telegram, телефон, портфолио, "
-    "GitHub, LinkedIn, сайт и др.), если они есть. Не выдумывай контакты и URL."
+    "Всегда включай контакты/ссылки из профиля, если есть: email, Telegram, телефон, "
+    "портфолио, GitHub, LinkedIn, сайт. Не выдумывай."
 )
+
+
+def _norm_prompt_blob(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).lower()
+
+
+def is_ultra_short_system_text(text: str) -> bool:
+    t = text or ""
+    return "[ROLE]" in t and "[RULES]" in t and "[FLOW]" in t
 
 
 def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optional[str], *, max_chars: int = 4000) -> str:
     raw = (prompt_extra or custom_instructions or "").strip()
     if not raw:
+        return ""
+    if is_ultra_short_system_text(raw):
+        # Extension may store ultra-short as jrPromptExtra; system already has it.
         return ""
     return raw[: max(200, int(max_chars))]
 
@@ -1708,57 +1742,25 @@ def build_system_prompt(
     has_cover_template: bool = False,
     prompt_extra: str = "",
 ) -> str:
-    base = f"""Ты помощник кандидата при отклике на вакансии.
-
-Правила:
-- Пиши от первого лица кандидата.
-- Используй ТОЛЬКО факты из блока RESUME CONTEXT (или File Search документов). Если факта нет - не выдумывай.
-- Без AI-slop: без "страстно увлечен", "синергия", "динамичная команда", "уникальная возможность".
-- Формат HH: короткое тире "-", стрелки "->", кавычки ASCII ".
-- Язык: русский (если вакансия явно на другом языке - можно на языке вакансии).
-- Не используй markdown-заголовки и списки с буллетами - plain text для поля HH.
-- Учитывай STRUCTURED VACANCY (формат, занятость, навыки) если они есть.
-- {CONTACTS_LINKS_RULE}
-"""
-    extra = (prompt_extra or "").strip()
-    if extra:
-        base += f"\nДОП. ИНСТРУКЦИЯ ОТ КАНДИДАТА:\n{extra}\n"
-
+    base = ULTRA_SHORT_SYSTEM_PROMPT
     if mode == "question_answers":
-        return (
-            base
-            + """
-Режим: ответы на вопросы работодателя / Google Form / таблица Q&A.
-Верни ТОЛЬКО валидный JSON-массив:
-[{"question":"...","answer":"..."}]
-По одному объекту на каждый вопрос из списка QUESTIONS.
-Поле "question" ОБЯЗАТЕЛЬНО: скопируй текст вопроса из QUESTIONS ДОСЛОВНО (не оставляй пустым).
-Если у вопроса есть options - выбери подходящий вариант или кратко обоснуй выбор.
-Ответы 1-4 предложения, конкретно по RESUME CONTEXT.
-В ответах при уместности укажи контакты / ссылки из профиля."""
+        base += (
+            "\n\n[MODE] qa: верни ТОЛЬКО JSON-массив "
+            '[{"question":"...","answer":"..."}]; question копируй дословно из QUESTIONS.'
         )
-    if has_cover_template:
-        return (
-            base
-            + """
-Режим: адаптация сопроводительного письма под вакансию.
-Дан блок COVER TEMPLATE - это письмо кандидата. НЕ пиши письмо с нуля.
-Задача: адаптировать шаблон под конкретную вакансию и unified compact profile:
-- сохрани голос, тон и структуру автора;
-- подставь/уточни факты под требования вакансии (только из RESUME CONTEXT);
-- убери нерелевантное, усили совпадения с вакансией;
-- добавь контакты и релевантные ссылки из профиля, если их ещё нет в шаблоне;
-- длина ориентировочно как у шаблона (или 800-1400 символов).
-Верни ТОЛЬКО текст письма, без пояснений."""
+    elif has_cover_template:
+        base += (
+            "\n\n[MODE] cover_letter + cover_template: адаптируй template под вакансию, "
+            "сохрани голос и контакты из template; факты только из профиля."
         )
-    return (
-        base
-        + """
-Режим: сопроводительное письмо (cover letter).
-Длина: 800-1400 символов.
-Структура: приветствие -> 1-2 релевантных кейса под требования -> стек/формат -> контакты/ссылки (если есть в профиле) -> CTA -> имя (если есть в RESUME CONTEXT).
-Верни ТОЛЬКО текст письма, без пояснений."""
-    )
+    else:
+        base += "\n\n[MODE] cover_letter: короткий отклик по [OUT]; только текст письма."
+
+    extra = (prompt_extra or "").strip()
+    if extra and not is_ultra_short_system_text(extra):
+        if _norm_prompt_blob(extra) != _norm_prompt_blob(ULTRA_SHORT_SYSTEM_PROMPT):
+            base += f"\n\n[CUSTOM]\n{extra}\n"
+    return base
 
 
 def build_user_prompt(

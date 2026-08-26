@@ -1,6 +1,13 @@
 # Job Responder - any-page отклики
 
-Chrome MV3 extension: персонализированные отклики с Resume RAG.
+Chrome MV3 extension: персонализированные отклики с базой резюме.
+
+## v0.7.0
+
+- Ultra-short system prompt (extension default `jrPromptExtra` + backend `build_system_prompt`). См. [prompts-ultra-short.md](./prompts-ultra-short.md).
+- UI: приоритет сверху - вакансия -> отклик/результат; вторичные блоки свёрнуты (источники, правки профиля, шаблон, инструкции).
+- Без имён моделей и слова RAG в user-visible labels.
+- Результат: focus -> ~2/3 высоты панели.
 
 ## Установка
 

@@ -583,10 +583,8 @@ def build_gemini_rag_user_prompt(
     parts = [
         f"SITE: {host_label}",
         f"VACANCY:\n{vacancy_block}",
-        "RESUME CONTEXT: use File Search over the candidate documents in the bound store. "
-        "Do not invent facts not supported by retrieved documents. "
-        "When present in retrieved docs, include contacts and relevant portfolio/links in the output. "
-        "If CUSTOM INSTRUCTIONS / PROFILE OVERRIDES conflict with retrieved docs, prefer the overrides.",
+        "RESUME CONTEXT: File Search over candidate docs. Facts only. "
+        "Contacts/links from docs if present. CUSTOM / overrides win over conflicts.",
     ]
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:1200]}")

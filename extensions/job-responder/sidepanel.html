@@ -13,24 +13,68 @@
       <p class="success banner" id="success" role="status"></p>
     </header>
 
-    <details class="card collapsible" id="syncSection" data-jr-collapse="sync" open>
-      <summary>Синхрон</summary>
+    <details class="card collapsible" id="vacancySection" data-jr-collapse="vacancy" open>
+      <summary>Работа с вакансией</summary>
+      <p class="hint tight" id="vacancyMeta">Откройте страницу вакансии</p>
+      <div id="vacancyStructured" class="structuredBox" hidden></div>
+      <div class="row">
+        <button type="button" id="refreshVacancyBtn">Обновить с страницы</button>
+        <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
+      </div>
+      <div id="relevanceBox" class="relevanceBox" hidden></div>
+      <label class="field">
+        <span>Описание вакансии</span>
+        <textarea
+          id="vacancyDescription"
+          rows="4"
+          readonly
+          placeholder="Подтянется с страницы"
+        ></textarea>
+      </label>
+    </details>
+
+    <details class="card collapsible" id="qaSection" data-jr-collapse="qa" hidden>
+      <summary>Вопросы формы</summary>
+      <p class="hint tight" id="qaMeta"></p>
+      <div id="qaTable" class="qaTable" role="table" aria-label="Вопросы и ответы"></div>
+      <div class="row">
+        <button type="button" id="copyAllQaBtn" class="secondary">Копировать все</button>
+      </div>
+    </details>
+
+    <details class="card collapsible" id="generateSection" data-jr-collapse="generate" open>
+      <summary>Отклик / Результат</summary>
+      <div class="row">
+        <button type="button" id="genCoverBtn">Отклик</button>
+        <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>
+      </div>
+      <label class="field">
+        <span>Результат</span>
+        <textarea id="resultText" class="resultGrow" rows="6"></textarea>
+      </label>
+      <div class="row tight">
+        <button type="button" id="copyBtn" class="secondary">Копировать</button>
+      </div>
+      <p class="hint tight" id="genMeta"></p>
+    </details>
+
+    <details class="card collapsible" id="syncSection" data-jr-collapse="sync">
+      <summary>Синхронизация базы</summary>
       <div class="syncBar">
-        <button type="button" id="refreshSourcesBtn" class="secondary btnCompact" title="Обновить sources">
+        <button type="button" id="refreshSourcesBtn" class="secondary btnCompact" title="Обновить источники">
           Обновить
         </button>
-        <button type="button" id="geminiRagSyncBtn" class="secondary btnCompact" title="Синхронизировать Gemini RAG">
-          Gemini
+        <button type="button" id="geminiRagSyncBtn" class="secondary btnCompact" title="Синхронизировать базу">
+          Синхр.
         </button>
       </div>
       <p class="hint tight" id="resumeStatus">—</p>
-      <p class="hint tight" id="geminiRagStatus">Gemini RAG: …</p>
+      <p class="hint tight" id="geminiRagStatus">База: …</p>
       <div class="ingestBanner" id="ingestBanner" hidden></div>
     </details>
 
     <details class="card collapsible" id="sourcesDetails" data-jr-collapse="sources">
-      <summary>Источники Resume RAG</summary>
-      <p class="hint">Отмеченные sources сливаются в unified compact profile на сервере.</p>
+      <summary>Источники / База резюме</summary>
       <div class="field">
         <span>workspaceId</span>
         <div class="row tight">
@@ -41,7 +85,7 @@
       <div class="sourcesList" id="sourcesList" aria-live="polite"></div>
 
       <details class="nested" data-jr-collapse="cvUpload">
-        <summary>CV / portfolio файлы</summary>
+        <summary>Загрузки (CV / portfolio)</summary>
         <div class="field">
           <span>CV (primary)</span>
           <input
@@ -50,7 +94,7 @@
             multiple
             accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp"
           />
-          <p class="hint" id="resumeFileHint">Файлов не выбрано</p>
+          <p class="hint tight" id="resumeFileHint">Файлов не выбрано</p>
           <button type="button" id="uploadResumeFileBtn" class="secondary">Добавить CV</button>
         </div>
         <div class="field">
@@ -61,18 +105,18 @@
             multiple
             accept=".pdf,.txt,.md,.doc,.docx,.html,.csv,.json,.png,.jpg,.jpeg,.webp"
           />
-          <p class="hint" id="portfolioFileHint">Файлов не выбрано</p>
+          <p class="hint tight" id="portfolioFileHint">Файлов не выбрано</p>
           <button type="button" id="uploadPortfolioFilesBtn" class="secondary">Добавить portfolio</button>
         </div>
       </details>
 
       <details class="nested" data-jr-collapse="ragText">
-        <summary>Текст / ссылка → RAG</summary>
+        <summary>Текст / ссылка</summary>
         <div class="field">
-          <span>Текст для RAG</span>
+          <span>Текст в базу</span>
           <textarea id="ragTextInput" rows="3" placeholder="Опыт, кейсы, заметки…"></textarea>
           <input id="ragTextTitle" type="text" placeholder="Название (необязательно)" />
-          <button type="button" id="addRagTextBtn" class="secondary">Добавить в RAG</button>
+          <button type="button" id="addRagTextBtn" class="secondary">Добавить текст</button>
         </div>
         <div class="field">
           <span>Ссылка (URL)</span>
@@ -84,7 +128,7 @@
 
       <details class="nested" data-jr-collapse="drive">
         <summary>Google Drive</summary>
-        <p class="hint" id="driveStatus">Drive: загрузка…</p>
+        <p class="hint tight" id="driveStatus">Drive: …</p>
         <div class="row tight">
           <button type="button" id="driveConnectBtn" class="secondary">Подключить</button>
           <button type="button" id="driveDisconnectBtn" class="secondary" hidden>Отключить</button>
@@ -103,108 +147,46 @@
       </details>
     </details>
 
-    <details class="card collapsible" id="ragEditsDetails" data-jr-collapse="ragEdits" open>
-      <summary>Правки RAG</summary>
-      <p class="hint">
-        Исправляет факты в базе Resume RAG (Postgres + Gemini sync), не только промпт генерации.
-        Пример: Telegram: @autoro_tech · или свободный текст «Поменяй контакты…»
-      </p>
+    <details class="card collapsible" id="ragEditsDetails" data-jr-collapse="ragEdits">
+      <summary>Правки профиля</summary>
       <label class="field">
-        <span>Корректировки (пишутся в knowledge base)</span>
+        <span>Корректировки фактов</span>
         <textarea
           id="ragEditsInput"
           class="growOnFocus"
           rows="3"
-          placeholder="Поменяй контакты в базе Telegram: @autoro_tech&#10;email: you@example.com"
+          placeholder="Telegram: @autoro_tech&#10;email: you@example.com"
         ></textarea>
       </label>
       <div class="row tight">
-        <button type="button" id="saveRagEditsBtn">Сохранить в RAG</button>
+        <button type="button" id="saveRagEditsBtn">Сохранить правки</button>
       </div>
       <p class="hint tight" id="ragEditsMeta"></p>
     </details>
 
-    <details class="card collapsible" id="vacancySection" data-jr-collapse="vacancy" open>
-      <summary>Вакансия</summary>
-      <p class="hint" id="vacancyMeta">Откройте страницу вакансии и нажмите «Обновить с страницы»</p>
-      <div id="vacancyStructured" class="structuredBox" hidden></div>
-      <div class="row">
-        <button type="button" id="refreshVacancyBtn" class="secondary">Обновить с страницы</button>
-        <button type="button" id="scoreBtn" class="secondary">Оценка релевантности</button>
+    <details class="card collapsible" id="coverTemplateDetails" data-jr-collapse="coverTemplate">
+      <summary>Шаблон письма</summary>
+      <textarea
+        id="coverTemplate"
+        rows="4"
+        placeholder="Вставьте своё письмо - генерация адаптирует под вакансию"
+      ></textarea>
+      <div class="row tight">
+        <button type="button" id="coverFromRagBtn" class="secondary">Взять из базы</button>
       </div>
-      <details class="nested" id="relevanceDetails" data-jr-collapse="relevance" open>
-        <summary>Релевантность</summary>
-        <div id="relevanceBox" class="relevanceBox" hidden></div>
-      </details>
-      <details class="nested" id="descriptionDetails" data-jr-collapse="description" open>
-        <summary>Описание</summary>
-        <textarea
-          id="vacancyDescription"
-          rows="5"
-          readonly
-          placeholder="Подтянется со страницы кнопкой «Обновить с страницы»"
-        ></textarea>
-      </details>
     </details>
 
-    <details class="card collapsible" id="qaSection" data-jr-collapse="qa" hidden>
-      <summary>Вопросы формы</summary>
-      <p class="hint" id="qaMeta">Google Form / таблица Q&A</p>
-      <details class="nested openWhenQa" id="qaResultsDetails" data-jr-collapse="qaResults">
-        <summary>Результаты Q&A</summary>
-        <div id="qaTable" class="qaTable" role="table" aria-label="Вопросы и ответы"></div>
-        <div class="row">
-          <button type="button" id="copyAllQaBtn" class="secondary">Копировать все</button>
-        </div>
-      </details>
-    </details>
-
-    <details class="card collapsible" id="generateSection" data-jr-collapse="generate" open>
-      <summary>Генерация</summary>
-      <details class="nested" id="promptExtraDetails" data-jr-collapse="promptExtra">
-        <summary>Инструкции генерации (не в RAG)</summary>
-        <textarea
-          id="promptExtra"
-          class="growOnFocus"
-          rows="1"
-          placeholder="Telegram: @autoro_tech | email: you@example.com | ссылка: https://…"
-        ></textarea>
-        <div class="row tight">
-          <button type="button" id="resetPromptBtn" class="secondary btnCompact">Сбросить</button>
-        </div>
-        <p class="hint">
-          Контакты и ссылки только на время генерации. Сохраняется в chrome.storage
-          (jrPromptExtra) и уходит как promptExtra + profileOverrides. Чтобы поправить базу -
-          используйте блок «Правки RAG».
-        </p>
-      </details>
-
-      <details class="nested" id="coverTemplateDetails" data-jr-collapse="coverTemplate">
-        <summary>Моё сопроводительное (шаблон)</summary>
-        <textarea
-          id="coverTemplate"
-          rows="5"
-          placeholder="Вставьте своё письмо - генерация адаптирует его под вакансию"
-        ></textarea>
-        <div class="row tight">
-          <button type="button" id="coverFromRagBtn" class="secondary">Взять из RAG</button>
-        </div>
-        <p class="hint">Пусто = письмо с нуля. Если в RAG есть сопроводительное - подставится при пустом поле.</p>
-      </details>
-
-      <div class="row">
-        <button type="button" id="genCoverBtn">Отклик</button>
-        <button type="button" id="genAnswersBtn" class="secondary">Ответы на вопросы</button>
+    <details class="card collapsible" id="promptExtraDetails" data-jr-collapse="promptExtra">
+      <summary>Инструкции генерации</summary>
+      <textarea
+        id="promptExtra"
+        class="growOnFocus"
+        rows="6"
+        placeholder="Системные правила генерации…"
+      ></textarea>
+      <div class="row tight">
+        <button type="button" id="resetPromptBtn" class="secondary btnCompact">Сбросить</button>
       </div>
-
-      <details class="nested" id="resultDetails" data-jr-collapse="result">
-        <summary>Результат</summary>
-        <textarea id="resultText" rows="10"></textarea>
-        <div class="row">
-          <button type="button" id="copyBtn" class="secondary">Копировать</button>
-        </div>
-        <p class="hint" id="genMeta"></p>
-      </details>
     </details>
 
     <footer class="footer">

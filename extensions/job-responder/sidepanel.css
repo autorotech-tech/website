@@ -123,8 +123,22 @@ textarea.growOnFocus {
   transition: min-height 0.12s ease;
 }
 
-textarea.growOnFocus:focus {
+textarea.growOnFocus:focus,
+textarea.growOnFocus.isFocused {
   min-height: 96px;
+}
+
+textarea.resultGrow {
+  min-height: 96px;
+  max-height: 28vh;
+  resize: vertical;
+  transition: min-height 0.15s ease, max-height 0.15s ease;
+}
+
+textarea.resultGrow.isExpanded,
+textarea.resultGrow:focus {
+  min-height: 66vh;
+  max-height: 80vh;
 }
 
 textarea[readonly] {
