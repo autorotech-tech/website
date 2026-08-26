@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import os
 
 from kb_file_ingest import MAX_FILE_BYTES, sanitize_extracted_text
+from job_responder_format import hh_format_text, strip_embellished_language_claims
+import job_responder_crag as jr_crag
 from job_responder_semantic import (
     build_semantic_grid,
     format_semantic_hit,
@@ -236,79 +238,6 @@ _ROLE_HINTS = (
     "маркетолог",
     "нейрокреатор",
 )
-
-
-# HH formatting + light no-ai-slop scrub (see docs/job-responder/prompts-ultra-short.md).
-# Phrase-level only for RU/EN cover-letter cliches; EN banned words = whole-word, case-insensitive.
-_HH_SLOP_PHRASES = (
-    # RU cover-letter openers / fluff
-    "Я хотел бы выразить заинтересованность",
-    "Пишу, чтобы выразить свой интерес",
-    "В современном быстро меняющемся мире",
-    "В сегодняшнем быстро меняющемся мире",
-    "Как высокомотивированный профессионал",
-    "Позвольте представиться",
-    "Разрешите представить себя",
-    "С радостью хотел бы присоединиться",
-    "Имею честь подать заявку",
-    "Давайте разберёмся",
-    "Давайте разберемся",
-    # EN cover-letter / no-ai-slop throat-clearing
-    "I am writing to express my interest",
-    "I'm writing to express my interest",
-    "I would like to express my interest",
-    "In today's fast-paced world",
-    "In today's rapidly evolving world",
-    "As a highly motivated professional",
-    "Here's the thing",
-    "Let me be clear",
-    "It's worth noting that",
-    "It is worth noting that",
-    "At the end of the day",
-    "When it comes to",
-    "In conclusion,",
-    "Let's dive in",
-    "Going forward,",
-)
-
-_HH_SLOP_WORD_RE = re.compile(
-    r"(?i)\b(?:"
-    r"delve|foster|leverage|utilize|facilitate|empower|streamline|"
-    r"cutting[- ]edge|paradigm\s+shift|game[- ]changer|"
-    r"multifaceted|meticulous|intricate|paramount|transformative|"
-    r"supercharge|harness|ever[- ]evolving|tapestry|realm|beacon"
-    r")\b"
-)
-
-
-def hh_format_text(text: str) -> str:
-    """HH vacancy response formatting + safe no-ai-slop scrub.
-
-    Transforms: em/en dash -> `-`, arrows -> `->`, curly/guillemet quotes -> ASCII `"`.
-    Scrubs classic cover-letter fluff phrases and a small EN banned-word list (word-boundary).
-    Does not invent content or touch URLs/contacts.
-    """
-    if not text:
-        return ""
-    t = text
-    t = t.replace("—", "-").replace("–", "-")
-    t = t.replace("→", "->").replace("⇒", "->")
-    t = t.replace("«", '"').replace("»", '"')
-    t = t.replace("\u201c", '"').replace("\u201d", '"').replace("\u201e", '"')
-    for bad in _HH_SLOP_PHRASES:
-        t = t.replace(bad, "")
-    t = _HH_SLOP_WORD_RE.sub("", t)
-    # Clean debris after scrub: double spaces, orphan commas/periods at line starts
-    t = re.sub(r"[ \t]{2,}", " ", t)
-    t = re.sub(r" *([,.;:])", r"\1", t)
-    t = re.sub(r"(?m)^[ \t]*[,.;:]+[ \t]*", "", t)
-    # Fix broken header markdown like `Компания:**` / `Должность:**` (missing opening **)
-    t = re.sub(
-        r"(?m)^(?!\*\*)(Должность|Компания|Формат):\*\*",
-        r"**\1:**",
-        t,
-    )
-    return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
 _FORM_QUESTION_TYPE_MAP = {
@@ -2723,6 +2652,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про него с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
+9. Transferable: если в JD skill нет в profile - не выдумывай. Максимум 1 пункт "Смежный опыт: [факт из profile]. Переносимо на [требование JD] через [общий механизм]." Без чужих KPI и без "senior"/CEFR.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -2765,86 +2695,6 @@ CONTACTS_LINKS_RULE = (
     "YouTube @ ≠ Telegram. Без приукрашивания (senior/эксперт/C1 только если в profile). "
     "Без опыта, навыков, smoke URL. Не выдумывай."
 )
-
-_CEFR_EMBELLISH_RE = re.compile(
-    r"(?i)\b(?:C1|C2|B2|B1|A2|A1|CEFR|IELTS|TOEFL)\b|"
-    r"свободно\s+владею|на\s+продвинут\w+\s+уровн|native[- ]?like|"
-    r"экспертн\w+\s+уровн|fluently?\s+(?:speak|master)"
-)
-
-# Seniority / expertise puffery not grounded in compact profile.
-_SENIORITY_EMBELLISH_RE = re.compile(
-    r"(?i)(?:на\s+уровне\s+)?\b(?:senior|сеньор)\b|"
-    r"уровн\w*\s+(?:senior|сеньор)|"
-    r"\bэксперт(?:н\w+)?\b|"
-    r"\bexperts?\b|"
-    r"\blead[- ]?level\b"
-)
-
-
-def strip_embellished_language_claims(letter: str, profile_blob: str) -> Tuple[str, List[str]]:
-    """Drop/soften CEFR/fluency/senior/expert claims not present in profile/RAG."""
-    src = (profile_blob or "").lower()
-    src_has_cefr = bool(re.search(r"\b(?:c1|c2|b2|b1|a2|a1|cefr|ielts|toefl)\b", src))
-    src_has_senior = bool(re.search(r"\b(?:senior|сеньор)\b", src))
-    src_has_expert = bool(re.search(r"\b(?:эксперт|expert)\b", src))
-    fixes: List[str] = []
-    out_lines: List[str] = []
-    for ln in (letter or "").splitlines():
-        line = ln
-        # --- CEFR / fluency ---
-        if _CEFR_EMBELLISH_RE.search(line) and not src_has_cefr:
-            if re.search(r"(?i)english|английск", line) and "proficient" in src:
-                replacement = (
-                    "3. **English (Proficient)** - Английский на уровне Proficient "
-                    "(формулировка как в профиле; без CEFR)."
-                )
-                num = re.match(r"^(\s*\d+\.\s*)", line)
-                if num:
-                    replacement = num.group(1) + replacement.split(". ", 1)[-1]
-                out_lines.append(replacement)
-                fixes.append("rewrote_proficient_no_cefr")
-                continue
-            if re.search(r"(?i)english|английск|язык", line):
-                fixes.append("dropped_embellished_language_bullet")
-                continue
-            soft = _CEFR_EMBELLISH_RE.sub("", line)
-            soft = re.sub(r"\s{2,}", " ", soft).strip(" -–—*")
-            if soft:
-                line = soft
-                fixes.append("stripped_cefr_tokens")
-            else:
-                fixes.append("dropped_embellished_line")
-                continue
-
-        # --- senior / эксперт not in profile ---
-        if _SENIORITY_EMBELLISH_RE.search(line):
-            scrubbed = line
-            if not src_has_senior:
-                scrubbed = re.sub(
-                    r"(?i)(?:на\s+уровне\s+)?\b(?:senior|сеньор)\b|уровн\w*\s+(?:senior|сеньор)",
-                    "",
-                    scrubbed,
-                )
-            if not src_has_expert:
-                scrubbed = re.sub(r"(?i)\bэксперт(?:н\w+)?\b|\bexperts?\b", "", scrubbed)
-            if not src_has_senior:
-                scrubbed = re.sub(r"(?i)\blead[- ]?level\b", "", scrubbed)
-            scrubbed = re.sub(r"\s{2,}", " ", scrubbed)
-            scrubbed = re.sub(r"\s+([,.;:])", r"\1", scrubbed)
-            scrubbed = scrubbed.strip(" -–—*")
-            # Drop bullet if only embellishment remained (too short after scrub)
-            body = re.sub(r"^\s*\d+\.\s*", "", scrubbed)
-            body = re.sub(r"^\*\*[^*]+\*\*\s*-?\s*", "", body).strip()
-            if scrubbed != line:
-                fixes.append("stripped_seniority_embellish")
-            if len(body) < 12:
-                fixes.append("dropped_embellished_seniority_line")
-                continue
-            line = scrubbed
-
-        out_lines.append(line)
-    return "\n".join(out_lines), fixes
 
 
 def _norm_prompt_blob(text: str) -> str:
@@ -3224,6 +3074,7 @@ def build_user_prompt(
     questions: Optional[List[Any]] = None,
     cover_template: str = "",
     prompt_extra: str = "",
+    crag_hints: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
     resume_context = (compact_profile_text or "").strip() or "(empty - do not invent facts)"
@@ -3256,6 +3107,9 @@ def build_user_prompt(
     extra = (prompt_extra or "").strip()
     if extra:
         parts.append(f"CUSTOM INSTRUCTIONS:\n{extra}")
+    hints = (crag_hints or "").strip()
+    if hints:
+        parts.append(hints)
     return "\n\n".join(parts)
 
 
@@ -5636,6 +5490,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             vac_skills,
         )
         domain_pin = pin_domain_facts(merged, vacancy_domains)
+        crag_grades: List[Dict[str, Any]] = []
+        crag_hints = ""
+        crag_refined = False
+        crag_faith_failures: List[str] = []
+        if jr_crag.is_crag_lite_enabled():
+            crag_grades = jr_crag.grade_jd_requirements(vac_skills, merged)
+            crag_hints = jr_crag.build_crag_hints(crag_grades, domain_pin=domain_pin)
         provider_errors: List[str] = []
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
@@ -5671,6 +5532,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 normalized_questions,
                 cover_template=cover_template if has_template else "",
                 prompt_extra=prompt_extra,
+                crag_hints=crag_hints,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -5845,6 +5707,122 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 )
 
         raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else raw_text
+
+        # CRAG-lite: heuristic faith check + one refine pass if budget allows.
+        if (
+            raw_text
+            and mode == "cover_letter"
+            and jr_crag.is_crag_lite_enabled()
+            and not profile_compressed
+        ):
+            if not compact_text:
+                compact_text = format_compact_profile(
+                    merged,
+                    max_chars=profile_cap,
+                    vacancy_domains=vacancy_domains,
+                )
+            profile_blob_pre = "\n".join(
+                [
+                    str(compact_text or ""),
+                    str((merged or {}).get("rag_edits") or ""),
+                    str((merged or {}).get("_text_blob") or ""),
+                ]
+            )
+            crag_faith_failures = jr_crag.faith_check_failures(
+                raw_text,
+                profile_blob_pre,
+                crag_grades,
+                vacancy_domains=vacancy_domains,
+                domains_matched=list(domain_pin.get("domains_matched") or []),
+            )
+            remaining_faith = deadline - time.monotonic()
+            if crag_faith_failures and remaining_faith >= jr_crag.CRAG_REFINE_MIN_BUDGET_SEC:
+                critique_text = ""
+                critique_budget = min(6.0, remaining_faith - 2.0)
+                if critique_budget >= 3.0:
+                    try:
+                        critique_result = call_with_timeout(
+                            openai_chat_completions_generic,
+                            critique_budget,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You audit cover letters. Output 1-3 bullet fixes in Russian. "
+                                        "No preamble."
+                                    ),
+                                },
+                                {
+                                    "role": "user",
+                                    "content": jr_crag.build_critique_user_prompt(
+                                        raw_text,
+                                        crag_faith_failures,
+                                        compact_text or "",
+                                    ),
+                                },
+                            ],
+                            temperature=0.0,
+                            max_tokens_override=jr_crag.CRAG_CRITIQUE_MAX_TOKENS,
+                            tier_override="fast",
+                            route_provider_override="gemini",
+                            route_model_override=JR_GEMINI_MODEL,
+                        )
+                        critique_text = str(getattr(critique_result, "content", None) or "").strip()
+                    except Exception as exc:
+                        provider_errors.append(f"crag_critique:{type(exc).__name__}")
+                refine_remaining = deadline - time.monotonic()
+                if refine_remaining >= 4.0:
+                    refine_timeout = min(LLM_PROVIDER_CAP_SEC, refine_remaining - 0.5)
+                    try:
+                        refine_result = call_with_timeout(
+                            openai_chat_completions_generic,
+                            refine_timeout,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Fix the cover letter using profile facts only. "
+                                        "Keep structure; remove ungrounded claims. Output full letter."
+                                    ),
+                                },
+                                {
+                                    "role": "user",
+                                    "content": jr_crag.build_refine_user_prompt(
+                                        raw_text,
+                                        critique_text or "; ".join(crag_faith_failures),
+                                        compact_text or "",
+                                        crag_hints,
+                                    ),
+                                },
+                            ],
+                            temperature=0.0,
+                            max_tokens_override=jr_crag.CRAG_REFINE_MAX_TOKENS,
+                            tier_override="fast",
+                            route_provider_override="openmodel",
+                            route_model_override="",
+                        )
+                        refined = str(getattr(refine_result, "content", None) or "").strip()
+                        if refined:
+                            raw_text = refined
+                            crag_refined = True
+                            if chat_result is not None:
+                                chat_result = type(
+                                    "CragRefineResult",
+                                    (),
+                                    {
+                                        "content": raw_text,
+                                        "model_resolved": getattr(
+                                            refine_result, "model_resolved", None
+                                        ),
+                                        "provider_used": getattr(
+                                            refine_result, "provider_used", None
+                                        )
+                                        or "crag_refine",
+                                    },
+                                )()
+                    except Exception as exc:
+                        provider_errors.append(f"crag_refine:{type(exc).__name__}")
+
         if not raw_text:
             elapsed = time.monotonic() - started
             err_tail = "; ".join(provider_errors[-8:]) if provider_errors else last_err or "unknown"
@@ -5986,4 +5964,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "vacancyDomains": vacancy_domains,
             "domainsMatched": list(domain_pin.get("domains_matched") or []),
             "domainPinBullets": list(domain_pin.get("pinned_bullets") or [])[:4],
+            "cragLiteUsed": bool(jr_crag.is_crag_lite_enabled() and crag_grades),
+            "cragGrades": crag_grades[:16] if crag_grades else [],
+            "cragFaithFailures": crag_faith_failures,
+            "cragRefined": crag_refined,
         }

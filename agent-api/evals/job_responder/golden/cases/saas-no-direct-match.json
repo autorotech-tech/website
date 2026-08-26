@@ -6,6 +6,7 @@
     "structured": { "keySkills": ["HubSpot", "PLG", "SQL", "Airflow"] }
   },
   "profile_fixture": "fixtures/marketing_compact.json",
+  "sample_letter": "1. **Performance marketing (Meta Ads)** - tourism funnel, ROAS x2 vs baseline.\n2. **Смежный опыт** - PLG и SQL dashboards не заявляю; смежный опыт с Meta Ads и Looker Studio.\n3. CTA: готов обсудить задачи.",
   "must_include_facts": ["Meta", "ROAS"],
   "must_not_claim": ["Airflow", "senior", "C1"],
   "allow_transferable": true,

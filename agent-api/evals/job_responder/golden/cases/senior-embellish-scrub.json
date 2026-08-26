@@ -1,0 +1,9 @@
+{
+  "id": "senior-embellish-scrub",
+  "post_process": "hh_format",
+  "profile_fixture": "fixtures/marketing_compact.json",
+  "sample_letter": "1. **SQL и Python** - работаю с данными на уровне senior.\n2. **Meta Ads** - tourism funnel, ROAS x2 vs baseline.\n3. **Эксперт по SEO** - ведущий эксперт рынка.",
+  "must_not_claim": ["senior", "эксперт", "expert"],
+  "must_include_facts": ["Meta", "ROAS"],
+  "banned_phrases": []
+}

@@ -6,6 +6,8 @@
     "structured": { "keySkills": ["skill-a", "skill-b"] }
   },
   "profile_fixture": "fixtures/example_compact.json",
+  "sample_letter": "1. **Skill from profile** - fact with metric.\n2. CTA.",
+  "post_process": "hh_format",
   "must_include_facts": ["fact-from-profile"],
   "must_not_claim": ["Airflow", "C1", "senior"],
   "allow_transferable": true,

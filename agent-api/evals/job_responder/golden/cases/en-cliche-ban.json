@@ -1,0 +1,16 @@
+{
+  "id": "en-cliche-ban",
+  "post_process": "hh_format",
+  "sample_letter": "I am writing to express my interest in this role. As a highly motivated professional, I am thrilled to apply and passionate about your dynamic team. In today's fast-paced world, I leverage my expertise to foster synergy.",
+  "must_not_claim": [],
+  "banned_phrases": [
+    "I am writing to express my interest",
+    "As a highly motivated professional",
+    "thrilled to apply",
+    "passionate about",
+    "In today's fast-paced world",
+    "leverage",
+    "foster",
+    "synergy"
+  ]
+}

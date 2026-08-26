@@ -1,0 +1,13 @@
+{
+  "id": "tourism-domain-pin",
+  "vacancy": {
+    "title": "Performance Marketing Lead (tourism)",
+    "description": "Tourism / travel vertical. Meta Ads, Google Ads, ROAS. Experience with pquoc.com or similar.",
+    "structured": { "keySkills": ["Meta Ads", "Google Ads", "ROAS", "tourism"] }
+  },
+  "profile_fixture": "fixtures/marketing_compact.json",
+  "sample_letter": "1. **Tourism performance marketing** - Meta Ads для tourism funnel, ROAS x2 vs baseline (pquoc.com).\n2. **Meta Ads + Google Ads** - performance marketing в e-commerce и tourism.\n3. Готов обсудить KPI и формат.",
+  "must_include_facts": ["tourism", "Meta", "ROAS"],
+  "must_not_claim": ["Airflow", "C1", "senior"],
+  "banned_phrases": ["динамично развивающаяся", "идеально подхожу"]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "hh-slop-scrub",
+  "post_process": "hh_format",
+  "sample_letter": "«Процесс → результат» — автоматизация. Я хотел бы выразить заинтересованность. We leverage cutting-edge tools to delve into data. Thrilled to apply for this passionate opportunity.",
+  "must_not_contain_chars": ["—", "→", "«", "»"],
+  "must_not_claim": [],
+  "banned_phrases": [
+    "выразить заинтересованность",
+    "leverage",
+    "cutting-edge",
+    "delve",
+    "thrilled to apply",
+    "passionate about"
+  ],
+  "must_include_facts": ["\"Процесс -> результат\" - автоматизация"]
+}

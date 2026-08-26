@@ -1,0 +1,9 @@
+{
+  "id": "cefr-embellish-scrub",
+  "post_process": "hh_format",
+  "profile_fixture": "fixtures/marketing_compact.json",
+  "sample_letter": "1. **English (C1)** - Свободно владею английским на уровне C1.\n2. **Meta Ads** - tourism funnel, ROAS x2.",
+  "must_not_claim": ["C1", "C2", "Свободно"],
+  "must_include_facts": ["Meta", "ROAS"],
+  "banned_phrases": []
+}
