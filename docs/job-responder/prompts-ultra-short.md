@@ -16,43 +16,28 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок. Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
-5. ASCII " и дефис -. Русский, если не просили иначе.
+5. Не приукрашивай уровни (Proficient ≠ C1).
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
-**Должность:** {title}
-**Компания:** {company}
-**Формат:** {format|remote|employment}
-
----
-
-## СОПРОВОДИТЕЛЬНОЕ ПИСЬМО
-{greeting}
-
-{1 short pitch sentence}
-
-**Почему я подхожу под вакансию:**
-1. **{тема}** - {1-2 предложения с фактом}
-2. ...
-3. ...
-(макс 4 пункта)
-
-{1 sentence CTA}
-
-**Следующий шаг:** {коротко}
-
-## Контакты
-- Telegram: ...
-- Email: ...
-(только известные; без пустых строк и без лишнего текста)
-
-## Ссылки
-резюме: https://...
-youtube: https://...
-(все известные релевантные URL с подписями; не выдумывай)
-
-[OUT qa] [{"question":"...","answer":"..."}]
+...
 ```
+
+## HH + no-ai-slop post-process
+
+Backend `hh_format_text` (вызывается из `finalize_cover_letter_contacts_and_links` и QA answers):
+
+| Transform | Result |
+|---|---|
+| `—` / `–` | `-` |
+| `→` / `⇒` | `->` |
+| `«»` / curly quotes | ASCII `"` |
+| RU/EN cover fluff phrases | stripped |
+| EN banned words (word-boundary): delve, leverage, utilize, cutting-edge, … | stripped |
+
+Skill source: [autorotech-tech/no-ai-slop](https://github.com/autorotech-tech/no-ai-slop) (локально `.cursor/skills/no-ai-slop`). Контакты/ссылки не ломаем - rewrite ## Контакты / ## Ссылки идёт до финального scrub.
 
 ## Cover template (structured)
 

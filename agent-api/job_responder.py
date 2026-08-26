@@ -221,7 +221,56 @@ _ROLE_HINTS = (
 )
 
 
+# HH formatting + light no-ai-slop scrub (see docs/job-responder/prompts-ultra-short.md).
+# Phrase-level only for RU/EN cover-letter cliches; EN banned words = whole-word, case-insensitive.
+_HH_SLOP_PHRASES = (
+    # RU cover-letter openers / fluff
+    "Я хотел бы выразить заинтересованность",
+    "Пишу, чтобы выразить свой интерес",
+    "В современном быстро меняющемся мире",
+    "В сегодняшнем быстро меняющемся мире",
+    "Как высокомотивированный профессионал",
+    "Позвольте представиться",
+    "Разрешите представить себя",
+    "С радостью хотел бы присоединиться",
+    "Имею честь подать заявку",
+    "Давайте разберёмся",
+    "Давайте разберемся",
+    # EN cover-letter / no-ai-slop throat-clearing
+    "I am writing to express my interest",
+    "I'm writing to express my interest",
+    "I would like to express my interest",
+    "In today's fast-paced world",
+    "In today's rapidly evolving world",
+    "As a highly motivated professional",
+    "Here's the thing",
+    "Let me be clear",
+    "It's worth noting that",
+    "It is worth noting that",
+    "At the end of the day",
+    "When it comes to",
+    "In conclusion,",
+    "Let's dive in",
+    "Going forward,",
+)
+
+_HH_SLOP_WORD_RE = re.compile(
+    r"(?i)\b(?:"
+    r"delve|foster|leverage|utilize|facilitate|empower|streamline|"
+    r"cutting[- ]edge|paradigm\s+shift|game[- ]changer|"
+    r"multifaceted|meticulous|intricate|paramount|transformative|"
+    r"supercharge|harness|ever[- ]evolving|tapestry|realm|beacon"
+    r")\b"
+)
+
+
 def hh_format_text(text: str) -> str:
+    """HH vacancy response formatting + safe no-ai-slop scrub.
+
+    Transforms: em/en dash -> `-`, arrows -> `->`, curly/guillemet quotes -> ASCII `"`.
+    Scrubs classic cover-letter fluff phrases and a small EN banned-word list (word-boundary).
+    Does not invent content or touch URLs/contacts.
+    """
     if not text:
         return ""
     t = text
@@ -229,13 +278,13 @@ def hh_format_text(text: str) -> str:
     t = t.replace("→", "->").replace("⇒", "->")
     t = t.replace("«", '"').replace("»", '"')
     t = t.replace("\u201c", '"').replace("\u201d", '"').replace("\u201e", '"')
-    for bad in (
-        "Я хотел бы выразить заинтересованность",
-        "Пишу, чтобы выразить свой интерес",
-        "В современном быстро меняющемся мире",
-        "Как высокомотивированный профессионал",
-    ):
+    for bad in _HH_SLOP_PHRASES:
         t = t.replace(bad, "")
+    t = _HH_SLOP_WORD_RE.sub("", t)
+    # Clean debris after scrub: double spaces, orphan commas/periods at line starts
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r" *([,.;:])", r"\1", t)
+    t = re.sub(r"(?m)^[ \t]*[,.;:]+[ \t]*", "", t)
     return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
@@ -1503,12 +1552,13 @@ def finalize_cover_letter_contacts_and_links(
     links: List[Dict[str, str]],
     profile_blob: str = "",
 ) -> str:
-    """Post-process: anti-embellish + authoritative ## Контакты / ## Ссылки (V1)."""
+    """Post-process: anti-embellish + authoritative ## Контакты / ## Ссылки (V1) + HH/no-ai-slop."""
     body = text or ""
     if profile_blob:
         body, _emb = strip_embellished_language_claims(body, profile_blob)
     body, _meta = validate_and_rewrite_cover_letter_v1(body, contacts=contacts, links=links)
-    return body
+    # Final pass: formatting + slop scrub after contact/link rewrite (URLs stay intact).
+    return hh_format_text(body)
 
 def extract_resume_profile(text: str, *, title: str = "", category: str = "") -> Dict[str, Any]:
     """Heuristic structured params for RAG matching touchpoints."""
@@ -2464,7 +2514,8 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
 5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
-6. ASCII " и дефис -. Русский, если не просили иначе.
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -5239,7 +5290,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         for i, q in enumerate(normalized_questions)
                     ]
                     raw_text = "\n\n".join(
-                        f"Q: {a['question']}\nA: {a['answer'] or '—'}" for a in answers
+                        f"Q: {a['question']}\nA: {a['answer'] or '-'}" for a in answers
                     )
                 else:
                     raw_text = hh_format_text(raw_text)

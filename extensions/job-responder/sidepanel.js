@@ -91,7 +91,8 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 3. В письме: 3-4 релевантных пункта под требования вакансии (конкретика, метрики если есть).
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок (резюме, youtube, LinkedIn, демо…). YouTube @handle ≠ Telegram. Не выдумывай URL.
 5. Не приукрашивай и не занижай. Копируй уровни/метрики/формулировки как в profile/template. Proficient ≠ C1-C2. Не додумывай CEFR, %, "эксперт", "свободно", если этого нет в источнике.
-6. ASCII " и дефис -. Русский, если не просили иначе.
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -164,6 +165,12 @@ function isJrSystemPromptText(text) {
 function isOldUltraShortPrompt(text) {
   const t = String(text || '');
   return isJrSystemPromptText(t) && /\[FLOW\]/.test(t) && !/\[OUT cover_letter\]/.test(t);
+}
+
+/** Old ultra-short without no-ai-slop rule 7 - migrate to current default. */
+function isMissingNoAiSlopPrompt(text) {
+  const t = String(text || '');
+  return isJrSystemPromptText(t) && !/no-ai-slop/i.test(t);
 }
 
 function isStructuredCoverTemplate(text) {
@@ -2054,7 +2061,8 @@ if (saveCoverTemplateBtn) {
         !savedExtra.trim() ||
         savedExtra.trim() === LEGACY_PROMPT_EXTRA.trim() ||
         /^Всегда включай контакты и релевантные ссылки из профиля/.test(savedExtra.trim()) ||
-        isOldUltraShortPrompt(savedExtra);
+        isOldUltraShortPrompt(savedExtra) ||
+        isMissingNoAiSlopPrompt(savedExtra);
       const next = isLegacy ? DEFAULT_PROMPT_EXTRA : savedExtra;
       promptExtraEl.value = next;
       savedPromptExtra = next;

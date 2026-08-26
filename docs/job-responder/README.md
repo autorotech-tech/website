@@ -2,6 +2,10 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.3
+
+- **no-ai-slop** в откликах: ultra-short rules 6–7 (HH ASCII + anti-slop) + backend `hh_format_text` scrub в `finalize_cover_letter_contacts_and_links` / QA. Skill: [autorotech-tech/no-ai-slop](https://github.com/autorotech-tech/no-ai-slop). См. [prompts-ultra-short.md](./prompts-ultra-short.md).
+
 ## v0.7.0
 
 - Ultra-short system prompt (extension default `jrPromptExtra` + backend `build_system_prompt`). См. [prompts-ultra-short.md](./prompts-ultra-short.md).

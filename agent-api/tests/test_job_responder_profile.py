@@ -21,6 +21,7 @@ from job_responder import (
     finalize_cover_letter_contacts_and_links,
     format_contacts_block,
     format_structured_overrides_document,
+    hh_format_text,
     merge_profiles_from_rows,
     near_duplicate_hash,
     normalize_profile_overrides,
@@ -630,3 +631,36 @@ def test_strip_cefr_embellish_when_profile_says_proficient():
     assert "Свободно владею" not in out
     assert "Proficient" in out
     assert fixes
+
+
+def test_hh_format_text_no_ai_slop():
+    raw = (
+        "«Процесс → результат» — автоматизация. "
+        "Я хотел бы выразить заинтересованность. "
+        "We leverage cutting-edge tools to delve into data."
+    )
+    out = hh_format_text(raw)
+    assert "—" not in out
+    assert "–" not in out
+    assert "→" not in out
+    assert "«" not in out and "»" not in out
+    assert '"Процесс -> результат" - автоматизация' in out
+    assert "выразить заинтересованность" not in out
+    assert "leverage" not in out.lower()
+    assert "cutting-edge" not in out.lower()
+    assert "delve" not in out.lower()
+    # Contacts/links survive finalize + scrub
+    letter = (
+        "В современном быстро меняющемся мире я готов.\n\n"
+        "## Контакты\n- Telegram: @wrong\n"
+    )
+    final = finalize_cover_letter_contacts_and_links(
+        letter,
+        contacts={"telegram": "@autoro_tech", "email": "a@b.com"},
+        links=[{"label": "резюме", "url": "https://autoro.tech/resume/", "value": "https://autoro.tech/resume/"}],
+    )
+    assert "—" not in final
+    assert "В современном быстро меняющемся мире" not in final
+    assert "@autoro_tech" in final
+    assert "https://autoro.tech/resume/" in final
+    assert "## Контакты" in final and "## Ссылки" in final
