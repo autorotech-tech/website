@@ -1,4 +1,6 @@
 const PAGE_EXTRACT_FILE = 'content/page-extract.js';
+const OFFSCREEN_URL = 'offscreen.html';
+let offscreenCreating = null;
 
 function canInjectIntoUrl(url) {
   if (!url) return false;
@@ -15,6 +17,32 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab?.windowId) return;
   await chrome.sidePanel.open({ windowId: tab.windowId });
 });
+
+/**
+ * Resolve active tab for a side-panel window.
+ * Prefer explicit windowId from the panel; never rely on service-worker "currentWindow"
+ * alone (wrong window when vacancy opens in a new Chrome window).
+ */
+function queryActiveTab({ windowId, tabId } = {}) {
+  return new Promise((resolve) => {
+    if (Number.isFinite(Number(tabId)) && Number(tabId) > 0) {
+      chrome.tabs.get(Number(tabId), (tab) => {
+        if (chrome.runtime.lastError || !tab) {
+          resolve(null);
+          return;
+        }
+        resolve(tab);
+      });
+      return;
+    }
+    const wid = windowId != null && Number.isFinite(Number(windowId)) ? Number(windowId) : null;
+    const query =
+      wid != null ? { active: true, windowId: wid } : { active: true, lastFocusedWindow: true };
+    chrome.tabs.query(query, (tabs) => {
+      resolve(tabs && tabs[0] ? tabs[0] : null);
+    });
+  });
+}
 
 function extractFromTab(tabId, sendResponse) {
   chrome.tabs.sendMessage(tabId, { type: 'JR_EXTRACT_VACANCY' }, (resp) => {
@@ -79,26 +107,83 @@ function broadcastActiveTab(tab, reason) {
       type: 'JR_TAB_CHANGED',
       reason: reason || 'activated',
       tabId: tab.id,
+      windowId: tab.windowId != null ? tab.windowId : null,
       url,
       canExtract: canInjectIntoUrl(url),
     })
     .catch(() => {});
 }
 
-function broadcastTabRemoved(tabId) {
+function broadcastTabRemoved(tabId, windowId) {
   chrome.runtime
     .sendMessage({
       type: 'JR_TAB_REMOVED',
       tabId,
+      windowId: windowId != null ? windowId : null,
     })
     .catch(() => {});
 }
 
-function notifyCurrentActiveTab(reason) {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+function notifyCurrentActiveTab(reason, windowId) {
+  const query =
+    windowId != null
+      ? { active: true, windowId: Number(windowId) }
+      : { active: true, lastFocusedWindow: true };
+  chrome.tabs.query(query, (tabs) => {
     const tab = tabs[0];
     if (!tab) return;
     broadcastActiveTab(tab, reason);
+  });
+}
+
+async function ensureOffscreenDocument() {
+  try {
+    if (chrome.runtime.getContexts) {
+      const contexts = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT'],
+        documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+      });
+      if (contexts && contexts.length > 0) return;
+    }
+  } catch (_err) {
+    /* older Chrome - try create anyway */
+  }
+  if (offscreenCreating) {
+    await offscreenCreating;
+    return;
+  }
+  offscreenCreating = chrome.offscreen
+    .createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ['CLIPBOARD'],
+      justification: 'Copy Autoro Hunt cover letter from side panel to system clipboard',
+    })
+    .catch((err) => {
+      const msg = String(err?.message || err || '');
+      // Already exists is fine under races.
+      if (!/already exists|Only a single offscreen/i.test(msg)) throw err;
+    })
+    .finally(() => {
+      offscreenCreating = null;
+    });
+  await offscreenCreating;
+}
+
+function copyViaOffscreen(text) {
+  return new Promise(async (resolve) => {
+    try {
+      await ensureOffscreenDocument();
+    } catch (err) {
+      resolve({ ok: false, error: String(err?.message || err) });
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'JR_OFFSCREEN_COPY', text: String(text || '') }, (resp) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(resp || { ok: false, error: 'Empty offscreen response' });
+    });
   });
 }
 
@@ -117,16 +202,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   broadcastActiveTab({ ...tab, id: tabId, url }, changeInfo.url ? 'navigated' : 'complete');
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  broadcastTabRemoved(tabId);
-  // After close, re-read whatever is now active (debounced in sidepanel).
-  setTimeout(() => notifyCurrentActiveTab('after_remove'), 50);
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  broadcastTabRemoved(tabId, removeInfo?.windowId);
+  // After close, re-read whatever is now active in that window (debounced in sidepanel).
+  setTimeout(() => notifyCurrentActiveTab('after_remove', removeInfo?.windowId), 50);
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'JR_GET_VACANCY') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
+    queryActiveTab({ windowId: message.windowId, tabId: message.tabId }).then((tab) => {
       if (!tab?.id) {
         sendResponse({ ok: false, error: 'No active tab' });
         return;
@@ -136,6 +220,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ok: false,
           error: 'Откройте обычную http(s) страницу с вакансией (не chrome://)',
           tabId: tab.id,
+          windowId: tab.windowId,
           url: tab.url || '',
         });
         return;
@@ -144,6 +229,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({
           ...(resp || { ok: false, error: 'Empty response' }),
           tabId: tab.id,
+          windowId: tab.windowId,
           url: tab.url || resp?.vacancy?.url || '',
         });
       });
@@ -152,8 +238,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === 'JR_GET_VACANCY_LIST') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
+    queryActiveTab({ windowId: message.windowId, tabId: message.tabId }).then((tab) => {
       if (!tab?.id) {
         sendResponse({ ok: false, error: 'No active tab' });
         return;
@@ -163,6 +248,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ok: false,
           error: 'Откройте страницу поиска вакансий hh.ru (/search/vacancy)',
           tabId: tab.id,
+          windowId: tab.windowId,
           url: tab.url || '',
         });
         return;
@@ -171,6 +257,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({
           ...(resp || { ok: false, error: 'Empty response' }),
           tabId: tab.id,
+          windowId: tab.windowId,
           url: tab.url || resp?.url || '',
         });
       });
@@ -188,14 +275,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       run(tabId);
       return true;
     }
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
+    queryActiveTab({ windowId: message.windowId }).then((tab) => {
       if (!tab?.id) {
         sendResponse({ ok: false, error: 'No active tab' });
         return;
       }
       run(tab.id);
     });
+    return true;
+  }
+
+  if (message?.type === 'JR_COPY_TEXT') {
+    copyViaOffscreen(message.text).then((resp) => sendResponse(resp));
     return true;
   }
 

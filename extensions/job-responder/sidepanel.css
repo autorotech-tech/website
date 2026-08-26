@@ -269,10 +269,10 @@ button {
   cursor: pointer;
 }
 
-button.secondary {
-  background: #fff;
-  color: #0f172a;
-  border: 1px solid #cbd5e1;
+button.secondary.isCopied {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #065f46;
 }
 
 button:disabled {

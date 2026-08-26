@@ -488,26 +488,29 @@ const JR_API = (() => {
     });
   }
 
-  function fetchVacancyListFromTab() {
+  function fetchVacancyListFromTab({ windowId, tabId } = {}) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: 'JR_GET_VACANCY_LIST' }, (resp) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message || 'Не удалось прочитать список'));
-          return;
+      chrome.runtime.sendMessage(
+        { type: 'JR_GET_VACANCY_LIST', windowId, tabId },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message || 'Не удалось прочитать список'));
+            return;
+          }
+          if (!resp?.ok) {
+            reject(new Error(resp?.error || 'Список вакансий не найден'));
+            return;
+          }
+          resolve(resp);
         }
-        if (!resp?.ok) {
-          reject(new Error(resp?.error || 'Список вакансий не найден'));
-          return;
-        }
-        resolve(resp);
-      });
+      );
     });
   }
 
-  function injectListBadges({ scores, tabId } = {}) {
+  function injectListBadges({ scores, tabId, windowId } = {}) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
-        { type: 'JR_INJECT_LIST_BADGES', scores: scores || [], tabId },
+        { type: 'JR_INJECT_LIST_BADGES', scores: scores || [], tabId, windowId },
         (resp) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message || 'Не удалось вставить бейджи'));
@@ -520,6 +523,22 @@ const JR_API = (() => {
           resolve(resp);
         }
       );
+    });
+  }
+
+  function copyTextViaBackground(text) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'JR_COPY_TEXT', text: String(text || '') }, (resp) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message || 'Clipboard bridge failed'));
+          return;
+        }
+        if (!resp?.ok) {
+          reject(new Error(resp?.error || 'Не удалось скопировать'));
+          return;
+        }
+        resolve(resp);
+      });
     });
   }
 
@@ -619,9 +638,9 @@ const JR_API = (() => {
     return '';
   }
 
-  async function fetchVacancyFromTab() {
+  async function fetchVacancyFromTab({ windowId, tabId } = {}) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: 'JR_GET_VACANCY' }, (resp) => {
+      chrome.runtime.sendMessage({ type: 'JR_GET_VACANCY', windowId, tabId }, (resp) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -632,7 +651,13 @@ const JR_API = (() => {
         }
         const vacancy = resp.vacancy && typeof resp.vacancy === 'object' ? { ...resp.vacancy } : {};
         if (resp.tabId != null) vacancy.tabId = resp.tabId;
+        if (resp.windowId != null) vacancy.windowId = resp.windowId;
         if (resp.url && !vacancy.url) vacancy.url = resp.url;
+        const vid =
+          String(vacancy.id || '').trim() ||
+          (String(vacancy.url || '').match(/\/vacancy\/(\d+)/) || [])[1] ||
+          '';
+        if (vid) vacancy.id = vid;
         resolve(vacancy);
       });
     });
@@ -673,6 +698,7 @@ const JR_API = (() => {
     deleteSources,
     driveImport,
     ensureWorkspace,
+    copyTextViaBackground,
     fetchVacancyFromTab,
     fetchVacancyListFromTab,
     geminiRagStatus,

@@ -2,6 +2,12 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.7
+
+- **Новое окно**: side panel привязан к `windowId`; hydrate score из `jrRelevanceCache` по URL на open / tabs.onActivated / after «Страница прочитана». Content script ставит бейдж `%` на `/vacancy/<id>` и на списке из кэша.
+- **Копировать**: select `#resultText` + clipboard API + in-viewport textarea + offscreen document (`JR_COPY_TEXT`); кнопка disabled пока нет текста; feedback «Скопировано».
+- **Структура**: фильтр CSS-мусора в employment/location (style-tag leakage).
+
 ## v0.9.6
 
 - **Копировать**: `copyTextToClipboard` в side panel (`navigator.clipboard.writeText` + fallback `execCommand` / offscreen textarea) + краткий feedback «Скопировано»; permission `clipboardWrite`.

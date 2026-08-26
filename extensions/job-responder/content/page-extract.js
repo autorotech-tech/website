@@ -54,6 +54,42 @@
     return String(el?.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
+  /** True when scraped text looks like CSS / style-tag leakage. */
+  function looksLikeCssGarbage(s) {
+    const t = String(s || '');
+    if (!t) return false;
+    if (/!important/i.test(t)) return true;
+    if (/\.[a-zA-Z_][\w-]*\s*\{/.test(t)) return true;
+    if (/\{[^}]{0,120}(?:display|visibility|table-layout|white-space)\s*:/i.test(t)) return true;
+    if (/\byatag\b/i.test(t) && /\{|\}/.test(t)) return true;
+    if ((t.match(/[{};]/g) || []).length >= 3 && /display\s*:|visibility\s*:/i.test(t)) return true;
+    return false;
+  }
+
+  function cleanStructuredField(s) {
+    let t = String(s || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    // Cut off at first CSS-looking fragment.
+    const cut = t.search(/\.[a-zA-Z_][\w-]*\s*\{|!important/i);
+    if (cut > 0) t = t.slice(0, cut).trim();
+    if (looksLikeCssGarbage(t)) return '';
+    if (t.length > 180) t = t.slice(0, 180).trim();
+    return t;
+  }
+
+  /** Body text without style/script noise (for structured field regex). */
+  function pageTextSansChrome() {
+    try {
+      const root = document.body;
+      if (!root) return '';
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('style, script, noscript, svg, template').forEach((el) => el.remove());
+      return textOf(clone).slice(0, 50000);
+    } catch (_err) {
+      return textOf(document.body).slice(0, 50000);
+    }
+  }
+
   function isHhPage() {
     return detectHost(location.hostname) !== 'web';
   }
@@ -797,58 +833,69 @@
   }
 
   function extractStructured(description) {
-    const blob = [description, textOf(document.body)].filter(Boolean).join('\n');
+    const blob = [description, pageTextSansChrome()].filter(Boolean).join('\n');
 
-    const salary =
+    const salary = cleanStructuredField(
       matchLine(blob, [
         /(?:уровень дохода|зарплата|salary|compensation|pay)[:\s]+(.{3,120})/i,
         /(\$[\d,.]+(?:\s*[-–]\s*\$?[\d,.]+)?(?:\s*(?:k|K|\/yr|\/year|в год|в месяц))?)/,
         /(\d[\d\s]{2,}\s*(?:₽|руб|USD|EUR|\$).*?(?:на руки|до вычета|gross|net)?)/i,
       ]) ||
-      textOf(document.querySelector('[data-qa="vacancy-salary"], [itemprop="baseSalary"], .salary')) ||
-      '';
+        textOf(document.querySelector('[data-qa="vacancy-salary"], [itemprop="baseSalary"], .salary')) ||
+        ''
+    );
 
-    const experience =
+    const experience = cleanStructuredField(
       matchLine(blob, [
         /(?:опыт работы|experience|exp\.?)[:\s]+(.{2,120})/i,
         /(\d+\s*[-–—]\s*\d+\s*(?:лет|года|years))/i,
         /(без опыта|no experience|entry[- ]level)/i,
       ]) ||
-      textOf(document.querySelector('[data-qa="vacancy-experience"], [data-qa="vacancy-experience"] span')) ||
-      '';
+        textOf(document.querySelector('[data-qa="vacancy-experience"], [data-qa="vacancy-experience"] span')) ||
+        ''
+    );
 
-    const employmentType =
+    const employmentType = cleanStructuredField(
       matchLine(blob, [
         /(?:тип занятости|занятость|employment(?: type)?)[:\s]+(.{2,100})/i,
         /(частичная занятость|полная занятость|part[- ]time|full[- ]time|contract|freelance)/i,
-      ]) || '';
+      ]) ||
+        textOf(
+          document.querySelector(
+            '[data-qa="vacancy-view-employment-mode"] span, [data-qa="vacancy-view-employment-mode"]'
+          )
+        ) ||
+        ''
+    );
 
-    const schedule =
+    const schedule = cleanStructuredField(
       matchLine(blob, [
         /(?:график(?: работы)?)[:\s]+(.{2,80})/i,
         /(график[:\s]+)?(5\/2|2\/2|сменн\w*|flexible schedule)/i,
-      ]) || '';
+      ]) || ''
+    );
 
-    const workingHours =
+    const workingHours = cleanStructuredField(
       matchLine(blob, [
         /(?:рабочие часы|working hours|hours)[:\s]+(.{2,120})/i,
         /(по договор[её]нности|flexible hours|\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2})/i,
-      ]) || '';
+      ]) || ''
+    );
 
-    const workFormat =
+    const workFormat = cleanStructuredField(
       matchLine(blob, [
         /(?:формат работы|work format|work type|location type)[:\s]+(.{2,100})/i,
         /(удал[её]нн\w*|remote|hybrid|гибрид\w*|офис\w*|on[- ]site|work from home)/i,
       ]) ||
-      textOf(document.querySelector('[data-qa="vacancy-view-employment-mode"], [data-qa="vacancy-view-location"]')) ||
-      '';
+        textOf(document.querySelector('[data-qa="vacancy-view-employment-mode"], [data-qa="vacancy-view-location"]')) ||
+        ''
+    );
 
-    const location =
-      matchLine(blob, [
-        /(?:локация|location|город|city)[:\s]+(.{2,100})/i,
-      ]) ||
-      textOf(document.querySelector('[data-qa="vacancy-view-raw-address"], [itemprop="jobLocation"]')) ||
-      '';
+    const location = cleanStructuredField(
+      matchLine(blob, [/(?:локация|location|город|city)[:\s]+(.{2,100})/i]) ||
+        textOf(document.querySelector('[data-qa="vacancy-view-raw-address"], [itemprop="jobLocation"]')) ||
+        ''
+    );
 
     let seniority = '';
     const titleLower = (extractTitle() || '').toLowerCase();
@@ -859,7 +906,11 @@
     const keySkills = extractKeySkills(blob);
 
     return {
-      salary: salary || (blob.match(/уровень дохода не указан/i) ? 'Уровень дохода не указан' : ''),
+      salary:
+        salary ||
+        (blob.match(/уровень дохода не указан/i) && !looksLikeCssGarbage(blob.slice(0, 80))
+          ? 'Уровень дохода не указан'
+          : ''),
       experience: experience || '',
       employmentType: employmentType || '',
       schedule: schedule || '',
@@ -908,8 +959,12 @@
             ? 'job_board'
             : 'page';
 
+    const pageUrl = location.href;
+    const vacancyId = vacancyIdFromUrl(pageUrl);
+
     return {
-      url: location.href,
+      id: vacancyId || undefined,
+      url: pageUrl,
       title: title || document.title || 'Vacancy',
       company,
       description:
@@ -1107,6 +1162,79 @@
     return injected;
   }
 
+  /** Badge next to vacancy title on /vacancy/<id> detail page. */
+  function injectVacancyDetailBadge(id, score) {
+    ensureBadgeStyles();
+    const sid = String(id || '');
+    const n = Math.round(Number(score) || 0);
+    if (!sid || !Number.isFinite(n)) return false;
+    const titleEl =
+      document.querySelector('[data-qa="vacancy-title"], [data-qa="title"], h1.bloko-header-1, h1') ||
+      document.querySelector('h1');
+    if (!titleEl) return false;
+    let wrap = document.querySelector('.jr-relevance-badge-wrap[data-jr-detail="1"]');
+    if (!wrap) {
+      wrap = document.createElement('span');
+      wrap.className = 'jr-relevance-badge-wrap';
+      wrap.setAttribute('data-jr-detail', '1');
+      wrap.style.cssText = 'float:none;display:inline-flex;margin-left:10px;vertical-align:middle;';
+      titleEl.appendChild(wrap);
+    }
+    let badge = wrap.querySelector('.jr-relevance-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'jr-relevance-badge';
+      wrap.appendChild(badge);
+    }
+    badge.textContent = `${n}%`;
+    badge.title = `Релевантность ${n} (из кэша списка)`;
+    badge.setAttribute('aria-label', `Релевантность ${n}`);
+    badge.setAttribute('data-score-tier', scoreTier(n));
+    badge.setAttribute('data-jr-vacancy-id', sid);
+    return true;
+  }
+
+  function readRelevanceCacheMap() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get(['jrRelevanceCache'], (saved) => {
+          const map = saved && saved.jrRelevanceCache && typeof saved.jrRelevanceCache === 'object'
+            ? saved.jrRelevanceCache
+            : {};
+          resolve(map);
+        });
+      } catch (_err) {
+        resolve({});
+      }
+    });
+  }
+
+  /** On vacancy detail or search list load: re-apply badges from jrRelevanceCache. */
+  async function hydrateBadgesFromCache() {
+    const cache = await readRelevanceCacheMap();
+    const entries = Object.entries(cache || {});
+    if (!entries.length) return;
+
+    const detailId = vacancyIdFromUrl(location.href);
+    if (detailId && /\/vacancy\/\d+/i.test(location.pathname) && !isHhSearchListPage()) {
+      const entry = cache[detailId];
+      if (entry && entry.score != null) {
+        injectVacancyDetailBadge(detailId, entry.score);
+      }
+      return;
+    }
+
+    if (!isHhSearchListPage()) return;
+    const scores = [];
+    for (const [key, entry] of entries) {
+      if (!entry || entry.score == null) continue;
+      const id = vacancyIdFromUrl(entry.url) || String(key);
+      if (!/^\d+$/.test(id)) continue;
+      scores.push({ id, score: entry.score, title: entry.title, url: entry.url });
+    }
+    if (scores.length) injectRelevanceBadges(scores);
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'JR_EXTRACT_VACANCY_LIST') {
       try {
@@ -1157,5 +1285,14 @@
       sendResponse({ ok: false, error: String(err?.message || err) });
     }
     return true;
+  });
+
+  // Re-apply list/detail badges after navigation (new window / SPA / reload).
+  setTimeout(() => {
+    hydrateBadgesFromCache().catch(() => {});
+  }, 400);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.jrRelevanceCache) return;
+    hydrateBadgesFromCache().catch(() => {});
   });
 })();

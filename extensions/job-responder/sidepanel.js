@@ -6,6 +6,8 @@ let lastIngestSummary = '';
 let geminiRagReady = false;
 let lastTabUrl = '';
 let lastTabId = null;
+/** Side panel is per Chrome window - ignore tab events from other windows. */
+let panelWindowId = null;
 /** URL/tab that produced the current generate result - clear when inactive/closed. */
 let resultBoundUrl = '';
 let resultBoundTabId = null;
@@ -16,8 +18,25 @@ const BTN_EVALUATE_LABEL = 'Оценить предложение';
 const BTN_SCORE_LIST_LABEL = 'Оценить список';
 const JR_RELEVANCE_CACHE_KEY = 'jrRelevanceCache';
 const JR_RELEVANCE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const RESULT_PLACEHOLDER = 'Здесь появится отклик';
 const scoreListBtn = document.getElementById('scoreListBtn');
 const listScoreMeta = document.getElementById('listScoreMeta');
+
+async function resolvePanelWindowId() {
+  if (panelWindowId != null) return panelWindowId;
+  try {
+    const win = await chrome.windows.getCurrent();
+    if (win?.id != null) panelWindowId = Number(win.id);
+  } catch (_err) {
+    /* ignore */
+  }
+  return panelWindowId;
+}
+
+function isMessageForThisPanel(message) {
+  if (message?.windowId == null || panelWindowId == null) return true;
+  return Number(message.windowId) === Number(panelWindowId);
+}
 
 function setListScoreMeta(text, { show = true } = {}) {
   if (!listScoreMeta) return;
@@ -98,6 +117,14 @@ async function lookupRelevanceCacheForVacancy(vacancy) {
   if (byId) return { key: id, entry: byId };
   const canon = url ? url.split('?')[0] : '';
   if (canon && cache[canon]) return { key: canon, entry: cache[canon] };
+  // Fallback: match by url field stored on cache entries
+  if (id) {
+    for (const [key, entry] of Object.entries(cache)) {
+      if (!entry) continue;
+      const entryId = vacancyIdFromUrl(entry.url) || String(key);
+      if (entryId === id) return { key, entry };
+    }
+  }
   return null;
 }
 
@@ -120,6 +147,25 @@ async function tryRestoreRelevanceFromCache(vacancy) {
   return true;
 }
 
+/** Hydrate score from active tab URL (before/without full DOM extract). */
+async function hydrateRelevanceFromActiveTabUrl() {
+  try {
+    const windowId = await resolvePanelWindowId();
+    const query =
+      windowId != null
+        ? { active: true, windowId: Number(windowId) }
+        : { active: true, lastFocusedWindow: true };
+    const tabs = await chrome.tabs.query(query);
+    const tab = tabs && tabs[0];
+    const url = String(tab?.url || '');
+    const id = vacancyIdFromUrl(url);
+    if (!id) return false;
+    return tryRestoreRelevanceFromCache({ id, url });
+  } catch (_err) {
+    return false;
+  }
+}
+
 async function scoreVacancyList() {
   setError('');
   setSuccess('');
@@ -127,7 +173,8 @@ async function scoreVacancyList() {
   setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Список…');
   try {
     await JR_API.ensureWorkspace();
-    const listResp = await JR_API.fetchVacancyListFromTab();
+    const windowId = await resolvePanelWindowId();
+    const listResp = await JR_API.fetchVacancyListFromTab({ windowId });
     const vacancies = Array.isArray(listResp.vacancies) ? listResp.vacancies : [];
     const tabId = listResp.tabId;
     if (!vacancies.length) {
@@ -145,7 +192,7 @@ async function scoreVacancyList() {
     const scores = Array.isArray(batch.scores) ? batch.scores : [];
     await upsertRelevanceCache(scores, 'list');
     setListScoreMeta(`Вставляю бейджи (${scores.length})…`);
-    const inj = await JR_API.injectListBadges({ scores, tabId });
+    const inj = await JR_API.injectListBadges({ scores, tabId, windowId });
     const avg =
       scores.length > 0
         ? Math.round(scores.reduce((s, r) => s + (Number(r.score) || 0), 0) / scores.length)
@@ -714,45 +761,99 @@ function escapeHtml(s) {
 
 /**
  * Clipboard for Chrome side panel / extension context.
- * Prefer navigator.clipboard.writeText; fallback to execCommand + offscreen textarea.
+ * Order: select #resultText (user gesture) -> clipboard API -> visible temp textarea
+ * -> background offscreen document (MV3 CLIPBOARD reason).
  */
-async function copyTextToClipboard(text) {
+async function copyTextToClipboard(text, { sourceEl = null } = {}) {
   const value = String(text || '');
   if (!value) throw new Error('Нечего копировать');
+
+  const tryExecOnEl = (el) => {
+    if (!el) return false;
+    try {
+      el.focus();
+      if (typeof el.select === 'function') el.select();
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(0, String(el.value || '').length);
+      }
+      return Boolean(document.execCommand('copy'));
+    } catch (_err) {
+      return false;
+    }
+  };
+
+  // 1) Prefer the visible result textarea under the click gesture.
+  if (sourceEl && String(sourceEl.value || '') === value && tryExecOnEl(sourceEl)) {
+    return true;
+  }
+  if (resultText && String(resultText.value || '').trim() === value.trim() && tryExecOnEl(resultText)) {
+    return true;
+  }
+
+  // 2) Async clipboard API (may fail in side_panel without focus/permission).
   try {
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       await navigator.clipboard.writeText(value);
       return true;
     }
   } catch (_err) {
-    /* fall through to execCommand */
+    /* fall through */
   }
+
+  // 3) Temporary textarea kept in-viewport (off-screen left:-9999 often blocked).
   const ta = document.createElement('textarea');
   ta.value = value;
   ta.setAttribute('readonly', '');
   ta.setAttribute('aria-hidden', 'true');
-  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+  ta.style.cssText =
+    'position:fixed;inset:0;width:calc(100% - 8px);height:48px;margin:4px;opacity:0.01;z-index:2147483647;';
   document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  ta.setSelectionRange(0, value.length);
   let ok = false;
   try {
-    ok = document.execCommand('copy');
+    ok = tryExecOnEl(ta);
   } finally {
     document.body.removeChild(ta);
   }
-  if (!ok) throw new Error('Не удалось скопировать в буфер');
-  return true;
+  if (ok) return true;
+
+  // 4) Background -> offscreen document.
+  if (typeof JR_API !== 'undefined' && typeof JR_API.copyTextViaBackground === 'function') {
+    await JR_API.copyTextViaBackground(value);
+    return true;
+  }
+
+  throw new Error('Не удалось скопировать в буфер');
 }
 
 function flashCopyFeedback(btn, idleLabel, successLabel = 'Скопировано') {
   if (!btn) return;
   const prev = idleLabel || btn.textContent || 'Копировать';
   btn.textContent = successLabel;
+  btn.classList.add('isCopied');
   setTimeout(() => {
     btn.textContent = prev;
+    btn.classList.remove('isCopied');
   }, 1500);
+}
+
+function getResultCopyText() {
+  return String(resultText?.value || '').trim();
+}
+
+function isResultCopyable(text = getResultCopyText()) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (value === RESULT_PLACEHOLDER) return false;
+  return true;
+}
+
+function syncCopyButtonState() {
+  const btn = document.getElementById('copyBtn') || copyBtn;
+  if (!btn) return;
+  const ok = isResultCopyable();
+  btn.disabled = !ok;
+  btn.title = ok ? 'Скопировать отклик' : 'Сначала сгенерируйте отклик';
+  btn.setAttribute('aria-disabled', ok ? 'false' : 'true');
 }
 
 function formatUpdatedAt(iso) {
@@ -1038,6 +1139,15 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
   }
 }
 
+function looksLikeCssGarbage(s) {
+  const t = String(s || '');
+  if (!t) return false;
+  if (/!important/i.test(t)) return true;
+  if (/\.[a-zA-Z_][\w-]*\s*\{/.test(t)) return true;
+  if (/\{[^}]{0,120}(?:display|visibility|table-layout|white-space)\s*:/i.test(t)) return true;
+  return false;
+}
+
 function renderStructured(structured) {
   if (!vacancyStructuredEl) return;
   if (!structured || typeof structured !== 'object') {
@@ -1045,16 +1155,26 @@ function renderStructured(structured) {
     vacancyStructuredEl.innerHTML = '';
     return;
   }
+  const clean = (v) => {
+    const t = String(v || '').replace(/\s+/g, ' ').trim();
+    if (!t || looksLikeCssGarbage(t)) return '';
+    return t;
+  };
   const rows = [
-    ['Зарплата / доход', structured.salary],
-    ['Опыт', structured.experience],
-    ['Занятость', structured.employmentType],
-    ['График', structured.schedule],
-    ['Часы', structured.workingHours],
-    ['Формат', structured.workFormat],
-    ['Локация', structured.location],
-    ['Seniority', structured.seniority],
-    ['Навыки', Array.isArray(structured.keySkills) ? structured.keySkills.join(', ') : ''],
+    ['Зарплата / доход', clean(structured.salary)],
+    ['Опыт', clean(structured.experience)],
+    ['Занятость', clean(structured.employmentType)],
+    ['График', clean(structured.schedule)],
+    ['Часы', clean(structured.workingHours)],
+    ['Формат', clean(structured.workFormat)],
+    ['Локация', clean(structured.location)],
+    ['Seniority', clean(structured.seniority)],
+    [
+      'Навыки',
+      Array.isArray(structured.keySkills)
+        ? structured.keySkills.map(clean).filter(Boolean).join(', ')
+        : '',
+    ],
   ].filter(([, v]) => v && String(v).trim());
 
   if (!rows.length) {
@@ -1140,6 +1260,7 @@ function clearGenerateResult() {
   resultBoundUrl = '';
   resultBoundTabId = null;
   setResultGenerating(false);
+  syncCopyButtonState();
 }
 
 function maybeClearResultForPageChange({ url = '', tabId = null, removedTabId = null } = {}) {
@@ -1163,7 +1284,10 @@ function maybeClearResultForPageChange({ url = '', tabId = null, removedTabId = 
 }
 
 function applyVacancy(vacancy) {
+  const prevId =
+    String(currentVacancy?.id || '').trim() || vacancyIdFromUrl(currentVacancy?.url || '');
   currentVacancy = vacancy;
+  const nextId = String(vacancy?.id || '').trim() || vacancyIdFromUrl(vacancy?.url || '');
   const host = vacancy.host || 'web';
   const site = vacancy.siteHost ? ` · ${vacancy.siteHost}` : '';
   const kind =
@@ -1178,7 +1302,8 @@ function applyVacancy(vacancy) {
   if (vacancy.description) vacancyDescription.value = vacancy.description;
   else if (vacancyDescription) vacancyDescription.value = '';
   renderStructured(vacancy.structured);
-  renderRelevance(null);
+  // Keep cached score visible when re-reading the same vacancy (new window / re-extract).
+  if (prevId !== nextId) renderRelevance(null);
   const qs = normalizeQuestionList(vacancy.questions);
   // Always reset Q&A block: hide when empty (no stale FAQ across navigations)
   if (!qs.length) {
@@ -1207,13 +1332,23 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
   setError('');
   setVacancyPageStatus('reading', 'Чтение');
   setSuccess('Чтение');
+  // Early cache hydrate from URL (works even if DOM extract is slow / new window).
+  if (!doRelevance) {
+    await hydrateRelevanceFromActiveTabUrl();
+    if (seq !== vacancyExtractSeq) return;
+  }
   if (doRelevance) {
     setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Чтение…');
   }
   try {
     // Client-side DOM extract only - no /generate or Gemini (zero tokens).
-    const vacancy = await JR_API.fetchVacancyFromTab();
+    const windowId = await resolvePanelWindowId();
+    const vacancy = await JR_API.fetchVacancyFromTab({ windowId });
     if (seq !== vacancyExtractSeq) return;
+    if (!vacancy.id) {
+      const vid = vacancyIdFromUrl(vacancy.url);
+      if (vid) vacancy.id = vid;
+    }
     lastTabUrl = String(vacancy.url || '');
     if (vacancy.tabId != null) lastTabId = Number(vacancy.tabId);
     applyVacancy(vacancy);
@@ -1234,6 +1369,8 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
     if (!descOk) {
       setVacancyPageStatus('fail', readMsg);
       setError(readMsg);
+      // Still try cache hydrate - score is independent of description length.
+      await tryRestoreRelevanceFromCache(vacancy);
       return;
     }
     setVacancyPageStatus('ok', 'Страница прочитана');
@@ -1268,6 +1405,8 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
     clearQaState();
     setVacancyPageStatus('fail', 'Не удалось прочитать страницу');
     setError(String(err.message || err));
+    // Last resort: hydrate score from active tab URL alone.
+    await hydrateRelevanceFromActiveTabUrl();
   } finally {
     if (doRelevance) {
       setButtonBusy(vacancyBtn, false, BTN_EVALUATE_LABEL);
@@ -1471,6 +1610,7 @@ async function runGenerate(mode) {
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
+    syncCopyButtonState();
     resultBoundUrl = String(vacancy.url || lastTabUrl || '');
     resultBoundTabId = lastTabId != null ? Number(lastTabId) : null;
     if (Array.isArray(data.answers) && data.answers.length) {
@@ -2109,20 +2249,24 @@ if (sourcesListEl) {
 }
 genCoverBtn.addEventListener('click', () => runGenerate('cover_letter'));
 genAnswersBtn.addEventListener('click', () => runGenerate('question_answers'));
-copyBtn.addEventListener('click', async () => {
-  const text = String(resultText.value || '').trim();
-  if (!text) {
-    setError('Нечего копировать');
-    return;
-  }
-  try {
-    await copyTextToClipboard(text);
-    flashCopyFeedback(copyBtn, 'Копировать', 'Скопировано');
-    setSuccess('Скопировано');
-  } catch (err) {
-    setError(String(err.message || err));
-  }
-});
+if (copyBtn) {
+  copyBtn.addEventListener('click', async () => {
+    const text = getResultCopyText();
+    if (!isResultCopyable(text)) {
+      setError('Нечего копировать - сначала нажмите «Отклик»');
+      syncCopyButtonState();
+      return;
+    }
+    try {
+      await copyTextToClipboard(text, { sourceEl: resultText });
+      flashCopyFeedback(copyBtn, 'Копировать', 'Скопировано');
+      setSuccess('Скопировано');
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  });
+}
+syncCopyButtonState();
 
 if (copyAllQaBtn) {
   copyAllQaBtn.addEventListener('click', async () => {
@@ -2132,12 +2276,17 @@ if (copyAllQaBtn) {
         const q = String(r.question || '').trim();
         const a = String(r.answer || '').trim();
         if (!q && !a) return '';
-        return `Вопрос: ${q}\nОтвет: ${a || '—'}`;
+        return `Вопрос: ${q}\nОтвет: ${a || '-'}`;
       })
       .filter(Boolean)
       .join('\n\n');
     try {
-      await copyTextToClipboard(text || String(resultText.value || '').trim());
+      const payload = text || getResultCopyText();
+      if (!payload) {
+        setError('Нечего копировать');
+        return;
+      }
+      await copyTextToClipboard(payload, { sourceEl: text ? null : resultText });
       flashCopyFeedback(copyAllQaBtn, 'Копировать все', 'Скопировано');
       setSuccess('Скопировано');
     } catch (err) {
@@ -2179,6 +2328,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === 'JR_TAB_REMOVED') {
+    if (!isMessageForThisPanel(message)) return;
     const removedId = message.tabId != null ? Number(message.tabId) : null;
     maybeClearResultForPageChange({ removedTabId: removedId });
     clearQaState();
@@ -2187,6 +2337,7 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
   if (message?.type !== 'JR_TAB_CHANGED' && message?.type !== 'JR_TAB_NAVIGATED') return;
+  if (!isMessageForThisPanel(message)) return;
   const url = String(message.url || '');
   const tabId = message.tabId != null ? Number(message.tabId) : null;
   maybeClearResultForPageChange({ url, tabId });
@@ -2196,6 +2347,11 @@ chrome.runtime.onMessage.addListener((message) => {
   // Clear stale form Q&A + relevance, then DOM-only re-extract (no LLM / no relevance API).
   clearQaState();
   renderRelevance(null);
+  // Instant score from cache by URL (new window / tab switch) before extract finishes.
+  const vid = vacancyIdFromUrl(url);
+  if (vid) {
+    tryRestoreRelevanceFromCache({ id: vid, url }).catch(() => {});
+  }
   if (message.canExtract === false) {
     setVacancyPageStatus('fail', 'Не http(s) страница');
     setError('Откройте обычную http(s) страницу с вакансией');
@@ -2342,6 +2498,7 @@ if (saveCoverTemplateBtn) {
 
 (async function init() {
   try {
+    await resolvePanelWindowId();
     await restoreCollapseState();
     bindCollapsePersistence();
     const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra', 'jrRagEdits']);
@@ -2397,5 +2554,8 @@ if (saveCoverTemplateBtn) {
   } catch (err) {
     setError(String(err.message || err));
   }
+  syncCopyButtonState();
+  // New window / fresh panel: hydrate score from URL ASAP, then full extract.
+  await hydrateRelevanceFromActiveTabUrl().catch(() => {});
   await refreshVacancyFromTab().catch(() => {});
 })();
