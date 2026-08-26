@@ -437,6 +437,41 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.relevanceScoreRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.relevanceScoreRow .relevanceScore {
+  margin-bottom: 0;
+}
+
+.relevanceCacheDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.relevanceBox.fromCache {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.relevanceSubtitle {
+  font-size: 12px;
+  color: #334155;
+}
+
+.relevanceBox.fromCache .relevanceSubtitle {
+  color: #166534;
+  font-weight: 600;
+}
+
 .relevanceBox ul {
   margin: 4px 0 0;
   padding-left: 18px;

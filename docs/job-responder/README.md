@@ -2,6 +2,10 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.5
+
+- **Кэш релевантности списка** (`jrRelevanceCache` в `chrome.storage.local`): после «Оценить список» score по каждой вакансии сохраняется; при открытии `/vacancy/<id>` панель сразу показывает «Релевантность из списка» (зелёный индикатор) **без** вызова `/relevance`. TTL 7 дней. «Оценить предложение» перезаписывает кэш свежим score.
+
 ## v0.9.3
 
 - **no-ai-slop** в откликах: ultra-short rules 6–7 (HH ASCII + anti-slop) + backend `hh_format_text` scrub в `finalize_cover_letter_contacts_and_links` / QA. Skill: [autorotech-tech/no-ai-slop](https://github.com/autorotech-tech/no-ai-slop). См. [prompts-ultra-short.md](./prompts-ultra-short.md).
@@ -76,6 +80,7 @@ Chrome MV3 extension: персонализированные отклики с �
 - Matching: exact → synonym → fuzzy/token; «Не хватает» только если нет семантического покрытия
 - rationale + matched / missing / `semanticMatches` в side panel
 - Auto tab-switch / close: только DOM extract, **без** relevance API
+- После «Оценить список»: кэш `jrRelevanceCache` → при открытии карточки score из кэша (0 токенов)
 ## v0.6.3
 
 - **Правки RAG (fix):** парсинг свободного RU ("Поменяй контакты… Telegram: @x") → structured `telegram`/`email`; документ overrides хранит parsed + raw.

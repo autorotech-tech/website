@@ -14,6 +14,8 @@ let vacancyExtractSeq = 0;
 
 const BTN_EVALUATE_LABEL = 'Оценить предложение';
 const BTN_SCORE_LIST_LABEL = 'Оценить список';
+const JR_RELEVANCE_CACHE_KEY = 'jrRelevanceCache';
+const JR_RELEVANCE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const scoreListBtn = document.getElementById('scoreListBtn');
 const listScoreMeta = document.getElementById('listScoreMeta');
 
@@ -21,6 +23,101 @@ function setListScoreMeta(text, { show = true } = {}) {
   if (!listScoreMeta) return;
   listScoreMeta.hidden = !show || !text;
   listScoreMeta.textContent = text || '';
+}
+
+function vacancyIdFromUrl(url) {
+  const m = String(url || '').match(/\/vacancy\/(\d+)/);
+  return m ? m[1] : '';
+}
+
+function pruneRelevanceCache(map) {
+  const now = Date.now();
+  const out = {};
+  if (!map || typeof map !== 'object') return out;
+  for (const [key, entry] of Object.entries(map)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const scoredAt = Number(entry.scoredAt) || 0;
+    if (scoredAt && now - scoredAt > JR_RELEVANCE_CACHE_TTL_MS) continue;
+    if (entry.score == null) continue;
+    out[String(key)] = entry;
+  }
+  return out;
+}
+
+async function readRelevanceCache() {
+  const saved = await chrome.storage.local.get([JR_RELEVANCE_CACHE_KEY]);
+  return pruneRelevanceCache(saved[JR_RELEVANCE_CACHE_KEY]);
+}
+
+async function writeRelevanceCache(map) {
+  await chrome.storage.local.set({ [JR_RELEVANCE_CACHE_KEY]: pruneRelevanceCache(map) });
+}
+
+/**
+ * Merge score rows into jrRelevanceCache (keyed by vacancy id / canonical url).
+ * @param {Array<object>} rows
+ * @param {'list'|'detail'} source
+ */
+async function upsertRelevanceCache(rows, source = 'list') {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return;
+  const cache = await readRelevanceCache();
+  const now = Date.now();
+  for (const row of list) {
+    if (!row || row.score == null) continue;
+    const id =
+      String(row.id || '').trim() ||
+      vacancyIdFromUrl(row.url) ||
+      (row.url ? String(row.url).split('?')[0] : '');
+    if (!id) continue;
+    const rationale = Array.isArray(row.rationale)
+      ? row.rationale
+      : source === 'list'
+        ? ['Оценка из списка вакансий (без LLM)']
+        : [];
+    cache[id] = {
+      score: Math.round(Number(row.score) || 0),
+      matched: Array.isArray(row.matched) ? row.matched.slice(0, 12) : [],
+      missing: Array.isArray(row.missing) ? row.missing.slice(0, 12) : [],
+      rationale,
+      title: String(row.title || '').slice(0, 500),
+      url: String(row.url || ''),
+      scoredAt: now,
+      source: source === 'detail' ? 'detail' : 'list',
+    };
+  }
+  await writeRelevanceCache(cache);
+}
+
+async function lookupRelevanceCacheForVacancy(vacancy) {
+  const url = String(vacancy?.url || '');
+  const id = String(vacancy?.id || '').trim() || vacancyIdFromUrl(url);
+  if (!id && !url) return null;
+  const cache = await readRelevanceCache();
+  const byId = id ? cache[id] : null;
+  if (byId) return { key: id, entry: byId };
+  const canon = url ? url.split('?')[0] : '';
+  if (canon && cache[canon]) return { key: canon, entry: cache[canon] };
+  return null;
+}
+
+/** Show cached list/detail score in panel - zero API / zero tokens. */
+async function tryRestoreRelevanceFromCache(vacancy) {
+  const hit = await lookupRelevanceCacheForVacancy(vacancy);
+  if (!hit?.entry || hit.entry.score == null) return false;
+  const fromList = hit.entry.source !== 'detail';
+  renderRelevance({
+    score: hit.entry.score,
+    matched: hit.entry.matched || [],
+    missing: hit.entry.missing || [],
+    rationale: hit.entry.rationale || [],
+    fromCache: true,
+    cacheSource: fromList ? 'list' : 'detail',
+  });
+  const label = fromList ? 'Релевантность из списка' : 'Релевантность (кэш)';
+  setVacancyPageStatus('ok', label);
+  setSuccess(`${label} · ${hit.entry.score} / 100 · без API`);
+  return true;
 }
 
 async function scoreVacancyList() {
@@ -46,6 +143,7 @@ async function scoreVacancyList() {
     const selectedSourceIds = getSelectedSourceIds();
     const batch = await JR_API.scoreRelevanceBatch({ vacancies, selectedSourceIds });
     const scores = Array.isArray(batch.scores) ? batch.scores : [];
+    await upsertRelevanceCache(scores, 'list');
     setListScoreMeta(`Вставляю бейджи (${scores.length})…`);
     const inj = await JR_API.injectListBadges({ scores, tabId });
     const avg =
@@ -55,7 +153,7 @@ async function scoreVacancyList() {
     const top = [...scores].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
     const summary = `Список: ${scores.length} оценено, бейджей: ${inj.injected || scores.length}, среднее ${avg}%${
       top ? `, топ ${top.score}% - ${(top.title || '').slice(0, 40)}` : ''
-    }. Без LLM.`;
+    }. Кэш сохранён. Без LLM.`;
     setListScoreMeta(summary);
     setSuccess(summary);
     if (relevanceBox && scores[0]) {
@@ -63,7 +161,9 @@ async function scoreVacancyList() {
         score: scores[0].score,
         matched: scores[0].matched || [],
         missing: scores[0].missing || [],
-        rationale: [`Пакетная оценка списка (${scores.length} вакансий)`],
+        rationale: [`Пакетная оценка списка (${scores.length} вакансий) - открывайте карточку, score из кэша`],
+        fromCache: true,
+        cacheSource: 'list',
       });
     }
   } catch (err) {
@@ -931,8 +1031,16 @@ function renderRelevance(data) {
   if (!data || data.score == null) {
     relevanceBox.hidden = true;
     relevanceBox.innerHTML = '';
+    relevanceBox.classList.remove('fromCache');
     return;
   }
+  const fromCache = Boolean(data.fromCache);
+  const fromList = data.cacheSource === 'list' || (fromCache && data.cacheSource !== 'detail');
+  const subtitle = fromCache
+    ? fromList
+      ? 'Релевантность из списка'
+      : 'Релевантность (кэш)'
+    : 'Релевантность профиля ↔ вакансия';
   const bullets = (data.rationale || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
   const matched = (data.matched || []).map((r) => `<li class="relevanceMatched">${escapeHtml(r)}</li>`).join('');
   const missing = (data.missing || []).map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
@@ -945,9 +1053,13 @@ function renderRelevance(data) {
     })
     .join('');
   relevanceBox.hidden = false;
+  relevanceBox.classList.toggle('fromCache', fromCache);
   relevanceBox.innerHTML = `
-    <div class="relevanceScore">${Number(data.score)} / 100</div>
-    <div>Релевантность профиля ↔ вакансия</div>
+    <div class="relevanceScoreRow">
+      <div class="relevanceScore">${Number(data.score)} / 100</div>
+      ${fromCache ? '<span class="relevanceCacheDot" title="Из кэша, без API" aria-label="Из кэша"></span>' : ''}
+    </div>
+    <div class="relevanceSubtitle">${escapeHtml(subtitle)}</div>
     ${bullets ? `<ul>${bullets}</ul>` : ''}
     ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
     ${sem && !/смысл|семантика/i.test(matchedJoined) ? `<div><b>Совпало (смысл)</b><ul>${sem}</ul></div>` : ''}
@@ -1085,6 +1197,7 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
     setSuccess(readMsg);
 
     // Relevance only on explicit user click «Оценить предложение».
+    // On auto tab/page read: restore list-score cache if any (zero tokens / no /relevance).
     if (doRelevance) {
       setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Оценка…');
       try {
@@ -1099,6 +1212,12 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
         if (seq !== vacancyExtractSeq) return;
         setVacancyPageStatus('ok', 'Страница прочитана');
         setError(String(relErr.message || relErr));
+      }
+    } else {
+      const restored = await tryRestoreRelevanceFromCache(vacancy);
+      if (seq !== vacancyExtractSeq) return;
+      if (!restored) {
+        /* leave panel without relevance until user clicks «Оценить предложение» */
       }
     }
   } catch (err) {
@@ -1229,6 +1348,7 @@ async function runRelevanceScore() {
   }
   if (relevanceBox) {
     relevanceBox.hidden = false;
+    relevanceBox.classList.remove('fromCache');
     relevanceBox.innerHTML = '<div>Считаю релевантность…</div>';
   }
   const data = await JR_API.scoreRelevance({
@@ -1236,6 +1356,23 @@ async function runRelevanceScore() {
     selectedSourceIds: getSelectedSourceIds(),
   });
   renderRelevance(data);
+  if (data && data.score != null) {
+    const vid = vacancyIdFromUrl(vacancy.url);
+    await upsertRelevanceCache(
+      [
+        {
+          id: vid,
+          url: vacancy.url,
+          title: vacancy.title,
+          score: data.score,
+          matched: data.matched || [],
+          missing: data.missing || [],
+          rationale: data.rationale || [],
+        },
+      ],
+      'detail'
+    );
+  }
   return data;
 }
 
