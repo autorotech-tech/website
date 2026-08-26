@@ -13,6 +13,9 @@ python3 -m py_compile \
   "$ROOT/agent-api/job_responder.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
   "$ROOT/agent-api/job_responder_optimize.py" \
+  "$ROOT/agent-api/job_responder_hybrid.py" \
+  "$ROOT/agent-api/job_responder_crag.py" \
+  "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py"
@@ -22,6 +25,9 @@ scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
   "$ROOT/agent-api/job_responder_optimize.py" \
+  "$ROOT/agent-api/job_responder_hybrid.py" \
+  "$ROOT/agent-api/job_responder_crag.py" \
+  "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py" \
@@ -33,6 +39,9 @@ set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
 docker cp /tmp/job_responder_semantic.py autoro-agent-api:/app/job_responder_semantic.py
 docker cp /tmp/job_responder_optimize.py autoro-agent-api:/app/job_responder_optimize.py
+docker cp /tmp/job_responder_hybrid.py autoro-agent-api:/app/job_responder_hybrid.py
+docker cp /tmp/job_responder_crag.py autoro-agent-api:/app/job_responder_crag.py
+docker cp /tmp/job_responder_format.py autoro-agent-api:/app/job_responder_format.py
 docker cp /tmp/job_responder_gemini_rag.py autoro-agent-api:/app/job_responder_gemini_rag.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py

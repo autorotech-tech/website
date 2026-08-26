@@ -46,6 +46,7 @@ from job_responder_optimize import (
     pin_domain_facts,
     vacancy_domains_from_text,
 )
+from job_responder_hybrid import hybrid_relevance_base
 
 _LOG = logging.getLogger("job-responder")
 
@@ -1896,6 +1897,7 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     achievements: List[str] = []
     metrics: List[str] = []
     domain_evidence: List[str] = []
+    evidence_units: List[Dict[str, str]] = []
     projects: List[Dict[str, str]] = []
     links: List[Dict[str, str]] = []
     cover_snippets: List[str] = []
@@ -1936,6 +1938,9 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         achievements.extend(prof.get("achievements") or [])
         metrics.extend(prof.get("metrics") or [])
         domain_evidence.extend(prof.get("domain_evidence") or [])
+        for eu in prof.get("evidence_units") or []:
+            if isinstance(eu, dict):
+                evidence_units.append(eu)
         if prof.get("geo_remote"):
             formats.append(str(prof["geo_remote"]))
         if prof.get("seniority") and not seniority:
@@ -1983,6 +1988,17 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
     tools = _uniq_lower([*tools, *[t for t in _KNOWN_TOOLS if t in blob]], 40)
     # Re-tag domains from full merged blob (catches tourism/pquoc etc. across sources).
     domains.extend(extract_domains_from_text(blob))
+    # Dedupe evidence units by evidence string
+    seen_eu: Set[str] = set()
+    clean_eu: List[Dict[str, str]] = []
+    for eu in evidence_units:
+        if not isinstance(eu, dict):
+            continue
+        key = str(eu.get("evidence") or eu.get("content") or "").lower()[:80]
+        if not key or key in seen_eu:
+            continue
+        seen_eu.add(key)
+        clean_eu.append(eu)
 
     profile = {
         "skills": _uniq_lower(skills, 40),
@@ -1995,6 +2011,7 @@ def merge_profiles_from_rows(resume_rows: List[Dict[str, Any]]) -> Dict[str, Any
         "geo_remote": (formats[0] if formats else None),
         "experience_bullets": _uniq_lower(experience_bullets, 16),
         "domain_evidence": _uniq_lower(domain_evidence, 12),
+        "evidence_units": clean_eu[:24],
         "metrics": _uniq_lower(metrics, 12),
         "education": _uniq_lower(education, 6),
         "achievements": _uniq_lower(achievements, 8),
@@ -2383,6 +2400,7 @@ def score_resume_vs_vacancy(
     skill_miss: List[str] = []
     tool_hits: List[str] = []
     tool_miss: List[str] = []
+    grid_match_pts = 0
 
     # Semantic grid (cached on merged profile; deterministic, no LLM)
     grid = profile.get("jr_semantic_grid")
@@ -2406,6 +2424,7 @@ def score_resume_vs_vacancy(
         ratio = len(tool_hit_maps) / max(len(vac_tools), 1)
         pts = int(28 * min(1.0, ratio))
         score += pts
+        grid_match_pts += pts
         if tool_hit_maps:
             label_bits = [format_semantic_hit(m) for m in tool_hit_maps[:10]]
             matched.append(f"Инструменты: {', '.join(label_bits)}")
@@ -2432,6 +2451,7 @@ def score_resume_vs_vacancy(
         ratio = len(skill_hit_maps) / denom
         pts = int(30 * min(1.0, ratio))
         score += pts
+        grid_match_pts += pts
         if skill_hit_maps:
             exact_labels = [str(m.get("skill")) for m in skill_hit_maps if m.get("tier") == "exact"][:10]
             if exact_labels:
@@ -2458,6 +2478,7 @@ def score_resume_vs_vacancy(
         if soft:
             pts = min(18, 4 * len(soft))
             score += pts
+            grid_match_pts += pts
             matched.append(f"По заголовку: {', '.join(soft[:6])}")
             rationale.append(f"Совпадения по заголовку +{pts}: {', '.join(soft[:6])}")
         else:
@@ -2488,6 +2509,7 @@ def score_resume_vs_vacancy(
         miss_roles = role_miss_raw or sorted(vac_roles)
         missing.append(f"Роли: {', '.join(miss_roles[:4])}")
     score += min(18, role_pts)
+    grid_match_pts += min(18, role_pts)
     if role_pts:
         rationale.append(f"Роль/title +{min(18, role_pts)}")
 
@@ -2499,17 +2521,21 @@ def score_resume_vs_vacancy(
         resume_exact=resume_exact,
     )
     domain_hits = [str(m.get("skill") or m.get("normalized")) for m in domain_hit_maps]
+    domain_pts = 0
     if domain_hits:
-        score += min(8, 4 * len(domain_hits))
+        domain_pts = min(8, 4 * len(domain_hits))
+        score += domain_pts
         matched.append(f"Домены: {', '.join(domain_hits[:4])}")
         rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
     elif vac_domains:
         missing.append(f"Домены: {', '.join(domain_miss[:4] or sorted(vac_domains)[:4])}")
 
+    format_pts = 0
     # --- Work format (0–10) ---
     if vac_format:
         if vac_format in resume_formats or (vac_format == "remote" and "remote" in merged_prefs):
-            score += 10
+            format_pts = 10
+            score += format_pts
             matched.append(f"Формат: {vac_format}")
             rationale.append(f"Формат работы совпадает: {vac_format}")
         else:
@@ -2524,8 +2550,8 @@ def score_resume_vs_vacancy(
         matched.append(f"Занятость: {', '.join(pref_hits)}")
         rationale.append(f"Занятость: {', '.join(pref_hits)}")
 
-    # --- Experience / seniority (0–12) ---
     exp_pts = 0
+    # --- Experience / seniority (0–12) ---
     if vac_seniority and resume_seniority:
         if vac_seniority == resume_seniority:
             exp_pts += 6
@@ -2548,7 +2574,33 @@ def score_resume_vs_vacancy(
     if exp_pts:
         rationale.append(f"Опыт/seniority +{min(12, exp_pts)}")
 
-    score = max(0, min(100, int(score)))
+    # Hybrid BM25 + dense RRF base (0–70) + semantic grid Tier-0 boost (0–20)
+    vac_query = " ".join(
+        p
+        for p in (
+            vacancy.title or "",
+            vacancy.company or "",
+            " ".join(vac_skills_list[:24]),
+            (vacancy.description or "")[:1200],
+        )
+        if p
+    ).strip()
+    hybrid_base, hybrid_meta = hybrid_relevance_base(
+        vac_query,
+        profile,
+        resume_rows,
+        strip_wrapper=strip_profile_wrapper,
+    )
+    grid_boost = min(20, int(grid_match_pts * 20 / 76)) if grid_match_pts else 0
+    domain_boost = min(10, int(domain_pts * 10 / 8)) if domain_pts else 0
+    aux_boost = min(5, (5 if pref_hits else 0)) + min(5, format_pts // 2) + min(5, exp_pts // 3)
+    score = max(0, min(100, int(hybrid_base + grid_boost + domain_boost + aux_boost)))
+    rationale.insert(
+        0,
+        f"Hybrid RRF +{int(hybrid_base)} (chunks={hybrid_meta.get('chunkCount', 0)}), "
+        f"grid boost +{grid_boost}, domain +{domain_boost}",
+    )
+
     if not rationale:
         rationale.append("Оценка по пересечению compact profile и вакансии")
 
@@ -2581,6 +2633,13 @@ def score_resume_vs_vacancy(
             "clusterCount": grid.get("clusterCount"),
             "termCount": grid.get("termCount"),
             "clusters": sorted((grid.get("clusters") or {}).keys()),
+        },
+        "scoreBreakdown": {
+            "rrf": int(hybrid_base),
+            "grid": grid_boost,
+            "domain": domain_boost,
+            "aux": aux_boost,
+            "hybridMeta": hybrid_meta,
         },
         "compactProfile": {
             "sourceCount": int(profile.get("source_count") or 0),
@@ -3829,6 +3888,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "employment_preferences",
             "achievements",
             "education",
+            "evidence_units",
         ):
             if merged.get(key):
                 profile[key] = merged[key]
