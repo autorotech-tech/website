@@ -231,10 +231,12 @@ from job_responder_budget import (
     JR_OPENMODEL_FAST_MODEL,
     JR_OPENMODEL_FALLBACK_MODEL,
     LLM_PROVIDER_CAP_SEC,
+    PROMPT_EXTRA_PRESSURE_CHARS,
     cascade_max_providers,
     choose_profile_cap,
     provider_timeout_for,
     should_attempt_mini_profile_retry,
+    should_shrink_for_pressure,
     summarize_provider_errors,
 )
 import job_responder_platforms as jr_platforms
@@ -6051,10 +6053,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         rag_items, truncated = cap_rag_items(list(rag_rows), max_n=SELECTED_SOURCES_MAX)
         merged = merge_profiles_from_rows(rag_items)
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
+        # Heuristic notes only on generate hot path — never spend LLM budget on effectiveness.
         relevance = attach_effectiveness_notes(
             relevance,
             effectiveness_prompt=payload.effectivenessPrompt,
-            use_llm=bool(payload.useLlmEffectiveness),
+            use_llm=False,
         )
         mode = "question_answers" if payload.mode in ("qa", "question_answers") else "cover_letter"
         merged_questions = list(payload.vacancy.questions or [])
@@ -6105,6 +6108,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             crag_grades, domain_pin=domain_pin, tool_pin=tool_pin
         )
         provider_errors: List[str] = []
+        # After pre-LLM work: if rem is tight, mini profile + trim custom ultra-short.
+        if should_shrink_for_pressure(remaining_sec=deadline - time.monotonic()):
+            profile_cap = COMPACT_PROFILE_CHARS_RETRY
+            profile_compressed = True
+            cover_cap = COVER_TEMPLATE_CHARS_RETRY
+            if prompt_extra and len(prompt_extra) > PROMPT_EXTRA_PRESSURE_CHARS:
+                prompt_extra = prompt_extra[:PROMPT_EXTRA_PRESSURE_CHARS]
+                provider_errors.append("pressure_shrink:prompt_extra")
+            else:
+                provider_errors.append("pressure_shrink:profile")
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
         raw_text = ""
@@ -6113,9 +6126,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         has_template = False
 
         global _gemini_rag_last_timeout_mono
-        rag_status = jr_gemini_rag.get_status(pg_connect, workspace_id) if jr_gemini_rag.is_enabled() else {}
         # File Search is slow (~timeout under CF). Only when caller explicitly opts in.
+        # Skip get_status (extra DB round-trip) when RAG is not requested — saves wall-clock.
         use_rag = True if payload.useGeminiRag is True else False
+        rag_status = (
+            jr_gemini_rag.get_status(pg_connect, workspace_id)
+            if use_rag and jr_gemini_rag.is_enabled()
+            else {}
+        )
 
         def _run_llm(
             profile_max: int,
@@ -6156,8 +6174,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
             default_tokens = 700 if mode == "question_answers" else 550
             max_tokens = int(tokens_override) if tokens_override else default_tokens
-            # Cascade: haiku → deepseek → gemini flash. Each step fail-fast + rotate on hang/empty.
-            # HTTP timeout aligned via request_timeout_sec so hung urlopen dies with the slice.
+            # Cascade: haiku → gemini → deepseek. VPS: deepseek often empty_content after
+            # haiku hang; gemini must run before cascade:max_providers cuts the list.
             attempts = (
                 {
                     "tier_override": "fast",
@@ -6167,14 +6185,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 },
                 {
                     "tier_override": "fast",
-                    "route_provider_override": "openmodel",
-                    "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
+                    "route_provider_override": "gemini",
+                    "route_model_override": JR_GEMINI_MODEL,
                     "route_strict": True,
                 },
                 {
                     "tier_override": "fast",
-                    "route_provider_override": "gemini",
-                    "route_model_override": JR_GEMINI_MODEL,
+                    "route_provider_override": "openmodel",
+                    "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
                     "route_strict": True,
                 },
             )
@@ -6246,7 +6264,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 chat_result = None
             return chat_result, last_err, compact_text, has_template
 
-        # Rotate on hang/empty: haiku → deepseek → gemini (short HTTP caps; wall ≤ ~24–27s).
+        # Rotate on hang/empty: haiku → gemini → deepseek (short HTTP caps; wall ≤ ~24–27s).
         first_max_providers = cascade_max_providers(
             profile_compressed=profile_compressed,
             remaining_sec=deadline - time.monotonic(),

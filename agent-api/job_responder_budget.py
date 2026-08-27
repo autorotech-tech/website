@@ -24,14 +24,20 @@ COVER_TEMPLATE_CHARS_RETRY = 400
 # - gemini-3.5-flash cover letter ≈ 47s without HTTP cap (unusable under CF)
 # - openmodel claude-haiku often 4–5s, but under load can hang past 20s
 # - single hung key at 45s starved workers → 502; fail-fast slice + rotate instead
+# - soft llm_timeout: haiku timeout>10s + deepseek empty + cascade:max_providers (gemini never tried)
+#   because cascade needed rem≥20 while pre-work left ~19s → only 2 steps.
 # Cascade: haiku → deepseek → gemini flash, each with short HTTP timeout ≤ slice.
-LLM_PRIMARY_TIMEOUT_SEC = 10.0
-LLM_FALLBACK_TIMEOUT_SEC = 7.0
-LLM_PROVIDER_CAP_SEC = 12.0
-LLM_MINI_RETRY_TIMEOUT_SEC = 8.0
-LLM_MINI_RETRY_MIN_REMAINING_SEC = 8.0
+# (Generate path order is haiku → gemini → deepseek so gemini runs before empty deepseek.)
+LLM_PRIMARY_TIMEOUT_SEC = 8.0
+LLM_FALLBACK_TIMEOUT_SEC = 6.0
+LLM_PROVIDER_CAP_SEC = 9.0
+LLM_MINI_RETRY_TIMEOUT_SEC = 7.0
+LLM_MINI_RETRY_MIN_REMAINING_SEC = 7.0
 # Soft-retry after mid-word truncation only when enough wall-clock remains.
 COVER_TRUNCATION_RETRY_MIN_SEC = 10.0
+# When pre-LLM work ate budget, shrink profile/prompt before first cascade.
+GENERATE_PRESSURE_SHRINK_SEC = 18.0
+PROMPT_EXTRA_PRESSURE_CHARS = 1200
 # Legacy aliases (tests / older call sites).
 LLM_ATTEMPT_TIMEOUT_SEC = LLM_PRIMARY_TIMEOUT_SEC
 GEMINI_RAG_EARLY_SEC = 5.0
@@ -65,16 +71,24 @@ def cascade_max_providers(*, profile_compressed: bool, remaining_sec: float, is_
 
     Each step uses a short HTTP timeout so a hung key/provider fails fast and rotates
     instead of burning one urlopen until CF 502. Mini-profile retry stays single-step.
+
+    Thresholds are aggressive: after ~4–5s pre-LLM work, rem≈19 must still allow 3 steps
+    so gemini runs when openmodel hangs/empties (VPS soft llm_timeout root cause).
     """
     _ = profile_compressed
     if is_retry:
         return 1
     rem = float(remaining_sec)
-    if rem >= 20.0:
+    if rem >= 14.0:
         return 3
-    if rem >= 12.0:
+    if rem >= 9.0:
         return 2
     return 1
+
+
+def should_shrink_for_pressure(*, remaining_sec: float) -> bool:
+    """True when wall-clock left before first LLM is tight — mini profile + trim prompt."""
+    return float(remaining_sec) < GENERATE_PRESSURE_SHRINK_SEC
 
 
 def provider_timeout_for(

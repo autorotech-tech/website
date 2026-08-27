@@ -74,7 +74,15 @@ def test_cascade_rotates_when_budget_allows():
         == 3
     )
     assert (
+        budget.cascade_max_providers(profile_compressed=False, remaining_sec=19.0, is_retry=False)
+        == 3
+    )
+    assert (
         budget.cascade_max_providers(profile_compressed=False, remaining_sec=14.0, is_retry=False)
+        == 3
+    )
+    assert (
+        budget.cascade_max_providers(profile_compressed=False, remaining_sec=10.0, is_retry=False)
         == 2
     )
     assert (
@@ -100,8 +108,8 @@ def test_provider_timeout_fail_fast_primary_then_fallback():
 def test_generate_wall_still_under_cf_soft():
     assert budget.GENERATE_BUDGET_SEC <= 27.0
     assert budget.GENERATE_HARD_WALL_SEC <= 27.0
-    assert budget.LLM_PROVIDER_CAP_SEC <= 12.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
     assert budget.JR_OPENMODEL_FALLBACK_MODEL
     from swoop_openmodel import OPENMODEL_CHAT_TIMEOUT_SEC
 
-    assert OPENMODEL_CHAT_TIMEOUT_SEC <= 12
+    assert OPENMODEL_CHAT_TIMEOUT_SEC <= 10

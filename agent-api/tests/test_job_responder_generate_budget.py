@@ -8,7 +8,7 @@ import job_responder_crag as crag
 
 def test_should_attempt_mini_profile_retry_on_empty_not_only_timeout():
     assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=10.0) is True
-    assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=8.0) is True
+    assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=7.0) is True
     assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=4.0) is False
     assert budget.should_attempt_mini_profile_retry(has_text=True, remaining_sec=20.0) is False
 
@@ -30,16 +30,25 @@ def test_cascade_max_providers_rotates_with_budget():
     assert (
         budget.cascade_max_providers(profile_compressed=True, remaining_sec=28.0, is_retry=False) == 3
     )
-    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=14.0, is_retry=False) == 2
-    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=10.0, is_retry=False) == 1
+    # After ~4–5s pre-LLM work rem≈19 must still allow 3 steps (gemini after haiku hang).
+    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=19.0, is_retry=False) == 3
+    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=14.0, is_retry=False) == 3
+    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=10.0, is_retry=False) == 2
+    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=8.0, is_retry=False) == 1
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=25.0, is_retry=True) == 1
+
+
+def test_should_shrink_for_pressure():
+    assert budget.should_shrink_for_pressure(remaining_sec=17.0) is True
+    assert budget.should_shrink_for_pressure(remaining_sec=22.0) is False
 
 
 def test_provider_timeout_primary_gets_fail_fast_slice():
     primary = budget.provider_timeout_for("openmodel", remaining_sec=22.0, is_retry=False, attempt_index=0)
-    assert primary >= 8.0
+    assert primary >= 6.0
     assert primary <= budget.LLM_PROVIDER_CAP_SEC
     assert primary <= budget.GENERATE_BUDGET_SEC
+    assert primary <= budget.LLM_PRIMARY_TIMEOUT_SEC + 0.01
     retry = budget.provider_timeout_for("openmodel", remaining_sec=12.0, is_retry=True, attempt_index=0)
     assert retry <= budget.LLM_MINI_RETRY_TIMEOUT_SEC
     assert retry <= 11.5
@@ -57,13 +66,14 @@ def test_summarize_provider_errors_tail():
 
 def test_generate_budget_tighter_than_cf_soft():
     assert budget.GENERATE_BUDGET_SEC <= 28.0
-    assert budget.LLM_PRIMARY_TIMEOUT_SEC <= 12.0
-    assert budget.LLM_PROVIDER_CAP_SEC <= 12.0
+    assert budget.LLM_PRIMARY_TIMEOUT_SEC <= 10.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
     assert budget.GENERATE_HARD_WALL_SEC <= 30.0
     assert budget.GENERATE_HARD_WALL_SEC > budget.GENERATE_BUDGET_SEC
     assert budget.JR_OPENMODEL_FAST_MODEL
     # HTTP openmodel must die with the soft slice (no 45s zombies → 502).
-    assert budget.LLM_PROVIDER_CAP_SEC <= 12.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
+    assert budget.LLM_PRIMARY_TIMEOUT_SEC + budget.LLM_FALLBACK_TIMEOUT_SEC <= 16.0
 
 
 def test_crag_refine_skipped_when_compressed_or_low_budget():
