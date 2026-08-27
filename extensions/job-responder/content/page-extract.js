@@ -8,7 +8,9 @@
     uz: /(^|\.)hh\.uz$/i,
   };
 
-  const JOB_SITE_HINTS = [
+  const JOB_SITE_HINTS = (window.__JR_PLATFORMS__ && window.__JR_PLATFORMS__.t2Boards)
+    ? window.__JR_PLATFORMS__.t2Boards().concat(['hh.ru', 'hh.kz', 'hh.uz'])
+    : [
     'remote.co',
     'getmatch.ru',
     'finder.work',
@@ -43,6 +45,9 @@
   };
 
   function detectHost(hostname) {
+    if (window.__JR_PLATFORMS__ && typeof window.__JR_PLATFORMS__.hostKey === 'function') {
+      return window.__JR_PLATFORMS__.hostKey(hostname);
+    }
     const host = String(hostname || '').toLowerCase();
     for (const [key, pattern] of Object.entries(HH_HOSTS)) {
       if (pattern.test(host)) return key;
