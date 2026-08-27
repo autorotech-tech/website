@@ -547,6 +547,56 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 [RULES]
 1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
+3. В письме: 4-6 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт. Всегда применяй скилы из базы знаний, которые помогут автоматизировать и оптимизировать процессы и бизнес, маркетинговые скилы.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
+9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
+10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
+
+[OUT cover_letter]
+**Должность:** {title}
+**Формат:** {format|remote|employment}
+---
+{Approximate Relevance of a Vacancy}
+{greeting}
+
+{2 short pitch sentence + relevant skills based experience}
+**Специалист широкого профиля**
+**Почему я подхожу под вакансию:**
+1. **{тема}** - {1-2 предложения с фактом}
+2. ...
+3. ...
+(макс 4 пункта)
+
+{1 sentence CTA}
+
+**Следующий шаг:** {коротко}
+
+## Контакты
+- Telegram: ...
+- Email: ...
+(только известные; без пустых строк и без лишнего текста)
+**Полное резюме и портфолио во вложении, или по ссылке**
+## Ссылки
+резюме: https://...
+youtube: https://...
+(все известные релевантные URL с подписями; не выдумывай)
+
+[OUT qa] [{"question":"...","answer":"..."}]`;
+
+/** Prior shipped defaults (raw) - migrate exact fingerprint matches only; never wipe user edits. */
+const PREVIOUS_DEFAULT_PROMPT_RAW = [
+  // 0.9.x before OUT relevance + 4-6 facts + specialist line (had # ОТКЛИК / ## СОПРОВОДИТЕЛЬНОЕ)
+  `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
+
+[INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
+
+[RULES]
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
+2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
 3. В письме: 3-4 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт.
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
 5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
@@ -589,7 +639,8 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 youtube: https://...
 (все известные релевантные URL с подписями; не выдумывай)
 
-[OUT qa] [{"question":"...","answer":"..."}]`;
+[OUT qa] [{"question":"...","answer":"..."}]`,
+];
 
 /** Canonical ## Ссылки (must stay in sync with agent-api DEFAULT_CANONICAL_LINKS). */
 const DEFAULT_CANONICAL_LINKS = [
@@ -652,6 +703,12 @@ function isMissingNoAiSlopPrompt(text) {
   return isJrSystemPromptText(t) && !/no-ai-slop/i.test(t);
 }
 
+/** System prompt in storage is an exact prior shipped default (safe to upgrade). */
+function isKnownPreviousDefaultPrompt(text) {
+  const fp = normPromptBlob(text);
+  return PREVIOUS_DEFAULT_PROMPT_RAW.some((raw) => normPromptBlob(raw) === fp);
+}
+
 /** System prompt in storage drifted from live DEFAULT_PROMPT_EXTRA / API. */
 function isDriftedSystemPrompt(text, liveDefault = DEFAULT_PROMPT_EXTRA) {
   const t = String(text || '').trim();
@@ -667,7 +724,8 @@ function shouldMigratePromptExtra(savedExtra, liveDefault = DEFAULT_PROMPT_EXTRA
   if (/^Всегда включай контакты и релевантные ссылки из профиля/.test(saved.trim())) return true;
   if (isOldUltraShortPrompt(saved)) return true;
   if (isMissingNoAiSlopPrompt(saved)) return true;
-  if (isDriftedSystemPrompt(saved, liveDefault)) return true;
+  // Upgrade exact previous shipped defaults to live; keep user-customized ultra-short.
+  if (isKnownPreviousDefaultPrompt(saved)) return true;
   return false;
 }
 
@@ -806,9 +864,9 @@ function syncPromptSaveButton() {
       meta.textContent = 'Есть несохранённые изменения промпта.';
     } else if (isLiveDefault) {
       meta.textContent =
-        'Показан runtime-промпт (ultra-short). Generate использует тот же текст на бэкенде.';
+        'Показан runtime-промпт (ultra-short). Generate использует этот текст как system.';
     } else {
-      meta.textContent = 'Промпт сохранён - уходит в generate как promptExtra / CUSTOM.';
+      meta.textContent = 'Промпт сохранён - уходит в generate как system (ultra-short) или CUSTOM.';
     }
   }
 }
@@ -1967,8 +2025,8 @@ async function runGenerate(mode) {
     const promptExtraRaw = String(promptExtraEl?.value || '').trim();
     const ragEditsText = String(ragEditsInput?.value || '').trim();
     const systemAsExtra = isJrSystemPromptText(promptExtraRaw);
-    // Default ultra-short lives in backend system; skip duplicate CUSTOM + override parse.
-    const promptExtra = systemAsExtra ? '' : promptExtraRaw;
+    // Always send saved/current prompt (ultra-short replaces backend system; not discarded).
+    const promptExtra = promptExtraRaw;
     const profileOverrides = {
       ...parseProfileOverrides(ragEditsText),
       ...(systemAsExtra ? {} : parseProfileOverrides(promptExtraRaw)),

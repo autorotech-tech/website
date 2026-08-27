@@ -21,15 +21,14 @@ COVER_TEMPLATE_CHARS = 900
 COVER_TEMPLATE_CHARS_RETRY = 400
 
 # Evidence (VPS 2026-08-27):
-# - gemini-3.5-flash cover letter ≈ 47s (unusable under CF soft budget)
-# - openmodel claude-haiku often 4–5s, but under load can need 18–24s
-# - cascade haiku(16s timeout)→deepseek(empty) burned budget → user timeout message
-# - HTTP openmodel must be ≤ primary slice or workers starve → 502
-# Primary = single openmodel/haiku; no gemini; no empty fallback.
-LLM_PRIMARY_TIMEOUT_SEC = 18.0
-LLM_FALLBACK_TIMEOUT_SEC = 6.0
-LLM_PROVIDER_CAP_SEC = 20.0
-LLM_MINI_RETRY_TIMEOUT_SEC = 10.0
+# - gemini-3.5-flash cover letter ≈ 47s without HTTP cap (unusable under CF)
+# - openmodel claude-haiku often 4–5s, but under load can hang past 20s
+# - single hung key at 45s starved workers → 502; fail-fast slice + rotate instead
+# Cascade: haiku → deepseek → gemini flash, each with short HTTP timeout ≤ slice.
+LLM_PRIMARY_TIMEOUT_SEC = 10.0
+LLM_FALLBACK_TIMEOUT_SEC = 7.0
+LLM_PROVIDER_CAP_SEC = 12.0
+LLM_MINI_RETRY_TIMEOUT_SEC = 8.0
 LLM_MINI_RETRY_MIN_REMAINING_SEC = 8.0
 # Soft-retry after mid-word truncation only when enough wall-clock remains.
 COVER_TRUNCATION_RETRY_MIN_SEC = 10.0
@@ -43,6 +42,7 @@ GENERATE_HARD_WALL_SEC = 27.0
 
 # Explicit fast OpenModel slug - admin default kimi-k3 is too slow for CF soft budget.
 JR_OPENMODEL_FAST_MODEL = "claude-haiku-4-5-20251001"
+JR_OPENMODEL_FALLBACK_MODEL = "deepseek-v4-flash"
 
 
 def should_attempt_mini_profile_retry(*, has_text: bool, remaining_sec: float) -> bool:
@@ -61,13 +61,19 @@ def choose_profile_cap(source_count: int) -> Tuple[int, bool]:
 
 
 def cascade_max_providers(*, profile_compressed: bool, remaining_sec: float, is_retry: bool = False) -> int:
-    """Always one provider under CF soft timeout.
+    """How many cascade steps (haiku → deepseek → gemini) fit in remaining soft budget.
 
-    Evidence: haiku@16s timeout + deepseek empty_content exhausted the budget; a second
-    provider rarely helps and often doubles latency past CF soft cut. Give the primary
-    the full slice instead. Gemini must never enter this cascade.
+    Each step uses a short HTTP timeout so a hung key/provider fails fast and rotates
+    instead of burning one urlopen until CF 502. Mini-profile retry stays single-step.
     """
-    _ = (profile_compressed, remaining_sec, is_retry)
+    _ = profile_compressed
+    if is_retry:
+        return 1
+    rem = float(remaining_sec)
+    if rem >= 20.0:
+        return 3
+    if rem >= 12.0:
+        return 2
     return 1
 
 
@@ -78,14 +84,13 @@ def provider_timeout_for(
     is_retry: bool = False,
     attempt_index: int = 0,
 ) -> float:
-    """Per-attempt time slice. Primary gets almost the full soft budget; retry shares remainder."""
+    """Per-attempt time slice. Primary fail-fast; fallbacks share remaining budget."""
     rem = max(0.0, float(remaining_sec) - 0.5)
     if is_retry:
         base = LLM_MINI_RETRY_TIMEOUT_SEC
     elif int(attempt_index) <= 0:
         base = LLM_PRIMARY_TIMEOUT_SEC
     else:
-        # Dead path while cascade_max_providers==1; keep short if cascade re-enabled.
         base = LLM_FALLBACK_TIMEOUT_SEC
     _ = provider  # reserved for per-provider overrides
     return max(0.0, min(float(base), rem, LLM_PROVIDER_CAP_SEC))

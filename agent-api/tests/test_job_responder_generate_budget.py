@@ -25,19 +25,19 @@ def test_choose_profile_cap_early_compress_for_many_sources():
     assert chars3 == budget.COMPACT_PROFILE_CHARS
 
 
-def test_cascade_max_providers_single_primary():
-    """Under CF soft timeout prefer one fast provider with a full slice (no empty fallback)."""
+def test_cascade_max_providers_rotates_with_budget():
+    """Fail-fast slices allow 2–3 cascade steps when soft budget remains."""
     assert (
-        budget.cascade_max_providers(profile_compressed=True, remaining_sec=28.0, is_retry=False) == 1
+        budget.cascade_max_providers(profile_compressed=True, remaining_sec=28.0, is_retry=False) == 3
     )
-    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=28.0, is_retry=False) == 1
+    assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=14.0, is_retry=False) == 2
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=10.0, is_retry=False) == 1
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=25.0, is_retry=True) == 1
 
 
-def test_provider_timeout_primary_gets_full_slice():
+def test_provider_timeout_primary_gets_fail_fast_slice():
     primary = budget.provider_timeout_for("openmodel", remaining_sec=22.0, is_retry=False, attempt_index=0)
-    assert primary >= 14.0
+    assert primary >= 8.0
     assert primary <= budget.LLM_PROVIDER_CAP_SEC
     assert primary <= budget.GENERATE_BUDGET_SEC
     retry = budget.provider_timeout_for("openmodel", remaining_sec=12.0, is_retry=True, attempt_index=0)
@@ -57,13 +57,13 @@ def test_summarize_provider_errors_tail():
 
 def test_generate_budget_tighter_than_cf_soft():
     assert budget.GENERATE_BUDGET_SEC <= 28.0
-    assert budget.LLM_PRIMARY_TIMEOUT_SEC <= 22.0
-    assert budget.LLM_PROVIDER_CAP_SEC <= 22.0
+    assert budget.LLM_PRIMARY_TIMEOUT_SEC <= 12.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 12.0
     assert budget.GENERATE_HARD_WALL_SEC <= 30.0
     assert budget.GENERATE_HARD_WALL_SEC > budget.GENERATE_BUDGET_SEC
     assert budget.JR_OPENMODEL_FAST_MODEL
     # HTTP openmodel must die with the soft slice (no 45s zombies → 502).
-    assert budget.LLM_PROVIDER_CAP_SEC <= 20.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 12.0
 
 
 def test_crag_refine_skipped_when_compressed_or_low_budget():

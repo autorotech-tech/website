@@ -108,6 +108,7 @@ from job_responder_budget import (
     GENERATE_BUDGET_SEC,
     GENERATE_HARD_WALL_SEC,
     JR_OPENMODEL_FAST_MODEL,
+    JR_OPENMODEL_FALLBACK_MODEL,
     LLM_PROVIDER_CAP_SEC,
     cascade_max_providers,
     choose_profile_cap,
@@ -2873,7 +2874,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 [RULES]
 1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт.
+3. В письме: 4-6 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт. Всегда применяй скилы из базы знаний, которые помогут автоматизировать и оптимизировать процессы и бизнес, маркетинговые скилы.
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
 5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
@@ -2883,18 +2884,14 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
 
 [OUT cover_letter]
-# ОТКЛИК НА ВАКАНСИЮ
 **Должность:** {title}
-**Компания:** {company}
 **Формат:** {format|remote|employment}
-
 ---
-
-## СОПРОВОДИТЕЛЬНОЕ ПИСЬМО
+{Approximate Relevance of a Vacancy}
 {greeting}
 
-{1 short pitch sentence}
-
+{2 short pitch sentence + relevant skills based experience}
+**Специалист широкого профиля**
 **Почему я подхожу под вакансию:**
 1. **{тема}** - {1-2 предложения с фактом}
 2. ...
@@ -2909,7 +2906,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 - Telegram: ...
 - Email: ...
 (только известные; без пустых строк и без лишнего текста)
-
+**Полное резюме и портфолио во вложении, или по ссылке**
 ## Ссылки
 резюме: https://...
 youtube: https://...
@@ -2924,6 +2921,12 @@ CONTACTS_LINKS_RULE = (
     "Без опыта, навыков, smoke URL. Не выдумывай."
 )
 
+RELEVANCE_PLACEHOLDER_TOKEN = "{Approximate Relevance of a Vacancy}"
+_RELEVANCE_PLACEHOLDER_RE = re.compile(
+    r"\{\s*Approximate\s+Relevance\s+of\s+a\s+Vacancy\s*\}",
+    re.IGNORECASE,
+)
+
 
 def _norm_prompt_blob(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip()).lower()
@@ -2935,13 +2938,47 @@ def is_ultra_short_system_text(text: str) -> bool:
 
 
 def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optional[str], *, max_chars: int = 4000) -> str:
+    """Keep user-saved prompt (including full ultra-short) for generate.
+
+    Ultra-short `[ROLE]...[RULES]...` replaces the default system prompt in
+    `build_system_prompt` - do not discard it as a duplicate of system.
+    """
     raw = (prompt_extra or custom_instructions or "").strip()
     if not raw:
         return ""
-    if is_ultra_short_system_text(raw):
-        # Extension may store ultra-short as jrPromptExtra; system already has it.
-        return ""
     return raw[: max(200, int(max_chars))]
+
+
+def format_relevance_line(relevance: Optional[Dict[str, Any]]) -> str:
+    """Russian relevance line for OUT placeholder / user prompt."""
+    if not isinstance(relevance, dict):
+        return "Релевантность: н/д"
+    score_i: Optional[int] = None
+    try:
+        if relevance.get("score") is not None:
+            score_i = int(round(float(relevance.get("score"))))
+    except (TypeError, ValueError):
+        score_i = None
+    bits: List[str] = []
+    if score_i is not None:
+        bits.append(f"Релевантность: {max(0, min(100, score_i))}/100")
+    matched = relevance.get("matched") or []
+    if isinstance(matched, list) and matched:
+        short = "; ".join(str(m).strip() for m in matched[:2] if str(m).strip())[:160]
+        if short:
+            bits.append(short)
+    return " | ".join(bits) if bits else "Релевантность: н/д"
+
+
+def apply_relevance_placeholder(text: str, relevance: Optional[Dict[str, Any]]) -> str:
+    """Replace OUT relevance placeholder; strip leftovers if unused."""
+    raw = text or ""
+    line = format_relevance_line(relevance)
+    if _RELEVANCE_PLACEHOLDER_RE.search(raw):
+        raw = _RELEVANCE_PLACEHOLDER_RE.sub(line, raw, count=1)
+        raw = _RELEVANCE_PLACEHOLDER_RE.sub("", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    return raw
 
 
 _URL_EXTRACT_RE = re.compile(r"https?://[^\s|>,\"']+")
@@ -3273,7 +3310,12 @@ def build_system_prompt(
     has_cover_template: bool = False,
     prompt_extra: str = "",
 ) -> str:
-    base = ULTRA_SHORT_SYSTEM_PROMPT
+    extra = (prompt_extra or "").strip()
+    # User-saved full ultra-short replaces the bundled default (not discarded as duplicate).
+    if extra and is_ultra_short_system_text(extra):
+        base = extra
+    else:
+        base = ULTRA_SHORT_SYSTEM_PROMPT
     if mode == "question_answers":
         base += (
             "\n\n[MODE] qa: верни ТОЛЬКО JSON-массив "
@@ -3287,9 +3329,8 @@ def build_system_prompt(
     else:
         base += "\n\n[MODE] cover_letter: структура по [OUT cover_letter]; ## Контакты только реальные."
 
-    extra = (prompt_extra or "").strip()
     if extra and not is_ultra_short_system_text(extra):
-        if _norm_prompt_blob(extra) != _norm_prompt_blob(ULTRA_SHORT_SYSTEM_PROMPT):
+        if _norm_prompt_blob(extra) != _norm_prompt_blob(base):
             base += f"\n\n[CUSTOM]\n{extra}\n"
     return base
 
@@ -3303,6 +3344,7 @@ def build_user_prompt(
     cover_template: str = "",
     prompt_extra: str = "",
     crag_hints: str = "",
+    relevance: Optional[Dict[str, Any]] = None,
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
     resume_context = (compact_profile_text or "").strip() or "(empty - do not invent facts)"
@@ -3333,8 +3375,15 @@ def build_user_prompt(
         qlist = normalize_questions(questions if questions is not None else vacancy.questions)
         parts.append("QUESTIONS:\n" + json.dumps(qlist, ensure_ascii=False, indent=2))
     extra = (prompt_extra or "").strip()
-    if extra:
+    # Ultra-short already applied as system; only append non-system custom notes.
+    if extra and not is_ultra_short_system_text(extra):
         parts.append(f"CUSTOM INSTRUCTIONS:\n{extra}")
+    if mode == "cover_letter":
+        rel_line = format_relevance_line(relevance)
+        parts.append(
+            f"VACANCY_RELEVANCE: {rel_line}\n"
+            f"Replace any `{RELEVANCE_PLACEHOLDER_TOKEN}` in the letter with exactly: {rel_line}"
+        )
     hints = (crag_hints or "").strip()
     if hints:
         parts.append(hints)
@@ -5850,6 +5899,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 cover_template=cover_template if has_template else "",
                 prompt_extra=prompt_extra,
                 crag_hints=crag_hints,
+                relevance=relevance,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -5858,14 +5908,25 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
             default_tokens = 700 if mode == "question_answers" else 550
             max_tokens = int(tokens_override) if tokens_override else default_tokens
-            # Single fast provider: openmodel/haiku with full soft slice (route_strict).
-            # deepseek-v4-flash returned empty_content after haiku timeout and burned the budget.
-            # gemini-3.5-flash ≈47s - never in this cascade. GLM 429 - skip.
+            # Cascade: haiku → deepseek → gemini flash. Each step fail-fast + rotate on hang/empty.
+            # HTTP timeout aligned via request_timeout_sec so hung urlopen dies with the slice.
             attempts = (
                 {
                     "tier_override": "fast",
                     "route_provider_override": "openmodel",
                     "route_model_override": JR_OPENMODEL_FAST_MODEL,
+                    "route_strict": True,
+                },
+                {
+                    "tier_override": "fast",
+                    "route_provider_override": "openmodel",
+                    "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
+                    "route_strict": True,
+                },
+                {
+                    "tier_override": "fast",
+                    "route_provider_override": "gemini",
+                    "route_model_override": JR_GEMINI_MODEL,
                     "route_strict": True,
                 },
             )
@@ -5894,6 +5955,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     provider_errors.append(f"{provider}:no_time")
                     break
                 tried += 1
+                http_cap = max(5.0, min(t_cap - 0.5, LLM_PROVIDER_CAP_SEC))
                 try:
                     chat_result = call_with_timeout(
                         openai_chat_completions_generic,
@@ -5901,6 +5963,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         messages=messages,
                         temperature=JR_GENERATE_TEMPERATURE,
                         max_tokens_override=max_tokens,
+                        request_timeout_sec=http_cap,
                         **kwargs,
                     )
                 except FuturesTimeout:
@@ -5915,8 +5978,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         remaining,
                     )
                     chat_result = None
-                    # Fail-fast: do not burn remaining budget on a second slow/empty provider.
-                    break
+                    # Fail-fast this attempt; rotate to next key/provider while budget remains.
+                    continue
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
                     provider_errors.append(
@@ -5924,8 +5987,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     )
                     _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
                     chat_result = None
-                    # Hard provider errors (auth/429/5xx): stop cascade immediately.
-                    break
+                    continue
                 if chat_result and str(getattr(chat_result, "content", None) or "").strip():
                     return chat_result, "", compact_text, has_template
                 empty_detail = "empty"
@@ -5934,11 +5996,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 last_err = last_err or empty_detail
                 provider_errors.append(f"{provider}/{model_label}:{empty_detail}")
                 chat_result = None
-                # Empty content from primary: fail-fast into mini-profile retry if budget remains.
-                break
             return chat_result, last_err, compact_text, has_template
 
-        # Fast openmodel-only cascade. Gemini flash is too slow (~47s) for CF soft budget.
+        # Rotate on hang/empty: haiku → deepseek → gemini (short HTTP caps; wall ≤ ~24–27s).
         first_max_providers = cascade_max_providers(
             profile_compressed=profile_compressed,
             remaining_sec=deadline - time.monotonic(),
@@ -6330,6 +6390,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     " ".join(str(x) for x in ((merged or {}).get("languages") or [])),
                 ]
             )
+            raw_text = apply_relevance_placeholder(raw_text, relevance)
             raw_text = finalize_cover_letter_contacts_and_links(
                 raw_text,
                 contacts=known_contacts,

@@ -171,7 +171,7 @@ Chrome MV3 extension: персонализированные отклики с �
 - Ultra-short system prompt (см. `prompts-ultra-short.md`)
 - **Сохранить промпт** активна только при изменениях vs сохранённого (`jrPromptExtra`)
 - **Сбросить** заливает текущий default (API → fallback bundled)
-- На generate: ultra-short в textarea не дублируется в CUSTOM (уже в `ULTRA_SHORT_SYSTEM_PROMPT`)
+- На generate: ultra-short из textarea уходит как `promptExtra` и **заменяет** system (`build_system_prompt`); non-ultra → `[CUSTOM]`
 
 ## Канонические ## Ссылки (6 URL)
 

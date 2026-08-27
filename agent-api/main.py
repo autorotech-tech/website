@@ -50,6 +50,7 @@ from swoop_kimi import (
     verify_kimi_key as _verify_kimi_key,
 )
 from swoop_openmodel import (
+    OPENMODEL_CHAT_TIMEOUT_SEC as _OPENMODEL_CHAT_TIMEOUT_SEC,
     fetch_openmodel_balance as _fetch_openmodel_balance,
     fetch_openmodel_models as _fetch_openmodel_models,
     openmodel_origin as _openmodel_origin,
@@ -4425,6 +4426,7 @@ def _post_openai_compatible_chat_completions_raw(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
     auth_scheme: str = "bearer",
+    timeout: int = 120,
 ) -> Tuple[Optional[Dict[str, Any]], int, str]:
     """Полный assistant message (content, tool_calls, reasoning, finish_reason)."""
     url = api_base.rstrip("/") + "/chat/completions"
@@ -4436,6 +4438,7 @@ def _post_openai_compatible_chat_completions_raw(
     if extra_headers:
         headers.update(extra_headers)
     tokens_try = int(max_tokens if max_tokens is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200"))
+    http_timeout = max(5, int(timeout or 120))
     afford_retried = False
     for _ in range(2):
         payload: Dict[str, Any] = {
@@ -4453,7 +4456,7 @@ def _post_openai_compatible_chat_completions_raw(
         gemini_extra = _gemini_openai_extra_body(model)
         if gemini_extra and "generativelanguage.googleapis.com" in (api_base or ""):
             payload["extra_body"] = gemini_extra
-        code, body, raw = _http_post_json(url, headers, payload, timeout=120)
+        code, body, raw = _http_post_json(url, headers, payload, timeout=http_timeout)
         if code == 200 and isinstance(body, dict):
             break
         if code == 402 and not afford_retried:
@@ -4493,6 +4496,7 @@ def _post_openai_compatible_chat_completions(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
     auth_scheme: str = "bearer",
+    timeout: int = 120,
 ) -> Tuple[Optional[str], int, str]:
     msg, code, status = _post_openai_compatible_chat_completions_raw(
         api_base,
@@ -4506,6 +4510,7 @@ def _post_openai_compatible_chat_completions(
         tools=tools,
         tool_choice=tool_choice,
         auth_scheme=auth_scheme,
+        timeout=timeout,
     )
     if msg is None:
         return None, code, status
@@ -5339,6 +5344,7 @@ def openai_chat_completions_generic(
     tool_choice: Optional[Any] = None,
     hermes_proxy: bool = False,
     route_strict: bool = False,
+    request_timeout_sec: Optional[float] = None,
 ) -> ChatCompletionsResult:
     """
     Универсальный обход цепочек провайдеров Swoop с ротацией ключей для обычного текстового (или JSON) ответа.
@@ -5347,6 +5353,14 @@ def openai_chat_completions_generic(
     routing = settings.get("agent_llm_routing")
     if not isinstance(routing, dict):
         routing = _default_agent_llm_routing()
+
+    # Fail-fast HTTP wall for JR generate: hung urlopen must die with FuturesTimeout slice.
+    http_timeout = 120
+    if request_timeout_sec is not None:
+        try:
+            http_timeout = max(5, int(float(request_timeout_sec)))
+        except (TypeError, ValueError):
+            http_timeout = 120
 
     tier_raw = (tier_override or "").strip().lower()
     if tier_raw in _LLM_TIER_NAMES:
@@ -5478,6 +5492,7 @@ def openai_chat_completions_generic(
                 tools=proxy_tools,
                 tool_choice=proxy_tool_choice,
                 auth_scheme=auth_scheme,
+                timeout=http_timeout,
             )
         return _post_openai_compatible_chat_completions(
             api_base,
@@ -5491,6 +5506,7 @@ def openai_chat_completions_generic(
             tools=proxy_tools,
             tool_choice=proxy_tool_choice,
             auth_scheme=auth_scheme,
+            timeout=http_timeout,
         )
 
     def _finish_provider_attempt(
@@ -5703,6 +5719,15 @@ def openai_chat_completions_generic(
         elif prov == "openmodel":
             model_use = resolve_model("openmodel", mraw)
 
+            om_keys = list(_iter_keys_with_health("openmodel_keys", openmodel_pool))
+            wall = int(http_timeout) if request_timeout_sec is not None else int(_OPENMODEL_CHAT_TIMEOUT_SEC)
+            # Fail-fast key rotate: up to 2 keys within wall (hung key must not burn full slice alone).
+            max_keys = 2 if wall >= 10 and len(om_keys) > 1 else 1
+            om_keys = om_keys[:max_keys]
+            if not om_keys:
+                continue
+            per_key = max(5, wall // len(om_keys)) if len(om_keys) > 1 else max(5, min(wall, int(_OPENMODEL_CHAT_TIMEOUT_SEC)))
+
             def _openmodel_chat_attempt(api_key: str):
                 if hermes_proxy:
                     return _post_openmodel_messages_raw(
@@ -5712,6 +5737,7 @@ def openai_chat_completions_generic(
                         settings=settings,
                         max_tokens=chat_max_tokens,
                         temperature=temperature,
+                        timeout=per_key,
                     )
                 return _post_openmodel_messages_text(
                     api_key,
@@ -5720,9 +5746,10 @@ def openai_chat_completions_generic(
                     settings=settings,
                     max_tokens=chat_max_tokens,
                     temperature=temperature,
+                    timeout=per_key,
                 )
 
-            for key in _iter_keys_with_health("openmodel_keys", openmodel_pool):
+            for key in om_keys:
                 got = _finish_provider_attempt(
                     _openmodel_chat_attempt(key),
                     "openmodel_keys",

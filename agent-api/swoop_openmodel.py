@@ -233,7 +233,8 @@ def _assistant_text_from_message(body: Dict[str, Any]) -> str:
 
 # Keep ≤ Job Responder primary slice so abandoned Threads die with FuturesTimeout
 # (45s default previously starved uvicorn workers → nginx/CF HTTP 502).
-OPENMODEL_CHAT_TIMEOUT_SEC = 20
+# JR generate passes a shorter per-attempt timeout; this is the safe default elsewhere.
+OPENMODEL_CHAT_TIMEOUT_SEC = 12
 
 
 def post_openmodel_messages_raw(
