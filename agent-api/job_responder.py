@@ -102,6 +102,7 @@ from job_responder_budget import (
     COVER_TEMPLATE_CHARS_RETRY,
     GEMINI_RAG_EARLY_SEC,
     GEMINI_RAG_MIN_BUDGET_SEC,
+    COVER_TRUNCATION_RETRY_MIN_SEC,
     GENERATE_BUDGET_SEC,
     JR_OPENMODEL_FAST_MODEL,
     LLM_PROVIDER_CAP_SEC,
@@ -238,6 +239,22 @@ _KNOWN_TOOLS = {
     "manychat",
     "bitrix",
     "crm",
+    # AI product builder / vibe-coding IDEs (HH JD mentions)
+    "cursor",
+    "antigravity",
+    "claude code",
+    "claudecode",
+    "codex",
+    "lovable",
+    "replit",
+    "bolt",
+    "windsurf",
+    "copilot",
+    "github copilot",
+    "github",
+    "stripe",
+    "posthog",
+    "ga4",
 }
 
 # Canonical display labels for tools recovered from HH chrome / glued blobs
@@ -253,6 +270,23 @@ _TOOL_DISPLAY: Dict[str, str] = {
     "n8n": "n8n",
     "comfyui": "ComfyUI",
     "chatgpt": "ChatGPT",
+    "cursor": "Cursor",
+    "antigravity": "Antigravity",
+    "claude code": "Claude Code",
+    "claudecode": "Claude Code",
+    "codex": "Codex",
+    "lovable": "Lovable",
+    "replit": "Replit",
+    "bolt": "Bolt",
+    "windsurf": "Windsurf",
+    "github copilot": "GitHub Copilot",
+    "copilot": "Copilot",
+    "github": "GitHub",
+    "stripe": "Stripe",
+    "supabase": "Supabase",
+    "firebase": "Firebase",
+    "posthog": "PostHog",
+    "ga4": "GA4",
 }
 
 # HH page chrome / meta that must never appear in "Не хватает в профиле"
@@ -618,6 +652,22 @@ class JobResponderDeleteSourcesPayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     knowledgeItemIds: List[int] = Field(default_factory=list)
     titles: List[str] = Field(default_factory=list)
+
+
+class JobResponderOutboundVacancyItem(BaseModel):
+    """One scored / selected vacancy for human-gated outbound queue."""
+
+    id: Optional[str] = Field(default=None, max_length=64)
+    url: Optional[str] = Field(default=None, max_length=4000)
+    title: Optional[str] = Field(default=None, max_length=1000)
+    company: Optional[str] = Field(default=None, max_length=500)
+    score: Optional[float] = None
+    host: Optional[str] = Field(default=None, max_length=32)
+    letterText: Optional[str] = Field(default=None, max_length=20000)
+    answers: Optional[List[Any]] = None
+    attachmentSourceIds: List[int] = Field(default_factory=list)
+
+
 
 
 def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
@@ -1072,19 +1122,32 @@ def _vacancy_skill_looks_like_junk(text: str) -> bool:
 
 
 def _recover_known_tools_from_text(text: str) -> List[str]:
-    """Pull clean tool tokens (amoCRM, Bitrix24, …) out of glued HH chrome."""
+    """Pull clean tool tokens (amoCRM, Cursor, Antigravity, …) out of glued HH chrome."""
     low = (text or "").lower()
     found: List[str] = []
-    # Longer keys first so "bitrix24" wins over "bitrix"
+    # Longer keys first so "claude code" / "bitrix24" win over short tokens
     keys = sorted(_TOOL_DISPLAY.keys(), key=len, reverse=True)
     for key in keys:
         if key in low:
             found.append(_TOOL_DISPLAY[key])
-            continue
-        # Word-ish match for compact tokens already in _KNOWN_TOOLS
-    for tool in ("amocrm", "bitrix24", "manychat", "n8n", "comfyui"):
+    for tool in (
+        "amocrm",
+        "bitrix24",
+        "manychat",
+        "n8n",
+        "comfyui",
+        "cursor",
+        "antigravity",
+        "lovable",
+        "replit",
+        "codex",
+        "supabase",
+        "firebase",
+        "stripe",
+        "posthog",
+    ):
         if tool in low:
-            found.append(_TOOL_DISPLAY.get(tool, tool))
+            found.append(_TOOL_DISPLAY.get(tool, tool.title() if tool.isalpha() else tool))
     # Dedupe preserving order
     out: List[str] = []
     seen: Set[str] = set()
@@ -2805,6 +2868,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
 8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
+10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -4383,7 +4447,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         return {
             "ok": True,
             "prompt": ULTRA_SHORT_SYSTEM_PROMPT,
-            "promptVersion": "ultra-short-domain-pin-v1",
+            "promptVersion": "ultra-short-tool-pin-v1",
             "linksBlock": DEFAULT_LINKS_BLOCK,
             "canonicalLinks": list(DEFAULT_CANONICAL_LINKS),
         }
@@ -5517,6 +5581,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "message": "Gemini RAG sync queued",
         }
 
+
     @app.post("/api/v1/job-responder/generate")
     async def job_responder_generate(
         payload: JobResponderGeneratePayload,
@@ -5629,8 +5694,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         # Aggressive compact on first try - 12+ sources start at mini size immediately.
         profile_cap, profile_compressed = choose_profile_cap(len(rag_items))
         cover_cap = COVER_TEMPLATE_CHARS_RETRY if profile_compressed else COVER_TEMPLATE_CHARS
-        vac_skills = list(
+        raw_key_skills = list(
             (payload.vacancy.structured.keySkills if payload.vacancy.structured else None) or []
+        )
+        # keySkills chips + tools mentioned in JD description (Cursor, Antigravity, …)
+        vac_skills = sanitize_vacancy_skills(
+            raw_key_skills,
+            extra_blob=f"{payload.vacancy.title or ''}\n{(payload.vacancy.description or '')[:4000]}",
         )
         vacancy_domains = vacancy_domains_from_text(
             payload.vacancy.title or "",
@@ -5638,6 +5708,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             vac_skills,
         )
         domain_pin = pin_domain_facts(merged, vacancy_domains)
+        tool_pin: Dict[str, Any] = {"tools_matched": [], "pinned_names": []}
         crag_grades: List[Dict[str, Any]] = []
         crag_hints = ""
         crag_refined = False
@@ -5645,7 +5716,10 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         # CRAG grade is cheap (no LLM); refine is gated later and skipped when compressed.
         if jr_crag.is_crag_lite_enabled():
             crag_grades = jr_crag.grade_jd_requirements(vac_skills, merged)
-            crag_hints = jr_crag.build_crag_hints(crag_grades, domain_pin=domain_pin)
+            tool_pin = jr_crag.pin_matched_tools(vac_skills, merged, grades=crag_grades)
+            crag_hints = jr_crag.build_crag_hints(
+                crag_grades, domain_pin=domain_pin, tool_pin=tool_pin
+            )
         provider_errors: List[str] = []
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
@@ -5697,19 +5771,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
             default_tokens = 700 if mode == "question_answers" else 550
             max_tokens = int(tokens_override) if tokens_override else default_tokens
-            # openmodel/haiku ≈4–5s for letters; gemini-3.5-flash ≈47s (skip under CF).
-            # GLM keys currently 429 - do not waste budget iterating them.
+            # Single fast provider: openmodel/haiku with full soft slice (route_strict).
+            # deepseek-v4-flash returned empty_content after haiku timeout and burned the budget.
+            # gemini-3.5-flash ≈47s - never in this cascade. GLM 429 - skip.
             attempts = (
                 {
                     "tier_override": "fast",
                     "route_provider_override": "openmodel",
                     "route_model_override": JR_OPENMODEL_FAST_MODEL,
-                    "route_strict": True,
-                },
-                {
-                    "tier_override": "fast",
-                    "route_provider_override": "openmodel",
-                    "route_model_override": "deepseek-v4-flash",
                     "route_strict": True,
                 },
             )
@@ -5759,7 +5828,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                         remaining,
                     )
                     chat_result = None
-                    continue
+                    # Fail-fast: do not burn remaining budget on a second slow/empty provider.
+                    break
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
                     provider_errors.append(
@@ -5767,7 +5837,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     )
                     _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
                     chat_result = None
-                    continue
+                    # Hard provider errors (auth/429/5xx): stop cascade immediately.
+                    break
                 if chat_result and str(getattr(chat_result, "content", None) or "").strip():
                     return chat_result, "", compact_text, has_template
                 empty_detail = "empty"
@@ -5776,6 +5847,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 last_err = last_err or empty_detail
                 provider_errors.append(f"{provider}/{model_label}:{empty_detail}")
                 chat_result = None
+                # Empty content from primary: fail-fast into mini-profile retry if budget remains.
+                break
             return chat_result, last_err, compact_text, has_template
 
         # Fast openmodel-only cascade. Gemini flash is too slow (~47s) for CF soft budget.
@@ -5899,11 +5972,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
 
         # Soft-retry once if cover looks mid-word truncated (max_tokens / stream cut).
+        # Only when enough budget remains - otherwise strip trailing fragment and return.
         if (
             mode == "cover_letter"
             and raw_text
             and looks_truncated_cover(raw_text)
-            and (deadline - time.monotonic()) >= 6.0
+            and (deadline - time.monotonic()) >= COVER_TRUNCATION_RETRY_MIN_SEC
         ):
             finish_reason = str(getattr(chat_result, "finish_reason", None) or "").lower()
             provider_errors.append(
@@ -5966,6 +6040,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 crag_grades,
                 vacancy_domains=vacancy_domains,
                 domains_matched=list(domain_pin.get("domains_matched") or []),
+                tools_matched=list(tool_pin.get("tools_matched") or []),
             )
             remaining_faith = deadline - time.monotonic()
             if not jr_crag.should_run_crag_refine(
@@ -6217,6 +6292,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "vacancyDomains": vacancy_domains,
             "domainsMatched": list(domain_pin.get("domains_matched") or []),
             "domainPinBullets": list(domain_pin.get("pinned_bullets") or [])[:4],
+            "toolPin": list(tool_pin.get("tools_matched") or [])[:8],
             "cragLiteUsed": bool(jr_crag.is_crag_lite_enabled() and crag_grades),
             "cragGrades": crag_grades[:16] if crag_grades else [],
             "cragFaithFailures": crag_faith_failures,
