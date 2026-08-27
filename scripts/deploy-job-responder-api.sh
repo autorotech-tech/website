@@ -19,7 +19,9 @@ python3 -m py_compile \
   "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/job_responder_platforms.py" \
+  "$ROOT/agent-api/job_responder_outbound.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
+  "$ROOT/agent-api/swoop_openmodel.py" \
   "$ROOT/agent-api/main.py"
 
 echo "=== 2. Upload job_responder*.py + data + kb_file_ingest.py + main.py ==="
@@ -33,7 +35,9 @@ scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/job_responder_platforms.py" \
+  "$ROOT/agent-api/job_responder_outbound.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
+  "$ROOT/agent-api/swoop_openmodel.py" \
   "$ROOT/agent-api/main.py" \
   "$REMOTE:/tmp/"
 
@@ -55,8 +59,10 @@ docker cp /tmp/job_responder_crag.py autoro-agent-api:/app/job_responder_crag.py
 docker cp /tmp/job_responder_format.py autoro-agent-api:/app/job_responder_format.py
 docker cp /tmp/job_responder_gemini_rag.py autoro-agent-api:/app/job_responder_gemini_rag.py
 docker cp /tmp/job_responder_platforms.py autoro-agent-api:/app/job_responder_platforms.py
+docker cp /tmp/job_responder_outbound.py autoro-agent-api:/app/job_responder_outbound.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
+docker cp /tmp/swoop_openmodel.py autoro-agent-api:/app/swoop_openmodel.py
 if [[ -f /tmp/skill-synonyms.json ]]; then
   docker exec autoro-agent-api mkdir -p /app/data/job-responder
   docker cp /tmp/skill-synonyms.json autoro-agent-api:/app/data/job-responder/skill-synonyms.json
@@ -81,6 +87,24 @@ for path in (
         code = getattr(e, "code", None)
         body = e.read()[:180] if hasattr(e, "read") else b""
         print(path, "ERR", code, body or e)
+
+# outbound/prepare smoke (human gate, no LLM)
+import json
+req = urllib.request.Request(
+    "http://127.0.0.1:8900/api/v1/job-responder/outbound/prepare",
+    data=json.dumps({
+        "workspaceId": "1",
+        "items": [{"id": "1", "url": "https://hh.ru/vacancy/1", "title": "smoke", "score": 80}],
+        "letterText": "smoke letter",
+    }).encode(),
+    method="POST",
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(req, timeout=20) as r:
+    data = json.loads(r.read().decode())
+    assert data.get("ok") is True and data.get("humanGate") is True and data.get("autoSubmit") is False
+    assert data.get("count") == 1
+    print("outbound/prepare", r.status, "count=", data.get("count"), "humanGate=", data.get("humanGate"))
 PY
 REMOTE
 

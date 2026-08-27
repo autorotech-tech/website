@@ -111,4 +111,4 @@ def test_faith_check_requires_domain_when_matched():
 
 
 def test_is_crag_lite_enabled_default():
-    assert crag.is_crag_lite_enabled() is True
+    assert crag.is_crag_lite_enabled() is False
