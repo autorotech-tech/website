@@ -638,6 +638,56 @@ const JR_API = (() => {
     return { ...data, text };
   }
 
+  async function prepareOutbound({ items = [], letterText = '', attachmentSourceIds = [], minScore } = {}) {
+    const apiBase = await getApiBase();
+    const headers = await getAuthHeaders();
+    const workspaceId = await getWorkspaceId();
+    return fetchJson(`${apiBase}/api/v1/job-responder/outbound/prepare`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        workspaceId,
+        items,
+        ...(String(letterText || '').trim() ? { letterText: String(letterText).trim() } : {}),
+        ...(Array.isArray(attachmentSourceIds) && attachmentSourceIds.length
+          ? { attachmentSourceIds }
+          : {}),
+        ...(minScore != null && Number.isFinite(Number(minScore)) ? { minScore: Number(minScore) } : {}),
+      }),
+      timeoutMs: 20000,
+    });
+  }
+
+  async function insertLetterIntoTab({ text, tabId, windowId } = {}) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'JR_INSERT_LETTER', text: String(text || ''), tabId, windowId },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(resp || { ok: false, error: 'Empty response', humanGate: true });
+        }
+      );
+    });
+  }
+
+  async function fillFormFieldsInTab({ answers = [], tabId, windowId } = {}) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: 'JR_FILL_FORM_FIELDS', answers, tabId, windowId },
+        (resp) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(resp || { ok: false, error: 'Empty response', humanGate: true });
+        }
+      );
+    });
+  }
+
   function pickGeneratedText(data) {
     if (!data || typeof data !== 'object') return '';
     const direct = [data.text, data.letter, data.content, data.coverLetter]
@@ -722,6 +772,7 @@ const JR_API = (() => {
     copyTextViaBackground,
     fetchVacancyFromTab,
     fetchVacancyListFromTab,
+    fillFormFieldsInTab,
     geminiRagStatus,
     geminiRagSync,
     generateResponse,
@@ -729,9 +780,11 @@ const JR_API = (() => {
     getDefaultPrompt,
     getWorkspaceId,
     injectListBadges,
+    insertLetterIntoTab,
     isTestMode,
     listSources,
     logout,
+    prepareOutbound,
     resumeCapture,
     resumeStatus,
     resumeFileCapture,

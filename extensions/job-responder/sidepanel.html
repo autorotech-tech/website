@@ -41,6 +41,10 @@
           </button>
         </div>
         <p class="hint tight" id="listScoreMeta" hidden></p>
+        <div id="listPickBox" class="listPickBox" hidden>
+          <p class="hint tight">Выбор для очереди (топ по score):</p>
+          <div id="listPickList" class="listPickList"></div>
+        </div>
         <div id="relevanceBox" class="relevanceBox" hidden></div>
         <label class="field">
           <span>Описание вакансии</span>
@@ -81,8 +85,47 @@
       </label>
       <div class="row tight">
         <button type="button" id="copyBtn" class="secondary">Копировать</button>
+        <button
+          type="button"
+          id="insertLetterBtn"
+          class="secondary"
+          title="Вставить письмо в форму отклика HH. Отправку делаете вы."
+        >
+          Вставить письмо
+        </button>
+        <button
+          type="button"
+          id="fillFieldsBtn"
+          class="secondary"
+          title="Заполнить ответы в полях формы HH. Отправку делаете вы."
+        >
+          Заполнить поля
+        </button>
       </div>
+      <p class="hint tight humanGateHint" id="humanGateHint">
+        Human gate: расширение не нажимает «Откликнуться» - проверьте поля и отправьте сами.
+      </p>
       <p class="hint tight" id="genMeta"></p>
+    </details>
+
+    <details class="card collapsible" id="outboundQueueSection" data-jr-collapse="outboundQueue">
+      <summary>
+        <span class="jrSummaryLabel">Очередь откликов</span>
+        <span id="outboundQueueCount" class="jrQueueCount" hidden></span>
+      </summary>
+      <p class="hint tight">
+        После «Оценить список» отметьте вакансии и подготовьте пакет (без автоотправки).
+      </p>
+      <div class="row tight">
+        <button type="button" id="prepareOutboundBtn" class="secondary" title="Подготовить выбранные из списка">
+          Подготовить к отклику
+        </button>
+        <button type="button" id="clearOutboundQueueBtn" class="secondary btnCompact" title="Очистить очередь">
+          Очистить
+        </button>
+      </div>
+      <p class="hint tight" id="outboundQueueMeta"></p>
+      <div id="outboundQueueList" class="outboundQueueList" aria-live="polite"></div>
     </details>
 
     <details class="card collapsible" id="syncSection" data-jr-collapse="sync">

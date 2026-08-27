@@ -2,6 +2,12 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.16
+
+- **HH autofill (human gate)**: кнопки «Вставить письмо» / «Заполнить поля» - fill/insert в форму отклика HH; **без** авто-submit.
+- **Очередь откликов**: после «Оценить список» - выбор карточек -> `POST /outbound/prepare` -> очередь в `chrome.storage` (`jrOutboundQueue`).
+- API: `POST /api/v1/job-responder/outbound/prepare` - пакет для ручного отклика (letter/QA stubs, selectors, `humanGate: true`).
+
 ## v0.9.13
 
 - **Relevance calibration**: RRF base gated by absolute BM25/dense quality (rank-consensus alone no longer → max). Caps: RRF 48, grid 28, domain 6, aux soft. Synonym/fuzzy tier credit discounted; semantic overlap floors RU/EN BM25 gaps. Top-band gates require real skill overlap.
@@ -217,6 +223,7 @@ Chrome MV3 extension: персонализированные отклики с �
 | POST | `/api/v1/job-responder/relevance` |
 | POST | `/api/v1/job-responder/relevance/batch` (список карточек HH search) |
 | POST | `/api/v1/job-responder/generate` (`mode`: `cover_letter` \| `qa` \| `question_answers`; `questions` optional; `coverTemplate` / `baseLetter` optional; `useGeminiRag` optional) |
+| POST | `/api/v1/job-responder/outbound/prepare` (human-gated queue: scored items + letter/QA stubs; **no auto-submit**) |
 | GET | `/api/v1/job-responder/gemini-rag/status?workspaceId=` |
 | POST | `/api/v1/job-responder/gemini-rag/sync` (`workspaceId`, `poll`) |
 
@@ -230,12 +237,10 @@ Chrome MV3 extension: персонализированные отклики с �
 
 Подробнее: [gemini-rag.md](./gemini-rag.md).
 
-## Автomation groundwork (MVP scaffold)
+## Автomation groundwork (Phase 5 MVP)
 
-Следующий шаг (не в v0.5.8): HH auto-fill + отправка сгенерированного письма и вложений в чат Cursor/расширения.
-
-- Placeholder endpoint (future): `POST /api/v1/job-responder/outbound/prepare` - `{ letterText, attachmentSourceIds[] }` -> bundle для чата
-- Extension: кнопка «Подготовить для чата» (копия письма + список file sources)
+- API: `POST /api/v1/job-responder/outbound/prepare` - `{ items[], letterText?, attachmentSourceIds[], minScore? }` -> `{ prepared[], humanGate: true, autoSubmit: false }`
+- Extension v0.9.16+: «Подготовить к отклику» после «Оценить список»; очередь `jrOutboundQueue`; «Вставить письмо» / «Заполнить поля» с confirm (human gate)
 - См. [phase2-autofill.md](./phase2-autofill.md)
 
 ## Redeploy API

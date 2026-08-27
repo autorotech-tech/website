@@ -1,4 +1,9 @@
-const PAGE_EXTRACT_FILE = 'content/page-extract.js';
+const PAGE_EXTRACT_FILES = [
+  'platforms/registry.js',
+  'platforms/hh.js',
+  'content/page-extract.js',
+  'content/autofill.js',
+];
 const OFFSCREEN_URL = 'offscreen.html';
 let offscreenCreating = null;
 
@@ -48,7 +53,7 @@ function extractFromTab(tabId, sendResponse) {
   chrome.tabs.sendMessage(tabId, { type: 'JR_EXTRACT_VACANCY' }, (resp) => {
     if (chrome.runtime.lastError) {
       chrome.scripting.executeScript(
-        { target: { tabId }, files: [PAGE_EXTRACT_FILE] },
+        { target: { tabId }, files: PAGE_EXTRACT_FILES },
         () => {
           if (chrome.runtime.lastError) {
             sendResponse({ ok: false, error: chrome.runtime.lastError.message });
@@ -75,7 +80,7 @@ function sendTabMessageWithInject(tabId, message, sendResponse) {
   chrome.tabs.sendMessage(tabId, message, (resp) => {
     if (chrome.runtime.lastError) {
       chrome.scripting.executeScript(
-        { target: { tabId }, files: [PAGE_EXTRACT_FILE] },
+        { target: { tabId }, files: PAGE_EXTRACT_FILES },
         () => {
           if (chrome.runtime.lastError) {
             sendResponse({ ok: false, error: chrome.runtime.lastError.message });
@@ -278,6 +283,38 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     queryActiveTab({ windowId: message.windowId }).then((tab) => {
       if (!tab?.id) {
         sendResponse({ ok: false, error: 'No active tab' });
+        return;
+      }
+      run(tab.id);
+    });
+    return true;
+  }
+
+  if (message?.type === 'JR_INSERT_LETTER' || message?.type === 'JR_FILL_FORM_FIELDS') {
+    const tabId = Number(message.tabId);
+    const payload =
+      message.type === 'JR_INSERT_LETTER'
+        ? { type: 'JR_INSERT_LETTER', text: message.text || message.letterText || '' }
+        : { type: 'JR_FILL_FORM_FIELDS', answers: Array.isArray(message.answers) ? message.answers : [] };
+    const run = (id) => {
+      sendTabMessageWithInject(id, payload, sendResponse);
+    };
+    if (Number.isFinite(tabId) && tabId > 0) {
+      run(tabId);
+      return true;
+    }
+    queryActiveTab({ windowId: message.windowId }).then((tab) => {
+      if (!tab?.id) {
+        sendResponse({ ok: false, error: 'No active tab', humanGate: true, autoSubmit: false });
+        return;
+      }
+      if (!canInjectIntoUrl(tab.url)) {
+        sendResponse({
+          ok: false,
+          error: 'Откройте форму отклика на hh.ru',
+          humanGate: true,
+          autoSubmit: false,
+        });
         return;
       }
       run(tab.id);

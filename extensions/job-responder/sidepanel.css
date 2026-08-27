@@ -639,3 +639,93 @@ button.link {
   color: #0f172a;
   border: 1px solid #cbd5e1;
 }
+
+.humanGateHint {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.listPickBox {
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.listPickList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow: auto;
+  margin-top: 4px;
+}
+
+.listPickItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.listPickItem input {
+  margin-top: 2px;
+}
+
+.listPickScore {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: #0f766e;
+  font-weight: 600;
+  min-width: 2.5em;
+}
+
+.jrQueueCount {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.outboundQueueList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 6px;
+}
+
+.outboundQueueItem {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.outboundQueueItem .oqTitle {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.outboundQueueItem .oqMeta {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.outboundQueueItem .oqActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.outboundQueueItem .oqActions button {
+  flex: 0 1 auto;
+  padding: 4px 8px;
+  font-size: 11px;
+}

@@ -18,9 +18,23 @@ const BTN_EVALUATE_LABEL = 'Оценить предложение';
 const BTN_SCORE_LIST_LABEL = 'Оценить список';
 const JR_RELEVANCE_CACHE_KEY = 'jrRelevanceCache';
 const JR_RELEVANCE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const JR_OUTBOUND_QUEUE_KEY = 'jrOutboundQueue';
+const JR_OUTBOUND_QUEUE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const RESULT_PLACEHOLDER = 'Здесь появится отклик';
 const scoreListBtn = document.getElementById('scoreListBtn');
 const listScoreMeta = document.getElementById('listScoreMeta');
+const listPickBox = document.getElementById('listPickBox');
+const listPickList = document.getElementById('listPickList');
+const prepareOutboundBtn = document.getElementById('prepareOutboundBtn');
+const clearOutboundQueueBtn = document.getElementById('clearOutboundQueueBtn');
+const outboundQueueList = document.getElementById('outboundQueueList');
+const outboundQueueMeta = document.getElementById('outboundQueueMeta');
+const outboundQueueCount = document.getElementById('outboundQueueCount');
+const insertLetterBtn = document.getElementById('insertLetterBtn');
+const fillFieldsBtn = document.getElementById('fillFieldsBtn');
+
+/** Last batch scores for outbound pick UI. */
+let lastListScores = [];
 
 async function resolvePanelWindowId() {
   if (panelWindowId != null) return panelWindowId;
@@ -184,6 +198,7 @@ async function scoreVacancyList() {
           : 'На странице не найдено карточек вакансий.'
       );
       setError('Список вакансий пуст - откройте поиск hh.ru');
+      renderListPick([]);
       return;
     }
     setListScoreMeta(`Оцениваю ${vacancies.length} вакансий…`);
@@ -203,6 +218,7 @@ async function scoreVacancyList() {
     }. Кэш сохранён. Без LLM.`;
     setListScoreMeta(summary);
     setSuccess(summary);
+    renderListPick(scores);
     if (relevanceBox && scores[0]) {
       renderRelevance({
         score: scores[0].score,
@@ -216,6 +232,7 @@ async function scoreVacancyList() {
   } catch (err) {
     setError(String(err.message || err));
     setListScoreMeta('');
+    renderListPick([]);
   } finally {
     setButtonBusy(scoreListBtn, false, BTN_SCORE_LIST_LABEL);
   }
@@ -226,6 +243,299 @@ if (scoreListBtn) {
     scoreVacancyList().catch((err) => setError(String(err.message || err)));
   });
 }
+
+function renderListPick(scores) {
+  lastListScores = Array.isArray(scores) ? scores.slice() : [];
+  if (!listPickBox || !listPickList) return;
+  const ranked = [...lastListScores]
+    .filter((r) => r && (r.id || r.url))
+    .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+    .slice(0, 25);
+  if (!ranked.length) {
+    listPickBox.hidden = true;
+    listPickList.innerHTML = '';
+    return;
+  }
+  listPickBox.hidden = false;
+  listPickList.innerHTML = ranked
+    .map((r, idx) => {
+      const id = String(r.id || '').trim();
+      const title = escapeHtml((r.title || 'Вакансия').slice(0, 80));
+      const score = Math.round(Number(r.score) || 0);
+      const checked = idx < 5 ? ' checked' : '';
+      return `<label class="listPickItem">
+        <input type="checkbox" data-list-pick-id="${escapeHtml(id)}"${checked} />
+        <span class="listPickScore">${score}%</span>
+        <span>${title}</span>
+      </label>`;
+    })
+    .join('');
+}
+
+function getSelectedListPickItems() {
+  if (!listPickList) return [];
+  const checked = new Set(
+    Array.from(listPickList.querySelectorAll('input[data-list-pick-id]:checked')).map((el) =>
+      String(el.getAttribute('data-list-pick-id') || '')
+    )
+  );
+  return lastListScores.filter((r) => checked.has(String(r.id || '')));
+}
+
+function pruneOutboundQueue(raw) {
+  const now = Date.now();
+  const items = Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
+  const kept = items.filter((it) => {
+    if (!it || typeof it !== 'object') return false;
+    const at = Number(it.preparedAt || it.scoredAt || 0);
+    if (at && now - at > JR_OUTBOUND_QUEUE_TTL_MS) return false;
+    return !!(it.id || it.url);
+  });
+  return { items: kept, updatedAt: raw?.updatedAt || now };
+}
+
+async function loadOutboundQueue() {
+  const saved = await chrome.storage.local.get([JR_OUTBOUND_QUEUE_KEY]);
+  return pruneOutboundQueue(saved[JR_OUTBOUND_QUEUE_KEY]);
+}
+
+async function saveOutboundQueue(queue) {
+  const next = pruneOutboundQueue(queue);
+  next.updatedAt = Date.now();
+  await chrome.storage.local.set({ [JR_OUTBOUND_QUEUE_KEY]: next });
+  return next;
+}
+
+function renderOutboundQueue(queue) {
+  const items = Array.isArray(queue?.items) ? queue.items : [];
+  if (outboundQueueCount) {
+    if (items.length) {
+      outboundQueueCount.hidden = false;
+      outboundQueueCount.textContent = String(items.length);
+    } else {
+      outboundQueueCount.hidden = true;
+      outboundQueueCount.textContent = '';
+    }
+  }
+  if (outboundQueueMeta) {
+    outboundQueueMeta.textContent = items.length
+      ? `${items.length} в очереди · human gate (без автоотправки)`
+      : 'Очередь пуста. Оцените список и нажмите «Подготовить к отклику».';
+  }
+  if (!outboundQueueList) return;
+  if (!items.length) {
+    outboundQueueList.innerHTML = '';
+    return;
+  }
+  outboundQueueList.innerHTML = items
+    .map((it, idx) => {
+      const title = escapeHtml((it.title || 'Вакансия').slice(0, 90));
+      const score = it.score != null ? `${Math.round(Number(it.score))}%` : '—';
+      const status = escapeHtml(it.status || 'ready_for_review');
+      const company = escapeHtml((it.company || '').slice(0, 40));
+      return `<div class="outboundQueueItem" data-oq-idx="${idx}">
+        <div class="oqTitle">${title}</div>
+        <div class="oqMeta">${score} · ${status}${company ? ` · ${company}` : ''}</div>
+        <div class="oqActions">
+          <button type="button" class="secondary oqOpenBtn" data-oq-idx="${idx}">Открыть</button>
+          <button type="button" class="secondary oqUseLetterBtn" data-oq-idx="${idx}">В результат</button>
+          <button type="button" class="secondary oqRemoveBtn" data-oq-idx="${idx}">Убрать</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  outboundQueueList.querySelectorAll('.oqOpenBtn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const idx = Number(btn.getAttribute('data-oq-idx'));
+      const it = items[idx];
+      const url = String(it?.url || '').trim();
+      if (!url) {
+        setError('Нет URL вакансии');
+        return;
+      }
+      try {
+        await chrome.tabs.create({ url, active: true });
+        setSuccess('Откройте форму отклика на HH, затем «Вставить письмо» / «Заполнить поля»');
+      } catch (err) {
+        setError(String(err.message || err));
+      }
+    });
+  });
+  outboundQueueList.querySelectorAll('.oqUseLetterBtn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-oq-idx'));
+      const it = items[idx];
+      const letter = String(it?.letterText || '').trim();
+      if (letter && resultText) {
+        resultText.value = letter;
+        syncCopyButtonState();
+      }
+      if (Array.isArray(it?.answers) && it.answers.length) {
+        renderQaTable(it.answers);
+      }
+      setSuccess(letter ? 'Текст из очереди в результате' : 'В очереди нет письма - сгенерируйте «Отклик»');
+    });
+  });
+  outboundQueueList.querySelectorAll('.oqRemoveBtn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const idx = Number(btn.getAttribute('data-oq-idx'));
+      const next = items.filter((_, i) => i !== idx);
+      const saved = await saveOutboundQueue({ items: next });
+      renderOutboundQueue(saved);
+    });
+  });
+}
+
+async function refreshOutboundQueueUi() {
+  const q = await loadOutboundQueue();
+  renderOutboundQueue(q);
+}
+
+async function runPrepareOutbound() {
+  setError('');
+  setSuccess('');
+  const picked = getSelectedListPickItems();
+  if (!picked.length) {
+    setError('Отметьте вакансии в списке после «Оценить список»');
+    return;
+  }
+  setButtonBusy(prepareOutboundBtn, true, 'Подготовить к отклику', 'Готовлю…');
+  try {
+    await JR_API.ensureWorkspace();
+    const letterText = String(resultText?.value || '').trim();
+    const attachmentSourceIds = getSelectedSourceIds();
+    const bundle = await JR_API.prepareOutbound({
+      items: picked.map((r) => ({
+        id: r.id,
+        url: r.url,
+        title: r.title,
+        company: r.company,
+        score: r.score,
+        letterText: letterText || undefined,
+        attachmentSourceIds,
+      })),
+      letterText,
+      attachmentSourceIds,
+      minScore: 0,
+    });
+    if (bundle?.ok === false) {
+      setError(String(bundle.message || bundle.error || 'Не удалось подготовить очередь'));
+      return;
+    }
+    const prepared = Array.isArray(bundle.prepared) ? bundle.prepared : [];
+    const now = Date.now();
+    const withMeta = prepared.map((row) => ({ ...row, preparedAt: now }));
+    const existing = await loadOutboundQueue();
+    const byKey = new Map();
+    for (const it of existing.items || []) {
+      const key = String(it.id || it.url || '');
+      if (key) byKey.set(key, it);
+    }
+    for (const it of withMeta) {
+      const key = String(it.id || it.url || '');
+      if (key) byKey.set(key, it);
+    }
+    const saved = await saveOutboundQueue({ items: Array.from(byKey.values()) });
+    renderOutboundQueue(saved);
+    const section = document.getElementById('outboundQueueSection');
+    if (section) section.open = true;
+    setSuccess(
+      `В очереди: ${saved.items.length} (добавлено ${prepared.length}). Human gate - без автоотправки.`
+    );
+    if (outboundQueueMeta) {
+      outboundQueueMeta.textContent = String(bundle.message || outboundQueueMeta.textContent || '');
+    }
+  } catch (err) {
+    setError(String(err.message || err));
+  } finally {
+    setButtonBusy(prepareOutboundBtn, false, 'Подготовить к отклику');
+  }
+}
+
+async function confirmHumanGate(actionLabel) {
+  const msg =
+    `${actionLabel}\n\n` +
+    'Расширение НЕ нажмёт «Откликнуться». Проверьте поля на HH и отправьте сами.';
+  return window.confirm(msg);
+}
+
+async function runInsertLetter() {
+  setError('');
+  setSuccess('');
+  const letter = String(resultText?.value || '').trim();
+  if (!letter) {
+    setError('Нет текста отклика - сначала «Отклик»');
+    return;
+  }
+  if (!(await confirmHumanGate('Вставить письмо в форму отклика HH?'))) return;
+  setButtonBusy(insertLetterBtn, true, 'Вставить письмо', 'Вставка…');
+  try {
+    const windowId = await resolvePanelWindowId();
+    const resp = await JR_API.insertLetterIntoTab({ text: letter, windowId, tabId: lastTabId });
+    if (!resp?.ok) {
+      setError(String(resp?.message || resp?.error || resp?.reason || 'Поле письма не найдено'));
+      return;
+    }
+    setSuccess(String(resp.message || 'Письмо вставлено. Отправьте форму вручную.'));
+  } catch (err) {
+    setError(String(err.message || err));
+  } finally {
+    setButtonBusy(insertLetterBtn, false, 'Вставить письмо');
+  }
+}
+
+async function runFillFields() {
+  setError('');
+  setSuccess('');
+  const answers = Array.isArray(window.__jrQaRows)
+    ? window.__jrQaRows.filter((r) => String(r?.answer || '').trim())
+    : [];
+  if (!answers.length) {
+    setError('Нет ответов - сначала «Ответы на вопросы»');
+    return;
+  }
+  if (!(await confirmHumanGate('Заполнить поля формы отклика HH?'))) return;
+  setButtonBusy(fillFieldsBtn, true, 'Заполнить поля', 'Заполняю…');
+  try {
+    const windowId = await resolvePanelWindowId();
+    const resp = await JR_API.fillFormFieldsInTab({ answers, windowId, tabId: lastTabId });
+    if (!resp?.ok) {
+      setError(String(resp?.message || resp?.error || 'Поля формы не найдены'));
+      return;
+    }
+    setSuccess(String(resp.message || `Заполнено: ${resp.filled}. Отправьте вручную.`));
+  } catch (err) {
+    setError(String(err.message || err));
+  } finally {
+    setButtonBusy(fillFieldsBtn, false, 'Заполнить поля');
+  }
+}
+
+if (prepareOutboundBtn) {
+  prepareOutboundBtn.addEventListener('click', () => {
+    runPrepareOutbound().catch((err) => setError(String(err.message || err)));
+  });
+}
+if (clearOutboundQueueBtn) {
+  clearOutboundQueueBtn.addEventListener('click', async () => {
+    const saved = await saveOutboundQueue({ items: [] });
+    renderOutboundQueue(saved);
+    setSuccess('Очередь очищена');
+  });
+}
+if (insertLetterBtn) {
+  insertLetterBtn.addEventListener('click', () => {
+    runInsertLetter().catch((err) => setError(String(err.message || err)));
+  });
+}
+if (fillFieldsBtn) {
+  fillFieldsBtn.addEventListener('click', () => {
+    runFillFields().catch((err) => setError(String(err.message || err)));
+  });
+}
+
+refreshOutboundQueueUi().catch(() => {});
 
 /** Ultra-short system rules - default jrPromptExtra + reset target. See docs/job-responder/prompts-ultra-short.md
  * Keep in sync with agent-api ULTRA_SHORT_SYSTEM_PROMPT (GET /api/v1/job-responder/default-prompt).

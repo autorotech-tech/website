@@ -33,6 +33,7 @@ from job_responder_format import (
     strip_incomplete_trailing_text,
 )
 import job_responder_crag as jr_crag
+import job_responder_outbound as jr_outbound
 from job_responder_semantic import (
     build_semantic_grid,
     format_semantic_hit,
@@ -668,6 +669,15 @@ class JobResponderOutboundVacancyItem(BaseModel):
     attachmentSourceIds: List[int] = Field(default_factory=list)
 
 
+
+class JobResponderOutboundPreparePayload(BaseModel):
+    """Prepare outbound bundle for manual HH fill/insert (no auto-submit)."""
+
+    workspaceId: str = Field(..., min_length=1, max_length=64)
+    items: List[JobResponderOutboundVacancyItem] = Field(default_factory=list)
+    letterText: Optional[str] = Field(default=None, max_length=20000)
+    attachmentSourceIds: List[int] = Field(default_factory=list)
+    minScore: Optional[float] = Field(default=None, ge=0, le=100)
 
 
 def _uniq_lower(items: List[str], limit: int = 40) -> List[str]:
@@ -5582,6 +5592,40 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         }
 
 
+
+    @app.post("/api/v1/job-responder/outbound/prepare")
+    async def job_responder_outbound_prepare(
+        payload: JobResponderOutboundPreparePayload,
+        request: Request,
+        x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+        authorization: Optional[str] = Header(None, alias="Authorization"),
+    ):
+        """Package scored vacancies into a human-gated outbound queue (no auto-send)."""
+        auth_ctx = _auth(request, x_api_key, authorization)
+        workspace_id = _parse_workspace_id(payload.workspaceId)
+        _guard_workspace(auth_ctx, workspace_id)
+        items = [row.model_dump() for row in (payload.items or [])]
+        if not items:
+            return {
+                "ok": False,
+                "error": "empty_items",
+                "message": "Передайте items[] (вакансии после «Оценить список»).",
+                "humanGate": True,
+                "autoSubmit": False,
+                "prepared": [],
+                "skipped": [],
+                "count": 0,
+                "workspaceId": str(workspace_id),
+            }
+        bundle = jr_outbound.prepare_outbound_bundle(
+            items,
+            default_letter=str(payload.letterText or ""),
+            default_attachment_ids=list(payload.attachmentSourceIds or []),
+            min_score=payload.minScore,
+            workspace_id=str(workspace_id),
+        )
+        return bundle
+
     @app.post("/api/v1/job-responder/generate")
     async def job_responder_generate(
         payload: JobResponderGeneratePayload,
@@ -5713,13 +5757,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         crag_hints = ""
         crag_refined = False
         crag_faith_failures: List[str] = []
-        # CRAG grade is cheap (no LLM); refine is gated later and skipped when compressed.
-        if jr_crag.is_crag_lite_enabled():
-            crag_grades = jr_crag.grade_jd_requirements(vac_skills, merged)
-            tool_pin = jr_crag.pin_matched_tools(vac_skills, merged, grades=crag_grades)
-            crag_hints = jr_crag.build_crag_hints(
-                crag_grades, domain_pin=domain_pin, tool_pin=tool_pin
-            )
+        # Deterministic grade + TOOL/DOMAIN PIN always (no LLM). LLM critique/refine
+        # stays behind JOB_RESPONDER_CRAG_LITE + should_run_crag_refine budget gates.
+        crag_grades = jr_crag.grade_jd_requirements(vac_skills, merged)
+        tool_pin = jr_crag.pin_matched_tools(vac_skills, merged, grades=crag_grades)
+        crag_hints = jr_crag.build_crag_hints(
+            crag_grades, domain_pin=domain_pin, tool_pin=tool_pin
+        )
         provider_errors: List[str] = []
         gemini_rag_used = False
         gemini_rag_citations: List[str] = []
@@ -6293,7 +6337,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "domainsMatched": list(domain_pin.get("domains_matched") or []),
             "domainPinBullets": list(domain_pin.get("pinned_bullets") or [])[:4],
             "toolPin": list(tool_pin.get("tools_matched") or [])[:8],
-            "cragLiteUsed": bool(jr_crag.is_crag_lite_enabled() and crag_grades),
+            "cragLiteUsed": bool(jr_crag.is_crag_lite_enabled() and crag_refined),
             "cragGrades": crag_grades[:16] if crag_grades else [],
             "cragFaithFailures": crag_faith_failures,
             "cragRefined": crag_refined,

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Autoro Hunt",
   "description": "Персонализированные отклики: парсинг страницы вакансии + база резюме (тестовый режим без login)",
-  "version": "0.9.14",
+  "version": "0.9.16",
   "permissions": [
     "storage",
     "sidePanel",
@@ -25,7 +25,9 @@
   ],
   "oauth2": {
     "client_id": "YOUR_CHROME_EXTENSION_CLIENT_ID.apps.googleusercontent.com",
-    "scopes": ["https://www.googleapis.com/auth/drive.readonly"]
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.readonly"
+    ]
   },
   "background": {
     "service_worker": "background.js"
@@ -38,11 +40,16 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*", "https://docs.google.com/forms/*"],
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "https://docs.google.com/forms/*"
+      ],
       "js": [
         "platforms/registry.js",
         "platforms/hh.js",
-        "content/page-extract.js"
+        "content/page-extract.js",
+        "content/autofill.js"
       ],
       "run_at": "document_idle"
     }
