@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-# Soft wall-clock for generate: CF edge often ~15–35s; finish JSON before soft cut.
-GENERATE_BUDGET_SEC = 32.0
+# Soft wall-clock for generate: finish JSON before CF/proxy kills the connection.
+# Evidence (VPS 2026-08-27): openmodel urlopen default was 45s while FuturesTimeout was
+# 16–26s → zombie threads + only 2 uvicorn workers → nginx/CF HTTP 502 (HTML), not soft JSON.
+# Keep hard wall under ~25s so abandoned HTTP dies with the slice (see swoop_openmodel timeout).
+GENERATE_BUDGET_SEC = 24.0
 # Soft caps for unified compact profile (many Resume sources).
 COMPACT_PROFILE_CHARS = 1600
 COMPACT_PROFILE_CHARS_MANY = 1100
@@ -21,19 +24,22 @@ COVER_TEMPLATE_CHARS_RETRY = 400
 # - gemini-3.5-flash cover letter ≈ 47s (unusable under CF soft budget)
 # - openmodel claude-haiku often 4–5s, but under load can need 18–24s
 # - cascade haiku(16s timeout)→deepseek(empty) burned budget → user timeout message
-# Primary = single openmodel/haiku with almost full soft budget; no gemini; no empty fallback.
-LLM_PRIMARY_TIMEOUT_SEC = 26.0
-LLM_FALLBACK_TIMEOUT_SEC = 8.0
-LLM_PROVIDER_CAP_SEC = 28.0
-LLM_MINI_RETRY_TIMEOUT_SEC = 14.0
+# - HTTP openmodel must be ≤ primary slice or workers starve → 502
+# Primary = single openmodel/haiku; no gemini; no empty fallback.
+LLM_PRIMARY_TIMEOUT_SEC = 18.0
+LLM_FALLBACK_TIMEOUT_SEC = 6.0
+LLM_PROVIDER_CAP_SEC = 20.0
+LLM_MINI_RETRY_TIMEOUT_SEC = 10.0
 LLM_MINI_RETRY_MIN_REMAINING_SEC = 8.0
 # Soft-retry after mid-word truncation only when enough wall-clock remains.
-COVER_TRUNCATION_RETRY_MIN_SEC = 12.0
+COVER_TRUNCATION_RETRY_MIN_SEC = 10.0
 # Legacy aliases (tests / older call sites).
 LLM_ATTEMPT_TIMEOUT_SEC = LLM_PRIMARY_TIMEOUT_SEC
 GEMINI_RAG_EARLY_SEC = 5.0
 # Auto File Search only when nearly full budget still free (explicit opt-in preferred).
-GEMINI_RAG_MIN_BUDGET_SEC = 28.0
+GEMINI_RAG_MIN_BUDGET_SEC = 20.0
+# Absolute asyncio.wait_for ceiling (seconds after start) - must beat CF soft cut.
+GENERATE_HARD_WALL_SEC = 27.0
 
 # Explicit fast OpenModel slug - admin default kimi-k3 is too slow for CF soft budget.
 JR_OPENMODEL_FAST_MODEL = "claude-haiku-4-5-20251001"

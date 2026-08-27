@@ -106,6 +106,7 @@ from job_responder_budget import (
     GEMINI_RAG_MIN_BUDGET_SEC,
     COVER_TRUNCATION_RETRY_MIN_SEC,
     GENERATE_BUDGET_SEC,
+    GENERATE_HARD_WALL_SEC,
     JR_OPENMODEL_FAST_MODEL,
     LLM_PROVIDER_CAP_SEC,
     cascade_max_providers,
@@ -5657,15 +5658,36 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         started = time.monotonic()
         deadline = started + GENERATE_BUDGET_SEC
         workspace_id_out = str(getattr(payload, "workspaceId", "") or "")
+        # Run blocking LLM/DB work off the event loop. With uvicorn --workers 2,
+        # sync generate previously starved both workers → nginx/CF HTML 502.
         try:
-            return await _job_responder_generate_impl(
-                payload=payload,
-                request=request,
-                x_api_key=x_api_key,
-                authorization=authorization,
-                started=started,
-                deadline=deadline,
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    _job_responder_generate_impl,
+                    payload=payload,
+                    request=request,
+                    x_api_key=x_api_key,
+                    authorization=authorization,
+                    started=started,
+                    deadline=deadline,
+                ),
+                timeout=max(GENERATE_BUDGET_SEC + 2.0, GENERATE_HARD_WALL_SEC),
             )
+        except asyncio.TimeoutError:
+            elapsed = round(time.monotonic() - started, 2)
+            _LOG.warning("generate hard-wall timeout elapsed=%.2f", elapsed)
+            return {
+                "ok": False,
+                "error": "llm_timeout",
+                "message": (
+                    "Не успели сформировать отклик за отведённое время. "
+                    "Нажмите «Отклик» ещё раз - обычно со второго раза быстрее."
+                ),
+                "text": "",
+                "timedOut": True,
+                "elapsedSec": elapsed,
+                "workspaceId": workspace_id_out,
+            }
         except HTTPException:
             raise
         except Exception as exc:
@@ -5684,7 +5706,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "detail": f"{type(exc).__name__}: {exc}"[:240],
             }
 
-    async def _job_responder_generate_impl(
+    def _job_responder_generate_impl(
         *,
         payload: JobResponderGeneratePayload,
         request: Request,

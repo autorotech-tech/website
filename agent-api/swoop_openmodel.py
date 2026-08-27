@@ -231,6 +231,11 @@ def _assistant_text_from_message(body: Dict[str, Any]) -> str:
     return "".join(chunks).strip()
 
 
+# Keep ≤ Job Responder primary slice so abandoned Threads die with FuturesTimeout
+# (45s default previously starved uvicorn workers → nginx/CF HTTP 502).
+OPENMODEL_CHAT_TIMEOUT_SEC = 20
+
+
 def post_openmodel_messages_raw(
     api_key: str,
     model: str,
@@ -239,7 +244,7 @@ def post_openmodel_messages_raw(
     settings: Optional[Dict[str, Any]] = None,
     max_tokens: int = 1024,
     temperature: float = 0.35,
-    timeout: int = 45,
+    timeout: int = OPENMODEL_CHAT_TIMEOUT_SEC,
 ) -> Tuple[Optional[Dict[str, Any]], int, str]:
     key = str(api_key or "").strip()
     m = str(model or "").strip() or OPENMODEL_DEFAULT_MODEL
@@ -258,7 +263,10 @@ def post_openmodel_messages_raw(
     }
     if system:
         payload["system"] = system
-    code, body, raw = _http_post_json(url, _auth_headers(key, anthropic=True), payload, timeout=timeout)
+    http_timeout = max(5, int(timeout or OPENMODEL_CHAT_TIMEOUT_SEC))
+    code, body, raw = _http_post_json(
+        url, _auth_headers(key, anthropic=True), payload, timeout=http_timeout
+    )
     if code == 200 and isinstance(body, dict):
         visible = _assistant_text_from_message(body)
         out = dict(body)
@@ -278,6 +286,7 @@ def post_openmodel_messages_text(
     settings: Optional[Dict[str, Any]] = None,
     max_tokens: int = 1024,
     temperature: float = 0.35,
+    timeout: int = OPENMODEL_CHAT_TIMEOUT_SEC,
 ) -> Tuple[Optional[str], int, str]:
     msg, code, status = post_openmodel_messages_raw(
         api_key,
@@ -286,6 +295,7 @@ def post_openmodel_messages_text(
         settings=settings,
         max_tokens=max_tokens,
         temperature=temperature,
+        timeout=timeout,
     )
     if msg is None:
         return None, code, status
