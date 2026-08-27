@@ -11,40 +11,56 @@ SSH_OPTS=(-i "$KEY" -o ConnectTimeout=60 -o ServerAliveInterval=15)
 echo "=== 1. Syntax check ==="
 python3 -m py_compile \
   "$ROOT/agent-api/job_responder.py" \
+  "$ROOT/agent-api/job_responder_budget.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
   "$ROOT/agent-api/job_responder_optimize.py" \
   "$ROOT/agent-api/job_responder_hybrid.py" \
   "$ROOT/agent-api/job_responder_crag.py" \
   "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
+  "$ROOT/agent-api/job_responder_platforms.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py"
 
-echo "=== 2. Upload job_responder*.py + kb_file_ingest.py + main.py ==="
+echo "=== 2. Upload job_responder*.py + data + kb_file_ingest.py + main.py ==="
 scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder.py" \
+  "$ROOT/agent-api/job_responder_budget.py" \
   "$ROOT/agent-api/job_responder_semantic.py" \
   "$ROOT/agent-api/job_responder_optimize.py" \
   "$ROOT/agent-api/job_responder_hybrid.py" \
   "$ROOT/agent-api/job_responder_crag.py" \
   "$ROOT/agent-api/job_responder_format.py" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
+  "$ROOT/agent-api/job_responder_platforms.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/main.py" \
   "$REMOTE:/tmp/"
+
+if [[ -f "$ROOT/agent-api/data/job-responder/skill-synonyms.json" ]]; then
+  scp "${SSH_OPTS[@]}" \
+    "$ROOT/agent-api/data/job-responder/skill-synonyms.json" \
+    "$REMOTE:/tmp/skill-synonyms.json"
+fi
 
 echo "=== 3. docker cp + pypdf + restart autoro-agent-api ==="
 ssh "${SSH_OPTS[@]}" "$REMOTE" bash -s <<'REMOTE'
 set -euo pipefail
 docker cp /tmp/job_responder.py autoro-agent-api:/app/job_responder.py
+docker cp /tmp/job_responder_budget.py autoro-agent-api:/app/job_responder_budget.py
 docker cp /tmp/job_responder_semantic.py autoro-agent-api:/app/job_responder_semantic.py
 docker cp /tmp/job_responder_optimize.py autoro-agent-api:/app/job_responder_optimize.py
 docker cp /tmp/job_responder_hybrid.py autoro-agent-api:/app/job_responder_hybrid.py
 docker cp /tmp/job_responder_crag.py autoro-agent-api:/app/job_responder_crag.py
 docker cp /tmp/job_responder_format.py autoro-agent-api:/app/job_responder_format.py
 docker cp /tmp/job_responder_gemini_rag.py autoro-agent-api:/app/job_responder_gemini_rag.py
+docker cp /tmp/job_responder_platforms.py autoro-agent-api:/app/job_responder_platforms.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
+if [[ -f /tmp/skill-synonyms.json ]]; then
+  docker exec autoro-agent-api mkdir -p /app/data/job-responder
+  docker cp /tmp/skill-synonyms.json autoro-agent-api:/app/data/job-responder/skill-synonyms.json
+fi
 docker exec autoro-agent-api python3 -m pip install -q --no-cache-dir 'pypdf>=4.0' || true
 docker restart autoro-agent-api
 sleep 10

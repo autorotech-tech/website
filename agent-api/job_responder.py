@@ -47,6 +47,24 @@ from job_responder_optimize import (
     vacancy_domains_from_text,
 )
 from job_responder_hybrid import hybrid_relevance_base
+from job_responder_budget import (
+    COMPACT_PROFILE_CHARS,
+    COMPACT_PROFILE_CHARS_MANY,
+    COMPACT_PROFILE_CHARS_RETRY,
+    COMPACT_PROFILE_MANY_SOURCES,
+    COVER_TEMPLATE_CHARS,
+    COVER_TEMPLATE_CHARS_RETRY,
+    GEMINI_RAG_EARLY_SEC,
+    GEMINI_RAG_MIN_BUDGET_SEC,
+    GENERATE_BUDGET_SEC,
+    LLM_ATTEMPT_TIMEOUT_SEC,
+    LLM_MINI_RETRY_TIMEOUT_SEC,
+    LLM_PROVIDER_CAP_SEC,
+    cascade_max_providers,
+    should_attempt_mini_profile_retry,
+    summarize_provider_errors,
+)
+import job_responder_platforms as jr_platforms
 
 _LOG = logging.getLogger("job-responder")
 
@@ -59,7 +77,7 @@ PROFILE_OVERRIDES_CATEGORY = "overrides"
 PROFILE_OVERRIDES_TITLE = "Правки RAG (overrides)"
 JR_PROFILE_MARKER = "---jr_profile---"
 
-HOST_LABELS = {"ru": "hh.ru", "kz": "hh.kz", "uz": "hh.uz", "web": "web"}
+HOST_LABELS = jr_platforms.host_labels()
 
 # Тестовый режим: без JWT/login. Выключить: JOB_RESPONDER_TEST_MODE=0
 JOB_RESPONDER_TEST_MODE = str(os.environ.get("JOB_RESPONDER_TEST_MODE", "1")).strip().lower() in {
@@ -72,34 +90,19 @@ DEFAULT_TEST_WORKSPACE_ID = int(os.environ.get("JOB_RESPONDER_TEST_WORKSPACE_ID"
 
 # Stay under nginx/CF ~60–100s: never return HTTP 502 (Cloudflare replaces JSON with HTML).
 FILE_CAPTURE_BUDGET_SEC = 28.0
-# Soft wall-clock for generate: leave headroom under CF; aim for letter in <25s typical.
-GENERATE_BUDGET_SEC = 38.0
 # Low temperature: honest, RAG-faithful cover letters (less embellishment).
 JR_GENERATE_TEMPERATURE = 0.15
 # Soft caps: many sources are merged into ONE compact profile (not dumped as PDF bodies).
-# First attempt is already aggressive - do not start at 6k and only shrink on retry.
 SELECTED_SOURCES_MAX = 40
 # Relevance hot path: fewer/lighter rows so nginx/CF never see origin crash→HTML 502
 RELEVANCE_SOURCES_MAX = 16
 RELEVANCE_CONTENT_CHARS = 6000
 RELEVANCE_VACANCY_CHARS = 8000
-COMPACT_PROFILE_CHARS = 2200
-COMPACT_PROFILE_CHARS_MANY = 1700
-COMPACT_PROFILE_CHARS_RETRY = 1400
-COMPACT_PROFILE_MANY_SOURCES = 6
 COMPACT_PROFILE_KIND = "job_profile_compact"
 GENERATE_VACANCY_CHARS = 1600
-COVER_TEMPLATE_CHARS = 1400
-COVER_TEMPLATE_CHARS_RETRY = 700
 LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
-# Each fast provider gets a real slice (not leftover scraps after a hung rag call).
-LLM_ATTEMPT_TIMEOUT_SEC = 14.0
-LLM_PROVIDER_CAP_SEC = 15.0
-# Gemini File Search: only when budget allows; cancel early so openmodel still has time.
-GEMINI_RAG_EARLY_SEC = 7.0
-GEMINI_RAG_MIN_BUDGET_SEC = 20.0
 GEMINI_RAG_COOLDOWN_SEC = 120.0
 # gemini-2.0-flash is retired (404). Prefer current catalog flash.
 JR_GEMINI_MODEL = "gemini-3.5-flash"
@@ -5571,7 +5574,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         if use_rag is None:
             use_rag = bool(jr_gemini_rag.is_enabled() and rag_status.get("ready"))
 
-        def _run_llm(profile_max: int, cover_max: int, attempt_timeout: float):
+        def _run_llm(
+            profile_max: int,
+            cover_max: int,
+            attempt_timeout: float,
+            *,
+            max_providers: int = 3,
+        ):
+            nonlocal has_template
             cover_template = resolve_cover_template(
                 payload.coverTemplate, payload.baseLetter, max_chars=cover_max
             )
@@ -5599,7 +5609,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 {"role": "user", "content": user_prompt},
             ]
             # Shorter outputs finish faster under CF soft budget.
-            max_tokens = 900 if mode == "question_answers" else 550
+            max_tokens = 900 if mode == "question_answers" else 480
             # Fast providers first with a real time slice each. OpenRouter skipped.
             attempts = (
                 {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
@@ -5612,7 +5622,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             )
             chat_result = None
             last_err = ""
+            tried = 0
             for kwargs in attempts:
+                if tried >= max(1, int(max_providers)):
+                    provider_errors.append("cascade:max_providers")
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining < 4.0:
                     last_err = "timeout"
@@ -5620,14 +5634,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     break
                 provider = str(kwargs.get("route_provider_override") or "?")
                 # GLM is slow - skip unless we still have a healthy slice.
-                if provider == "glm" and remaining < 10.0:
+                if provider == "glm" and remaining < 12.0:
                     provider_errors.append("glm:skipped_low_budget")
                     continue
                 t_cap = min(float(attempt_timeout), remaining - 0.5, LLM_PROVIDER_CAP_SEC)
-                if t_cap < 5.0:
+                if t_cap < 4.5:
                     last_err = "timeout"
                     provider_errors.append(f"{provider}:no_time")
                     break
+                tried += 1
                 try:
                     chat_result = call_with_timeout(
                         openai_chat_completions_generic,
@@ -5641,16 +5656,17 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     last_err = "timeout"
                     provider_errors.append(f"{provider}:timeout>{t_cap:.0f}s")
                     _LOG.warning(
-                        "generate provider timeout provider=%s timeout=%.1f profile=%d",
+                        "generate provider timeout provider=%s timeout=%.1f profile=%d remaining=%.1f",
                         provider,
                         t_cap,
                         profile_max,
+                        remaining,
                     )
                     chat_result = None
                     continue
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
-                    provider_errors.append(f"{provider}:{type(exc).__name__}")
+                    provider_errors.append(f"{provider}:{type(exc).__name__}:{str(exc)[:80]}")
                     _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
                     chat_result = None
                     continue
@@ -5665,8 +5681,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             return chat_result, last_err, compact_text, has_template
 
         # Fast cascade first (openmodel / flash). File Search only if budget still healthy.
+        first_max_providers = cascade_max_providers(
+            profile_compressed=profile_compressed,
+            remaining_sec=deadline - time.monotonic(),
+            is_retry=False,
+        )
         chat_result, last_err, compact_text, has_template = _run_llm(
-            profile_cap, cover_cap, LLM_ATTEMPT_TIMEOUT_SEC
+            profile_cap,
+            cover_cap,
+            LLM_ATTEMPT_TIMEOUT_SEC,
+            max_providers=first_max_providers,
         )
         if chat_result and str(getattr(chat_result, "content", None) or "").strip():
             raw_text = str(chat_result.content).strip()
@@ -5749,31 +5773,40 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             elif remaining_after_fast < GEMINI_RAG_MIN_BUDGET_SEC:
                 provider_errors.append("gemini_rag:skipped_low_budget")
 
-        if (not chat_result or not str(getattr(chat_result, "content", None) or "").strip()) and (
-            last_err == "timeout" or last_err.startswith("timeout") or "timeout" in (last_err or "")
+        raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else raw_text
+        # Mini-profile retry whenever draft is empty (timeout OR empty/errors) if budget remains.
+        if should_attempt_mini_profile_retry(
+            has_text=bool(raw_text),
+            remaining_sec=deadline - time.monotonic(),
         ):
             remaining = deadline - time.monotonic()
-            if remaining >= 6:
-                profile_compressed = True
-                profile_cap = COMPACT_PROFILE_CHARS_RETRY
-                cover_cap = COVER_TEMPLATE_CHARS_RETRY
-                _LOG.warning(
-                    "generate mini-profile retry remaining=%.1f errs=%s",
-                    remaining,
-                    ";".join(provider_errors[-6:]),
-                )
-                chat_result, last_err, compact_text, has_template = _run_llm(
-                    profile_cap, cover_cap, min(12.0, remaining - 1.0)
-                )
-
-        raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else raw_text
+            profile_compressed = True
+            profile_cap = COMPACT_PROFILE_CHARS_RETRY
+            cover_cap = COVER_TEMPLATE_CHARS_RETRY
+            retry_timeout = min(LLM_MINI_RETRY_TIMEOUT_SEC, remaining - 1.0)
+            _LOG.warning(
+                "generate mini-profile retry remaining=%.1f errs=%s",
+                remaining,
+                summarize_provider_errors(provider_errors),
+            )
+            chat_result, last_err, compact_text, has_template = _run_llm(
+                profile_cap,
+                cover_cap,
+                max(4.5, retry_timeout),
+                max_providers=cascade_max_providers(
+                    profile_compressed=True,
+                    remaining_sec=remaining,
+                    is_retry=True,
+                ),
+            )
+            raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
 
         # CRAG-lite: heuristic faith check + one refine pass if budget allows.
-        if (
-            raw_text
-            and mode == "cover_letter"
-            and jr_crag.is_crag_lite_enabled()
-            and not profile_compressed
+        if jr_crag.should_run_crag_refine(
+            has_text=bool(raw_text),
+            mode=mode,
+            profile_compressed=profile_compressed,
+            remaining_sec=deadline - time.monotonic(),
         ):
             if not compact_text:
                 compact_text = format_compact_profile(
@@ -5796,43 +5829,61 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 domains_matched=list(domain_pin.get("domains_matched") or []),
             )
             remaining_faith = deadline - time.monotonic()
-            if crag_faith_failures and remaining_faith >= jr_crag.CRAG_REFINE_MIN_BUDGET_SEC:
+            if not jr_crag.should_run_crag_refine(
+                has_text=bool(raw_text),
+                mode=mode,
+                profile_compressed=profile_compressed,
+                remaining_sec=remaining_faith,
+                faith_failures=crag_faith_failures,
+            ):
+                if crag_faith_failures and remaining_faith < jr_crag.CRAG_REFINE_MIN_BUDGET_SEC:
+                    provider_errors.append("crag_refine:skipped_low_budget")
+            else:
                 critique_text = ""
-                critique_budget = min(6.0, remaining_faith - 2.0)
-                if critique_budget >= 3.0:
-                    try:
-                        critique_result = call_with_timeout(
-                            openai_chat_completions_generic,
-                            critique_budget,
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "You audit cover letters. Output 1-3 bullet fixes in Russian. "
-                                        "No preamble."
-                                    ),
-                                },
-                                {
-                                    "role": "user",
-                                    "content": jr_crag.build_critique_user_prompt(
-                                        raw_text,
-                                        crag_faith_failures,
-                                        compact_text or "",
-                                    ),
-                                },
-                            ],
-                            temperature=0.0,
-                            max_tokens_override=jr_crag.CRAG_CRITIQUE_MAX_TOKENS,
-                            tier_override="fast",
-                            route_provider_override="gemini",
-                            route_model_override=JR_GEMINI_MODEL,
-                        )
-                        critique_text = str(getattr(critique_result, "content", None) or "").strip()
-                    except Exception as exc:
-                        provider_errors.append(f"crag_critique:{type(exc).__name__}")
+                if jr_crag.should_run_crag_critique(remaining_faith):
+                    critique_budget = min(5.0, remaining_faith - jr_crag.CRAG_REFINE_CAP_SEC)
+                    if critique_budget >= 3.0:
+                        try:
+                            critique_result = call_with_timeout(
+                                openai_chat_completions_generic,
+                                critique_budget,
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": (
+                                            "You audit cover letters. Output 1-3 bullet fixes in Russian. "
+                                            "No preamble."
+                                        ),
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": jr_crag.build_critique_user_prompt(
+                                            raw_text,
+                                            crag_faith_failures,
+                                            compact_text or "",
+                                        ),
+                                    },
+                                ],
+                                temperature=0.0,
+                                max_tokens_override=jr_crag.CRAG_CRITIQUE_MAX_TOKENS,
+                                tier_override="fast",
+                                route_provider_override="gemini",
+                                route_model_override=JR_GEMINI_MODEL,
+                            )
+                            critique_text = str(getattr(critique_result, "content", None) or "").strip()
+                        except Exception as exc:
+                            provider_errors.append(f"crag_critique:{type(exc).__name__}")
+                    else:
+                        provider_errors.append("crag_critique:skipped_low_budget")
+                else:
+                    provider_errors.append("crag_critique:skipped_low_budget")
                 refine_remaining = deadline - time.monotonic()
                 if refine_remaining >= 4.0:
-                    refine_timeout = min(LLM_PROVIDER_CAP_SEC, refine_remaining - 0.5)
+                    refine_timeout = min(
+                        jr_crag.CRAG_REFINE_CAP_SEC,
+                        LLM_PROVIDER_CAP_SEC,
+                        refine_remaining - 0.5,
+                    )
                     try:
                         refine_result = call_with_timeout(
                             openai_chat_completions_generic,
@@ -5881,11 +5932,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                                     },
                                 )()
                     except Exception as exc:
+                        # Keep original draft - refine must not wipe a successful letter.
                         provider_errors.append(f"crag_refine:{type(exc).__name__}")
+                else:
+                    provider_errors.append("crag_refine:skipped_low_budget")
 
         if not raw_text:
             elapsed = time.monotonic() - started
-            err_tail = "; ".join(provider_errors[-8:]) if provider_errors else last_err or "unknown"
+            err_tail = summarize_provider_errors(provider_errors) or last_err or "unknown"
             _LOG.warning(
                 "generate empty last_err=%s elapsed=%.2f providers=%s profile=%d",
                 last_err,

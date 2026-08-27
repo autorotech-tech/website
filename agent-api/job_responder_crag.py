@@ -8,9 +8,38 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from job_responder_format import strip_embellished_language_claims
 from job_responder_semantic import build_semantic_grid, match_skills, normalize_phrase
 
-CRAG_REFINE_MIN_BUDGET_SEC = 8.0
+# Critique+refine only when wall-clock still has real headroom under CF soft budget.
+CRAG_REFINE_MIN_BUDGET_SEC = 10.0
+CRAG_CRITIQUE_MIN_BUDGET_SEC = 14.0
+CRAG_REFINE_CAP_SEC = 8.0
 CRAG_CRITIQUE_MAX_TOKENS = 120
-CRAG_REFINE_MAX_TOKENS = 550
+CRAG_REFINE_MAX_TOKENS = 450
+
+
+def should_run_crag_refine(
+    *,
+    has_text: bool,
+    mode: str,
+    profile_compressed: bool,
+    remaining_sec: float,
+    faith_failures: Optional[Sequence[str]] = None,
+) -> bool:
+    """Gate LLM critique/refine so it cannot starve the draft under CF soft timeout."""
+    if not has_text or mode != "cover_letter":
+        return False
+    if profile_compressed:
+        return False
+    if not is_crag_lite_enabled():
+        return False
+    if remaining_sec < CRAG_REFINE_MIN_BUDGET_SEC:
+        return False
+    if faith_failures is not None and not faith_failures:
+        return False
+    return True
+
+
+def should_run_crag_critique(remaining_sec: float) -> bool:
+    return remaining_sec >= CRAG_CRITIQUE_MIN_BUDGET_SEC
 
 Label = str  # Correct | Ambiguous | Incorrect
 
