@@ -183,8 +183,11 @@ async function hydrateRelevanceFromActiveTabUrl() {
 async function scoreVacancyList() {
   setError('');
   setSuccess('');
-  setListScoreMeta('Читаю карточки на странице…');
-  setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Список…');
+  clearTimeout(vacancyExtractTimer);
+  vacancyExtractSeq += 1;
+  releaseParseProcess();
+  setListScoreMeta('Парсинг списка…');
+  setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Оценка списка…');
   try {
     await JR_API.ensureWorkspace();
     const windowId = await resolvePanelWindowId();
@@ -201,12 +204,14 @@ async function scoreVacancyList() {
       renderListPick([]);
       return;
     }
-    setListScoreMeta(`Оцениваю ${vacancies.length} вакансий…`);
+    setListScoreMeta(`Оценка списка: ${vacancies.length}…`);
+    setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Оценка списка…');
     const selectedSourceIds = getSelectedSourceIds();
     const batch = await JR_API.scoreRelevanceBatch({ vacancies, selectedSourceIds });
     const scores = Array.isArray(batch.scores) ? batch.scores : [];
     await upsertRelevanceCache(scores, 'list');
     setListScoreMeta(`Вставляю бейджи (${scores.length})…`);
+    setButtonBusy(scoreListBtn, true, BTN_SCORE_LIST_LABEL, 'Вставка бейджей…');
     const inj = await JR_API.injectListBadges({ scores, tabId, windowId });
     const avg =
       scores.length > 0
@@ -400,7 +405,7 @@ async function runPrepareOutbound() {
     setError('Отметьте вакансии в списке после «Оценить список»');
     return;
   }
-  setButtonBusy(prepareOutboundBtn, true, 'Подготовить к отклику', 'Готовлю…');
+  setButtonBusy(prepareOutboundBtn, true, 'Подготовить к отклику', 'Подготовка откликов…');
   try {
     await JR_API.ensureWorkspace();
     const letterText = String(resultText?.value || '').trim();
@@ -469,7 +474,7 @@ async function runInsertLetter() {
     return;
   }
   if (!(await confirmHumanGate('Вставить письмо в форму отклика HH?'))) return;
-  setButtonBusy(insertLetterBtn, true, 'Вставить письмо', 'Вставка…');
+  setButtonBusy(insertLetterBtn, true, 'Вставить письмо', 'Вставка письма…');
   try {
     const windowId = await resolvePanelWindowId();
     const resp = await JR_API.insertLetterIntoTab({ text: letter, windowId, tabId: lastTabId });
@@ -496,7 +501,7 @@ async function runFillFields() {
     return;
   }
   if (!(await confirmHumanGate('Заполнить поля формы отклика HH?'))) return;
-  setButtonBusy(fillFieldsBtn, true, 'Заполнить поля', 'Заполняю…');
+  setButtonBusy(fillFieldsBtn, true, 'Заполнить поля', 'Заполнение полей…');
   try {
     const windowId = await resolvePanelWindowId();
     const resp = await JR_API.fillFormFieldsInTab({ answers, windowId, tabId: lastTabId });
@@ -1131,6 +1136,10 @@ const workBarTextEl = document.getElementById('workBarText');
 
 let processBusyCount = 0;
 let processBusyLabel = '';
+/** Stack of in-flight status labels (newest shown in workBar). */
+let processBusyStack = [];
+/** Silent page-parse holds workBar without a primary button spinner. */
+let parseProcessHeld = false;
 let lastToast = { kind: '', text: '' };
 
 function scrollRoot() {
@@ -1165,6 +1174,47 @@ function renderWorkBar() {
     return;
   }
   workBarTextEl.textContent = 'Готово к работе';
+}
+
+/** Non-button async work: show spinner + status line (Russian, short). */
+function beginProcess(label) {
+  const text = String(label || 'Работаю…').trim() || 'Работаю…';
+  processBusyStack.push(text);
+  processBusyCount = processBusyStack.length;
+  processBusyLabel = text;
+  renderWorkBar();
+}
+
+function endProcess() {
+  if (processBusyStack.length) processBusyStack.pop();
+  processBusyCount = processBusyStack.length;
+  processBusyLabel = processBusyStack.length
+    ? processBusyStack[processBusyStack.length - 1]
+    : '';
+  renderWorkBar();
+}
+
+function setProcessLabel(label) {
+  const text = String(label || '').trim();
+  if (!text || !processBusyStack.length) return;
+  processBusyStack[processBusyStack.length - 1] = text;
+  processBusyLabel = text;
+  renderWorkBar();
+}
+
+function holdParseProcess(label = 'Парсинг страницы…') {
+  if (!parseProcessHeld) {
+    beginProcess(label);
+    parseProcessHeld = true;
+  } else {
+    setProcessLabel(label);
+  }
+}
+
+function releaseParseProcess() {
+  if (!parseProcessHeld) return;
+  parseProcessHeld = false;
+  endProcess();
 }
 
 function setError(msg) {
@@ -1208,14 +1258,12 @@ function setButtonBusy(btn, busy, idleLabel, busyLabel) {
     else if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
     const label = busyLabel || 'Загрузка…';
     btn.innerHTML = `<span class="btnSpinner" aria-hidden="true"></span>${label}`;
-    processBusyLabel = label;
-    if (!wasBusy) processBusyCount += 1;
-    renderWorkBar();
+    if (!wasBusy) beginProcess(label);
+    else setProcessLabel(label);
   } else {
     btn.dataset.busy = '0';
     btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
-    if (wasBusy) processBusyCount = Math.max(0, processBusyCount - 1);
-    renderWorkBar();
+    if (wasBusy) endProcess();
   }
 }
 
@@ -1637,7 +1685,7 @@ async function refreshSources({ highlightIds = [], quiet = false } = {}) {
   if (ids.length) ids.forEach((id) => lastAddedSourceIds.add(id));
   sourcesListEl?.classList.add('isLoading');
   if (!quiet) {
-    setButtonBusy(refreshBtn, true, 'Обновить', '…');
+    setButtonBusy(refreshBtn, true, 'Обновить', 'Обновление…');
   }
   try {
     const data = await JR_API.listSources();
@@ -1796,7 +1844,7 @@ function setVacancyPageStatus(state, title) {
   else if (mode === 'ok') vacancyStatusDot.classList.add('isOk');
   else vacancyStatusDot.classList.add('isFail');
   const fallback =
-    mode === 'reading' ? 'Чтение' : mode === 'ok' ? 'Страница прочитана' : 'Не удалось прочитать страницу';
+    mode === 'reading' ? 'Парсинг страницы…' : mode === 'ok' ? 'Страница прочитана' : 'Не удалось прочитать страницу';
   vacancyStatusDot.title = title || fallback;
   vacancyStatusDot.setAttribute('aria-label', vacancyStatusDot.title);
   vacancyStatusDot.setAttribute('aria-hidden', 'false');
@@ -1878,15 +1926,20 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
   const vacancyBtn = document.getElementById('refreshVacancyBtn');
   const seq = ++vacancyExtractSeq;
   setError('');
-  setVacancyPageStatus('reading', 'Чтение');
-  setSuccess('Чтение');
+  if (doRelevance) {
+    clearTimeout(vacancyExtractTimer);
+    releaseParseProcess();
+  }
+  setVacancyPageStatus('reading', 'Парсинг страницы…');
+  if (vacancyMeta) vacancyMeta.textContent = 'Парсинг страницы…';
   // Early cache hydrate from URL (works even if DOM extract is slow / new window).
   if (!doRelevance) {
+    holdParseProcess('Парсинг страницы…');
     await hydrateRelevanceFromActiveTabUrl();
     if (seq !== vacancyExtractSeq) return;
   }
   if (doRelevance) {
-    setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Чтение…');
+    setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Парсинг страницы…');
   }
   try {
     // Client-side DOM extract only - no /generate or Gemini (zero tokens).
@@ -1927,7 +1980,7 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
     // Relevance only on explicit user click «Оценить предложение».
     // On auto tab/page read: restore list-score cache if any (zero tokens / no /relevance).
     if (doRelevance) {
-      setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Оценка…');
+      setButtonBusy(vacancyBtn, true, BTN_EVALUATE_LABEL, 'Оценка предложения…');
       try {
         const data = await runRelevanceScore();
         if (seq !== vacancyExtractSeq) return;
@@ -1958,13 +2011,16 @@ async function refreshVacancyFromTab({ fromClick = false, runRelevance = false }
   } finally {
     if (doRelevance) {
       setButtonBusy(vacancyBtn, false, BTN_EVALUATE_LABEL);
+    } else if (seq === vacancyExtractSeq) {
+      releaseParseProcess();
     }
   }
 }
 
 function scheduleVacancyExtractFromTab({ debounceMs = 280 } = {}) {
-  setVacancyPageStatus('reading', 'Чтение');
-  setSuccess('Чтение');
+  setVacancyPageStatus('reading', 'Парсинг страницы…');
+  if (vacancyMeta) vacancyMeta.textContent = 'Парсинг страницы…';
+  holdParseProcess('Парсинг страницы…');
   clearTimeout(vacancyExtractTimer);
   vacancyExtractTimer = setTimeout(() => {
     refreshVacancyFromTab({ fromClick: false, runRelevance: false }).catch(() => {});
@@ -2128,9 +2184,9 @@ async function runGenerate(mode) {
   }
   const btn = isQa ? genAnswersBtn : genCoverBtn;
   const idle = isQa ? 'Ответы на вопросы' : 'Отклик';
-  const busyLabel = isQa ? 'Готовлю ответы…' : 'Пишу отклик…';
-  setButtonBusy(btn, true, idle, 'Генерация…');
-  genMeta.textContent = 'Генерация…';
+  const busyLabel = isQa ? 'Генерация ответов…' : 'Генерация отклика…';
+  setButtonBusy(btn, true, idle, busyLabel);
+  genMeta.textContent = busyLabel;
   setResultGenerating(true, busyLabel);
   try {
     // Relevance comes back with /generate (deterministic, no LLM). Do not pre-call /relevance.
@@ -2498,7 +2554,7 @@ function setResultGenerating(busy, label) {
     busyEl.hidden = !busy;
     busyEl.setAttribute('aria-hidden', busy ? 'false' : 'true');
   }
-  if (busyText) busyText.textContent = label || 'Генерация…';
+  if (busyText) busyText.textContent = label || 'Генерация отклика…';
   if (!resultText) return;
   resultText.classList.toggle('isGenerating', Boolean(busy));
   resultText.classList.add('isExpanded');
@@ -2769,7 +2825,7 @@ refreshSourcesBtn.addEventListener('click', () => {
 if (optimizeKbBtn) {
   optimizeKbBtn.addEventListener('click', async () => {
     setError('');
-    setButtonBusy(optimizeKbBtn, true, 'Оптимизировать базу', '…');
+    setButtonBusy(optimizeKbBtn, true, 'Оптимизировать базу', 'Оптимизация базы…');
     if (optimizeStatusEl) optimizeStatusEl.textContent = 'Оптимизация базы…';
     try {
       const res = await JR_API.resumeOptimize({ syncGemini: true });
@@ -2793,7 +2849,7 @@ if (optimizeKbBtn) {
 if (geminiRagSyncBtn) {
   geminiRagSyncBtn.addEventListener('click', async () => {
     setError('');
-    setButtonBusy(geminiRagSyncBtn, true, 'Синхр.', '…');
+    setButtonBusy(geminiRagSyncBtn, true, 'Синхр.', 'Синхронизация…');
     if (geminiRagStatusEl) geminiRagStatusEl.textContent = 'Синхронизация…';
     try {
       const res = await JR_API.geminiRagSync({ poll: true });
@@ -3154,6 +3210,8 @@ if (saveCoverTemplateBtn) {
 }
 
 (async function init() {
+  beginProcess('Активация…');
+  if (authHint) authHint.textContent = 'Активация…';
   try {
     await resolvePanelWindowId();
     await restoreCollapseState();
@@ -3234,6 +3292,8 @@ if (saveCoverTemplateBtn) {
     await refreshSources({ quiet: true });
   } catch (err) {
     setError(String(err.message || err));
+  } finally {
+    endProcess();
   }
   syncCopyButtonState();
   // New window / fresh panel: hydrate score from URL ASAP, then full extract.

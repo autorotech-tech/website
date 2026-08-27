@@ -567,17 +567,22 @@ button.link {
   min-height: 44px;
   padding: 8px 12px;
   box-sizing: border-box;
-  background: #eef2ff;
-  border-top: 1px solid #c7d2fe;
-  color: #3730a3;
+  background: #f1f5f9;
+  border-top: 1px solid #e2e8f0;
+  color: #334155;
   font-size: 12px;
   line-height: 1.35;
-  box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.06);
 }
 
 .workBar .workBarSpinner {
   display: none;
   flex: 0 0 auto;
+}
+
+.workBar.isBusy {
+  background: #f8fafc;
+  color: #0f172a;
 }
 
 .workBar.isBusy .workBarSpinner {
