@@ -510,6 +510,7 @@ TODO в коде (ориентиры):
 
 | Дата | Что |
 |------|-----|
+| 2026-08-27 | Phase 6: offline CE re-rank (`job_responder_cross_encoder.py`, `scripts/job-responder-ce-rerank.py`, env `JOB_RESPONDER_CE_RERANK`) + ESCO stub import (`scripts/job-responder-esco-import.py`) — not on generate hot path |
 | 2026-08-27 | TOOL PIN: JD tools ∩ Resume KB (keySkills + description) inject into CRAG hints; rule #10; faith `missing_tool:*`; Cursor/Antigravity known tools |
 | 2026-08-26 | Phase 1 start: CRAG-lite in generate (grade hints, faith check, critique+refine when budget≥8s) |
 | 2026-08-26 | Phase 0 baseline: 7 golden cases, `job_responder_format.py`, CI gate in `keept-staging-smoke.yml`, transferable rule #9 |

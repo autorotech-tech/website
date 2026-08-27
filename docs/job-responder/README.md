@@ -243,6 +243,46 @@ Chrome MV3 extension: персонализированные отклики с �
 - Extension v0.9.16+: «Подготовить к отклику» после «Оценить список»; очередь `jrOutboundQueue`; «Вставить письмо» / «Заполнить поля» с confirm (human gate)
 - См. [phase2-autofill.md](./phase2-autofill.md)
 
+## Phase 6: offline cross-encoder + ESCO import
+
+Cross-encoder **не** на CF hot path generate. Hybrid BM25+RRF остаётся baseline для `/relevance`.
+
+### CE re-rank (optional)
+
+```bash
+# Optional heavy dep (dev / worker only — not required for deploy)
+pip install sentence-transformers
+
+# CLI: re-rank a saved batch JSON (degrades to identity if deps missing)
+python3 scripts/job-responder-ce-rerank.py \
+  --profile-text "skills: google ads, tourism, n8n" \
+  --input /tmp/jr-scores.json \
+  --output /tmp/jr-scores-ce.json \
+  --force
+
+# API batch hook (server): only when flag on AND sentence-transformers installed
+# JOB_RESPONDER_CE_RERANK=1
+# JOB_RESPONDER_CE_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2   # optional
+# JOB_RESPONDER_CE_BLEND=0.35                                  # optional 0..1
+```
+
+Module: `agent-api/job_responder_cross_encoder.py`. Response field on `/relevance/batch`: `ceRerank`.
+
+### ESCO → skill-synonyms (offline-first)
+
+```bash
+# Dry-run stub merge (no network)
+python3 scripts/job-responder-esco-import.py --dry-run
+
+# Write esco_id into agent-api/data + data/job-responder/skill-synonyms.json
+python3 scripts/job-responder-esco-import.py --apply
+
+# Optional live ESCO API (falls back to stub on failure)
+python3 scripts/job-responder-esco-import.py --fetch --apply
+```
+
+Stub crosswalk: `agent-api/data/job-responder/esco-stub-crosswalk.json`. Hot path only reads local `skill-synonyms.json` (nullable `esco_id`) - no network.
+
 ## Redeploy API
 
 После правок `agent-api/job_responder.py` / `main.py`:

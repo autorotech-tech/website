@@ -53,6 +53,7 @@ from job_responder_optimize import (
     vacancy_domains_from_text,
 )
 from job_responder_hybrid import hybrid_relevance_base
+import job_responder_cross_encoder as jr_ce
 
 # Semantic-grid hit credit: synonym/fuzzy must not count as full exact overlap.
 _SEMANTIC_TIER_CREDIT: Dict[str, float] = {
@@ -5515,11 +5516,30 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             "id": vid or None,
                             "url": item.url,
                             "title": title,
+                            "description": desc[:800],
                             "score": int(scored.get("score") or 0),
                             "matched": list(scored.get("matched") or [])[:8],
                             "missing": list(scored.get("missing") or [])[:8],
                         }
                     )
+
+                # Optional offline CE re-rank (env JOB_RESPONDER_CE_RERANK=1).
+                # Never on generate hot path; degrades if sentence-transformers missing.
+                ce_meta: Dict[str, Any] = {"applied": False, "reason": "skipped"}
+                if jr_ce.ce_rerank_enabled():
+                    profile_q = jr_ce.profile_text_for_ce(merged)
+                    scores, ce_meta = jr_ce.rerank_vacancy_batch(
+                        profile_q,
+                        scores,
+                        force=False,
+                    )
+                    # Drop long description from API payload after CE (keep list lean)
+                    for row in scores:
+                        row.pop("description", None)
+                else:
+                    for row in scores:
+                        row.pop("description", None)
+
                 return {
                     "ok": True,
                     "scores": scores,
@@ -5527,6 +5547,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     "count": len(scores),
                     "sourcesUsed": len(rag_items),
                     "usedUnifiedProfile": True,
+                    "ceRerank": ce_meta,
                     "elapsedSec": round(time.monotonic() - started, 3),
                 }
 

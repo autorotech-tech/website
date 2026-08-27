@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "description": "Offline stub ESCO label→URI crosswalk for Autoro Hunt skill-synonyms. Replace/extend via scripts/job-responder-esco-import.py --fetch when network available. URIs are illustrative / best-effort — validate before production ontology claims.",
+  "label_to_esco": {
+    "seo": "http://data.europa.eu/esco/skill/S5.6.2",
+    "search engine optimization": "http://data.europa.eu/esco/skill/S5.6.2",
+    "поисковая оптимизация": "http://data.europa.eu/esco/skill/S5.6.2",
+    "ppc": "http://data.europa.eu/esco/skill/S5.6.1",
+    "paid search": "http://data.europa.eu/esco/skill/S5.6.1",
+    "контекстная реклама": "http://data.europa.eu/esco/skill/S5.6.1",
+    "google ads": "http://data.europa.eu/esco/skill/S5.6.1",
+    "content marketing": "http://data.europa.eu/esco/skill/S5.5.1",
+    "контент-маркетинг": "http://data.europa.eu/esco/skill/S5.5.1",
+    "copywriting": "http://data.europa.eu/esco/skill/S1.3.1",
+    "копирайтинг": "http://data.europa.eu/esco/skill/S1.3.1",
+    "automation": "http://data.europa.eu/esco/skill/S5.7.1",
+    "автоматизация": "http://data.europa.eu/esco/skill/S5.7.1",
+    "saas": "http://data.europa.eu/esco/skill/S5.2.1",
+    "software as a service": "http://data.europa.eu/esco/skill/S5.2.1",
+    "blockchain": "http://data.europa.eu/esco/skill/S5.2.3",
+    "блокчейн": "http://data.europa.eu/esco/skill/S5.2.3",
+    "performance marketing": "http://data.europa.eu/esco/skill/S5.6.0",
+    "перфоманс": "http://data.europa.eu/esco/skill/S5.6.0",
+    "llm": "http://data.europa.eu/esco/skill/S5.4.1",
+    "large language model": "http://data.europa.eu/esco/skill/S5.4.1",
+    "rag": "http://data.europa.eu/esco/skill/S5.4.1",
+    "video marketing": "http://data.europa.eu/esco/skill/S5.5.2"
+  }
+}
