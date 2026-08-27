@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "skill.performance_marketing",
+      "cluster": "marketing",
+      "labels": [
+        "performance marketing",
+        "перфоманс",
+        "performance-маркетинг",
+        "performance маркетинг",
+        "перформанс маркетинг"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.marketing"],
+      "children": ["skill.google_ads", "skill.meta_ads"]
+    },
+    {
+      "id": "skill.seo",
+      "cluster": "ppc_seo_crm",
+      "labels": [
+        "seo",
+        "search engine optimization",
+        "поисковая оптимизация",
+        "сео",
+        "organic search",
+        "органический поиск"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.ppc",
+      "cluster": "ppc_seo_crm",
+      "labels": [
+        "ppc",
+        "paid search",
+        "контекстная реклама",
+        "paid media",
+        "платный трафик"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.google_ads",
+      "cluster": "ppc_seo_crm",
+      "labels": [
+        "google ads",
+        "google adwords",
+        "гугл эдс",
+        "google ads campaigns"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.ppc"],
+      "children": []
+    },
+    {
+      "id": "skill.meta_ads",
+      "cluster": "ppc_seo_crm",
+      "labels": [
+        "meta ads",
+        "facebook ads",
+        "instagram ads",
+        "fb ads",
+        "реклама meta",
+        "реклама facebook"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.ppc"],
+      "children": []
+    },
+    {
+      "id": "skill.ai_llm",
+      "cluster": "ai_automation",
+      "labels": [
+        "llm",
+        "large language model",
+        "языковая модель",
+        "generative ai",
+        "генертивный ии",
+        "генеративный ии",
+        "rag",
+        "retrieval augmented generation",
+        "prompt engineering",
+        "промпт-инжиниринг",
+        "ai agent",
+        "ai agents",
+        "агенты ии"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.automation",
+      "cluster": "ai_automation",
+      "labels": [
+        "automation",
+        "автоматизация",
+        "n8n",
+        "zapier",
+        "make.com",
+        "workflow automation",
+        "rpa",
+        "процессная автоматизация"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.saas",
+      "cluster": "saas",
+      "labels": [
+        "saas",
+        "b2b saas",
+        "software as a service",
+        "подписочный продукт",
+        "product-led growth",
+        "plg"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.crypto_web3",
+      "cluster": "fintech",
+      "labels": [
+        "crypto",
+        "web3",
+        "blockchain",
+        "блокчейн",
+        "defi",
+        "крипто",
+        "cryptocurrency"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": [],
+      "children": []
+    },
+    {
+      "id": "skill.content",
+      "cluster": "marketing",
+      "labels": [
+        "content marketing",
+        "контент-маркетинг",
+        "content strategy",
+        "контент стратегия",
+        "copywriting",
+        "копирайтинг",
+        "ugc"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.marketing"],
+      "children": []
+    },
+    {
+      "id": "skill.video",
+      "cluster": "marketing",
+      "labels": [
+        "video marketing",
+        "видеомаркетинг",
+        "youtube",
+        "short-form video",
+        "reels",
+        "tiktok ads",
+        "видеопродакшн"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.content"],
+      "children": []
+    },
+    {
+      "id": "skill.backend_inference",
+      "cluster": "ai_automation",
+      "labels": [
+        "llm inference",
+        "inference backend",
+        "model serving",
+        "vllm",
+        "trt-llm",
+        "tensorrt-llm",
+        "gpu serving",
+        "инференс"
+      ],
+      "esco_id": null,
+      "onet_element": null,
+      "parents": ["skill.ai_llm"],
+      "children": []
+    }
+  ]
+}

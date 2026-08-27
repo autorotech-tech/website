@@ -8,9 +8,14 @@ exact -> cluster synonym -> fuzzy/token containment.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import re
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+_LOG = logging.getLogger("job-responder-semantic")
 
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9+#.%]{2,}")
 _WS_RE = re.compile(r"\s+")
@@ -363,7 +368,82 @@ def _build_term_index() -> Dict[str, str]:
     return idx
 
 
-_TERM_TO_CLUSTER = _build_term_index()
+def _synonym_json_paths() -> List[Path]:
+    here = Path(__file__).resolve().parent
+    return [
+        here / "data" / "job-responder" / "skill-synonyms.json",
+        here.parent / "data" / "job-responder" / "skill-synonyms.json",
+    ]
+
+
+def load_skill_synonyms(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load lightweight RU/EN synonym graph (optional esco_id). Empty dict if missing."""
+    candidates: List[Path] = []
+    if path is not None:
+        candidates.append(Path(path))
+    candidates.extend(_synonym_json_paths())
+    for p in candidates:
+        try:
+            if not p.is_file():
+                continue
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("nodes"), list):
+                return data
+        except Exception as exc:
+            _LOG.warning("skill-synonyms load failed path=%s: %s", p, exc)
+    return {"version": 0, "nodes": []}
+
+
+def merge_synonym_graph_into_index(
+    base_index: Dict[str, str],
+    synonym_doc: Optional[Dict[str, Any]] = None,
+    *,
+    code_wins: bool = True,
+) -> Dict[str, str]:
+    """Elevate semantic grid: add JSON labels -> cluster. Existing code terms win on conflict."""
+    idx = dict(base_index)
+    doc = synonym_doc if synonym_doc is not None else load_skill_synonyms()
+    nodes = doc.get("nodes") if isinstance(doc, dict) else None
+    if not isinstance(nodes, list):
+        return idx
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        cid = str(node.get("cluster") or "").strip()
+        if not cid:
+            # Derive cluster id from skill.* node id when cluster omitted.
+            nid = str(node.get("id") or "")
+            if nid.startswith("skill."):
+                cid = nid.split(".", 1)[1]
+            else:
+                continue
+        if cid not in _CLUSTER_TERMS and cid not in {c for c in idx.values()}:
+            # Allow new soft clusters from JSON (still merge labels under that id).
+            pass
+        for label in node.get("labels") or []:
+            n = normalize_phrase(str(label))
+            if not n:
+                continue
+            if code_wins and n in idx:
+                continue
+            idx[n] = cid
+    return idx
+
+
+_TERM_TO_CLUSTER = merge_synonym_graph_into_index(_build_term_index())
+_SYNONYM_DOC = load_skill_synonyms()
+
+
+def reload_synonym_index(path: Optional[Path] = None) -> int:
+    """Test helper: rebuild term index from code clusters + optional JSON path."""
+    global _TERM_TO_CLUSTER, _SYNONYM_DOC
+    _SYNONYM_DOC = load_skill_synonyms(path)
+    _TERM_TO_CLUSTER = merge_synonym_graph_into_index(_build_term_index(), _SYNONYM_DOC)
+    return len(_TERM_TO_CLUSTER)
+
+
+def synonym_label_count() -> int:
+    return sum(len(n.get("labels") or []) for n in (_SYNONYM_DOC.get("nodes") or []) if isinstance(n, dict))
 
 
 def cluster_for_phrase(phrase: str) -> Optional[str]:
@@ -498,6 +578,20 @@ def build_semantic_grid(profile: Dict[str, Any]) -> Dict[str, Any]:
             if an and an not in slot["aliases"]:
                 slot["aliases"].append(an)
                 aliases.add(an)
+        for node in (_SYNONYM_DOC.get("nodes") or []):
+            if not isinstance(node, dict):
+                continue
+            node_cid = str(node.get("cluster") or "").strip()
+            if not node_cid:
+                nid = str(node.get("id") or "")
+                node_cid = nid.split(".", 1)[1] if nid.startswith("skill.") else ""
+            if node_cid != cid:
+                continue
+            for label in node.get("labels") or []:
+                an = normalize_phrase(str(label))
+                if an and an not in slot["aliases"]:
+                    slot["aliases"].append(an)
+                    aliases.add(an)
 
     # Expand from explicit profile terms
     for term in seed_terms:
