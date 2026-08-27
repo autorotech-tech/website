@@ -21,6 +21,28 @@ from job_responder_schemas import (
 )
 
 
+def test_rank_skips_json_profile_noise():
+    units = [
+        {
+            "unit_type": "job",
+            "title": "noise",
+            "evidence": '{"skills":[],"roles":["developer"],"domains":["content"]}',
+        },
+        {
+            "unit_type": "project",
+            "title": "pquoc",
+            "evidence": "project: tourism Phu Quoc Meta Ads ROAS growth",
+        },
+    ]
+    ranked = rank_evidence_units_for_jd(
+        units,
+        "tourism Meta Ads ROAS",
+        top_k=3,
+    )
+    assert len(ranked) == 1
+    assert "tourism" in (ranked[0].get("evidence") or "").lower()
+
+
 def test_rank_evidence_prefers_jd_overlap():
     units = [
         {

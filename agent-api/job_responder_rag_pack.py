@@ -43,6 +43,18 @@ def _unit_doc(unit: Dict[str, Any]) -> str:
     return " ".join(b for b in bits if b).strip()[:1200]
 
 
+def _is_noisy_unit(unit: Dict[str, Any]) -> bool:
+    """Drop accidental JSON profile dumps / empty shells from evidence_units."""
+    ev = str(unit.get("evidence") or unit.get("content") or unit.get("title") or "").strip()
+    if len(ev) < 12:
+        return True
+    if ev.startswith("{") and ("\"skills\"" in ev or "'skills'" in ev):
+        return True
+    if "jr-smoke" in ev.lower() or "example.com/jr-smoke" in ev.lower():
+        return True
+    return False
+
+
 def rank_evidence_units_for_jd(
     evidence_units: Sequence[Dict[str, Any]],
     jd_query: str,
@@ -51,7 +63,7 @@ def rank_evidence_units_for_jd(
     rrf_k: int = 60,
 ) -> List[Dict[str, Any]]:
     """Stage-5 light retrieve: BM25 + dense-token RRF over career units."""
-    units = [u for u in evidence_units if isinstance(u, dict)]
+    units = [u for u in evidence_units if isinstance(u, dict) and not _is_noisy_unit(u)]
     if not units or not (jd_query or "").strip():
         return []
 
