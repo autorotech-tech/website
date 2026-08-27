@@ -5,10 +5,13 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { FileText, Plus, Edit, Trash2, Eye, ExternalLink, Settings, Sparkles } from 'lucide-react'
+import { FileText, Plus, Edit, Trash2, Eye, ExternalLink, Settings, Sparkles, Inbox, Rss, SlidersHorizontal } from 'lucide-react'
 import { BlogPostEditor } from './BlogPostEditor'
 import { BlogSettings } from './BlogSettings'
 import { BlogPostGenerator } from './BlogPostGenerator'
+import { BlogNewsInbox } from './BlogNewsInbox'
+import { BlogNewsSources } from './BlogNewsSources'
+import { BlogNewsPipelineSettings } from './BlogNewsPipelineSettings'
 
 // Blog API URL - блог работает на порту 3002, проксируется через Nginx
 // Используем абсолютный URL к API блога
@@ -41,6 +44,7 @@ export function BlogAdmin() {
   const [showEditor, setShowEditor] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showGenerator, setShowGenerator] = useState(false)
+  const [tab, setTab] = useState<'posts' | 'inbox' | 'sources' | 'pipeline'>('posts')
 
   const fetchPosts = async () => {
     try {
@@ -170,10 +174,10 @@ export function BlogAdmin() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <FileText className="w-6 h-6 text-red-400" />
-            <span>Blog Posts</span>
+            <span>Blog</span>
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Manage articles, AI generation and SEO for Autoro Blog.
+            Manual posts, news inbox, sources and pipeline settings for Autoro.tech.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -204,6 +208,53 @@ export function BlogAdmin() {
         </div>
       </div>
 
+      <div role="tablist" aria-label="Blog admin sections" className="flex flex-wrap gap-2 border-b pb-2">
+        {([
+          { id: 'posts', label: 'Posts', icon: FileText },
+          { id: 'inbox', label: 'Inbox', icon: Inbox },
+          { id: 'sources', label: 'Sources', icon: Rss },
+          { id: 'pipeline', label: 'Pipeline settings', icon: SlidersHorizontal },
+        ] as const).map((row) => {
+          const Icon = row.icon
+          const selected = tab === row.id
+          return (
+            <button
+              key={row.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              id={`blog-tab-${row.id}`}
+              aria-controls={`blog-panel-${row.id}`}
+              onClick={() => setTab(row.id)}
+              className={`px-3 py-2 text-sm rounded-md inline-flex items-center gap-2 ${
+                selected ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <Icon className="w-4 h-4" aria-hidden="true" />
+              {row.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {tab === 'inbox' ? (
+        <div role="tabpanel" id="blog-panel-inbox" aria-labelledby="blog-tab-inbox">
+          <BlogNewsInbox />
+        </div>
+      ) : null}
+      {tab === 'sources' ? (
+        <div role="tabpanel" id="blog-panel-sources" aria-labelledby="blog-tab-sources">
+          <BlogNewsSources />
+        </div>
+      ) : null}
+      {tab === 'pipeline' ? (
+        <div role="tabpanel" id="blog-panel-pipeline" aria-labelledby="blog-tab-pipeline">
+          <BlogNewsPipelineSettings />
+        </div>
+      ) : null}
+
+      {tab === 'posts' ? (
+      <div role="tabpanel" id="blog-panel-posts" aria-labelledby="blog-tab-posts" className="space-y-6">
       {/* Filters */}
       <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
         <div className="flex-1">
@@ -323,6 +374,8 @@ export function BlogAdmin() {
           })}
         </div>
       )}
+      </div>
+      ) : null}
 
       {/* Post Editor Modal */}
       {showEditor && (

@@ -151,3 +151,11 @@ tools/browser-ops/.env
 tools/browser-ops/profiles/*/
 tools/browser-ops/out/results-*.csv
 
+# Blog news pipeline runtime drafts / ingest state
+content/blog-news/*.json
+!content/blog-news/.gitkeep
+data/blog-news-ingest-state.json
+data/blog-news-sources.json
+data/blog-settings.json
+
+

@@ -38,7 +38,11 @@
     "keept:env:local": "bash scripts/setup-keept-local-env.sh",
     "keept:env:github-secrets": "bash scripts/setup-keept-local-env.sh --github-secrets",
     "safedep:mcp:configure": "node scripts/setup-safedep-mcp.mjs",
-    "portfolio:build": "portfolio/.venv/bin/python portfolio/add_captions.py && node portfolio/build-pdf.mjs"
+    "portfolio:build": "portfolio/.venv/bin/python portfolio/add_captions.py && node portfolio/build-pdf.mjs",
+    "blog-news:ingest": "node scripts/blog-news/ingest.mjs",
+    "blog-news:rewrite": "node scripts/blog-news/rewrite.mjs",
+    "blog-news:pipeline": "node scripts/blog-news/pipeline.mjs",
+    "blog-news:test": "node --test scripts/blog-news/lib/pipeline.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.3",

@@ -50,12 +50,15 @@ Auth для admin endpoints: header `X-API-Key` = `service_settings.agent_api_ke
 - **Возможности:** client→bot→domains; embed widget; n8n webhooks; KB roles
 - **Backend:** `chat-gateway/`, `chat-indexer/`
 
-### Blog Generation — Beta
+### Blog Generation — Live (pipeline inbox)
 
-- **Admin:** `/admin/blog`
-- **Теги:** `content`, `SEO`, `LLM`
-- **Возможности:** AI post generation; SEO meta; featured images; blog API `/api/blog`
-- **Note:** UI в разработке (`BlogAdmin.tsx`)
+- **Admin:** `/admin/blog` (вкладки Posts | Inbox | Sources | Pipeline settings)
+- **Теги:** `content`, `SEO`, `LLM`, `news-pipeline`
+- **Возможности:** RSS/listing ingest; Swoop scrape + chat rewrite на 7 langs; Inbox Approve -> `blog_posts`; публичный индекс `/{locale}/blog`
+- **Backend:** `scripts/blog-news/`, `blog-autoro/app/api/admin/pipeline/*`, JSON `content/blog-news/`
+- **Ключи:** `SWOOP_API_KEY` (не Gemini в `blog_settings`)
+- **Docs:** [`autoro-blog-news-pipeline.md`](autoro-blog-news-pipeline.md)
+- **Note:** UI `BlogAdmin.tsx`; cron только ingest, без auto-publish
 
 ### Social Crossposting — Planned
 
