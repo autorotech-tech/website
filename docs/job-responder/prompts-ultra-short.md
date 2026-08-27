@@ -24,6 +24,7 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 8. Отрасль/домен (1 пункт с фактом, если совпало).
 9. Transferable (макс. 1 именованный факт или skip).
 10. TOOL PIN: JD∩KB tools must be named.
+11. Специалист широкого профиля: честная адаптация смежного KB-опыта под JD (без выдуманных PO/roadmap/метрик).
 
 [OUT cover_letter]
 **Должность:** {title}
@@ -40,6 +41,8 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 ```
 
 Keep in sync: `agent-api/job_responder.py` `ULTRA_SHORT_SYSTEM_PROMPT` ↔ `extensions/job-responder/sidepanel.js` `DEFAULT_PROMPT_EXTRA`.
+
+**Промпт оценки эффективности (dev):** side panel → «Промпт оценки эффективности (dev)» (`jrEffectivenessPrompt`). Default = `DEFAULT_EFFECTIVENESS_EVAL_PROMPT`. Уходит в `/relevance` и `/generate` как `effectivenessPrompt`; ответ: `effectivenessNotes` (эвристика; LLM только при `JOB_RESPONDER_EFFECTIVENESS_LLM=1` + `jrUseLlmRelevanceEval`).
 
 Generate temperature: `JR_GENERATE_TEMPERATURE = 0.15`.
 

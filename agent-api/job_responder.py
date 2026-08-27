@@ -97,6 +97,127 @@ def _calibrate_relevance_score(
     if score > 88 and exact_hits < 3 and overlap < 0.55:
         score = min(score, 85)
     return max(0, min(100, int(score)))
+
+
+def _domain_present_in_blob(domain: str, blob: str) -> bool:
+    """True if domain wording appears in resume blob (avoids false 'missing B2B SaaS')."""
+    d = (domain or "").lower().strip()
+    b = (blob or "").lower()
+    if not d or not b:
+        return False
+    if d in b:
+        return True
+    toks = [t for t in re.findall(r"[a-zа-яё0-9]+", d.replace("ё", "е")) if len(t) > 2]
+    if len(toks) >= 2 and all(t in b for t in toks):
+        return True
+    if "saas" in d and "saas" in b:
+        return True
+    if "b2b" in d and ("b2b" in b or "saas" in b):
+        return True
+    return False
+
+
+# Default RU prompt for vacancy↔resume effectiveness notes (heuristic fill; optional LLM later).
+DEFAULT_EFFECTIVENESS_EVAL_PROMPT = """[ROLE] Оценщик эффективности соответствия вакансии и профиля кандидата.
+
+[INPUT] vacancy | compact_profile | score_breakdown (matched / missing / rationale / score)
+
+[TASK]
+1. Кратко перечисли совпадения (matched) - только то, что есть в score_breakdown / profile.
+2. Кратко перечисли пробелы (missing) - без усиления формулировок JD.
+3. Адаптивность (специалист широкого профиля): если точная роль/title не совпала, но есть смежные skills/domains/tools - отметь "смежный профиль / адаптация опыта" и укажи 1-2 именованных факта из profile, которыми можно честно закрыть JD.
+4. Запрет: не выдумывай роли (PO/roadmap), метрики, ownership, CEFR/senior, tools которых нет в profile.
+5. Вывод: 3-6 коротких строк RU (matched / missing / adaptability). Без воды и AI-клише.
+
+[OUT]
+matched: ...
+missing: ...
+adaptability: ...
+summary: ..."""
+
+JOB_RESPONDER_EFFECTIVENESS_LLM = str(
+    os.environ.get("JOB_RESPONDER_EFFECTIVENESS_LLM", "0")
+).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_effectiveness_notes(
+    scored: Dict[str, Any],
+    *,
+    effectiveness_prompt: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Structured effectiveness notes from score matched/missing + generalist flags.
+
+    LLM path is opt-in via JOB_RESPONDER_EFFECTIVENESS_LLM=1 (default off for CF latency).
+    Prompt text is accepted/stored for UI + future explain endpoint even when LLM is off.
+    """
+    matched = [str(x).strip() for x in (scored.get("matched") or []) if str(x).strip()]
+    missing = [str(x).strip() for x in (scored.get("missing") or []) if str(x).strip()]
+    rationale = [str(x).strip() for x in (scored.get("rationale") or []) if str(x).strip()]
+    allow_transferable = bool(scored.get("allow_transferable") or scored.get("generalistProfile"))
+    generalist = bool(scored.get("generalistProfile") or allow_transferable)
+    adaptability_bits: List[str] = []
+    if generalist:
+        adaptability_bits.append("смежный профиль / адаптация опыта")
+    for line in rationale:
+        if "смежный" in line.lower() or "адаптац" in line.lower() or "transferable" in line.lower():
+            if line not in adaptability_bits:
+                adaptability_bits.append(line)
+    if not adaptability_bits and matched and missing:
+        adaptability_bits.append(
+            "Часть требований закрыта смежными навыками из KB; точных совпадений по роли может не быть"
+        )
+    elif not adaptability_bits:
+        adaptability_bits.append("Прямое пересечение профиля и JD (без отдельной адаптации роли)")
+
+    summary_parts: List[str] = []
+    try:
+        sc = int(scored.get("score") or 0)
+        summary_parts.append(f"score {sc}/100")
+    except (TypeError, ValueError):
+        pass
+    if generalist:
+        summary_parts.append("generalist/transferable")
+    if matched:
+        summary_parts.append(f"совпало: {len(matched)}")
+    if missing:
+        summary_parts.append(f"пробелы: {len(missing)}")
+
+    prompt_used = (effectiveness_prompt or "").strip() or DEFAULT_EFFECTIVENESS_EVAL_PROMPT
+    notes: Dict[str, Any] = {
+        "matched": matched[:8],
+        "missing": missing[:8],
+        "adaptability": adaptability_bits[:4],
+        "summary": "; ".join(summary_parts) if summary_parts else "н/д",
+        "source": "heuristic",
+        "promptChars": len(prompt_used),
+        # Prompt accepted for future /relevance/explain; not executed unless LLM flag on.
+        "llmEnabled": False,
+    }
+    if JOB_RESPONDER_EFFECTIVENESS_LLM and bool(scored.get("useLlmEffectiveness")):
+        # Hook only: keep CF-safe default. Full LLM judge is a follow-up endpoint.
+        notes["llmEnabled"] = True
+        notes["source"] = "heuristic+llm_pending"
+        notes["llmNote"] = (
+            "JOB_RESPONDER_EFFECTIVENESS_LLM=1: LLM judge not wired on hot path; "
+            "use heuristic notes + custom prompt for /relevance/explain later"
+        )
+    return notes
+
+
+def attach_effectiveness_notes(
+    scored: Dict[str, Any],
+    *,
+    effectiveness_prompt: Optional[str] = None,
+    use_llm: bool = False,
+) -> Dict[str, Any]:
+    out = dict(scored or {})
+    if use_llm:
+        out["useLlmEffectiveness"] = True
+    out["effectivenessNotes"] = build_effectiveness_notes(
+        out, effectiveness_prompt=effectiveness_prompt
+    )
+    out["effectivenessPromptUsed"] = bool((effectiveness_prompt or "").strip())
+    return out
 from job_responder_budget import (
     COMPACT_PROFILE_CHARS,
     COMPACT_PROFILE_CHARS_RETRY,
@@ -525,6 +646,9 @@ class JobResponderGeneratePayload(BaseModel):
     profileOverrides: Optional[Dict[str, Any]] = None
     # Prefer Gemini File Search RAG when JOB_RESPONDER_GEMINI_RAG=1 and store ready
     useGeminiRag: Optional[bool] = None
+    # Optional override for effectiveness/relevance explain notes (dev UI)
+    effectivenessPrompt: Optional[str] = Field(default=None, max_length=12000)
+    useLlmEffectiveness: Optional[bool] = None
 
 
 class JobResponderGeminiRagSyncPayload(BaseModel):
@@ -623,6 +747,8 @@ class JobResponderRelevancePayload(BaseModel):
     workspaceId: str = Field(..., min_length=1, max_length=64)
     vacancy: JobResponderRelevanceVacancyPayload
     selectedSourceIds: List[int] = Field(default_factory=list)
+    effectivenessPrompt: Optional[str] = Field(default=None, max_length=12000)
+    useLlmEffectiveness: Optional[bool] = None
 
 
 class JobResponderBatchVacancyItem(BaseModel):
@@ -2628,6 +2754,9 @@ def score_resume_vs_vacancy(
         for tok in _TOKEN_RE.findall(title_l)
     ) or any(any(tok in rt for tok in title_l.split() if len(tok) > 3) for rt in resume_titles)
     role_pts = 0
+    allow_transferable = False
+    generalist_profile = False
+    _pending_role_miss: List[str] = []
     if role_hits:
         role_credit = sum(_semantic_tier_credit(m) for m in role_hit_maps)
         role_pts += min(8, int(3 + 5 * min(1.0, role_credit)))
@@ -2637,7 +2766,8 @@ def score_resume_vs_vacancy(
         matched.append("Заголовок вакансии отражён в compact profile")
     elif vac_roles and not role_hits:
         miss_roles = role_miss_raw or sorted(vac_roles)
-        missing.append(f"Роли: {', '.join(miss_roles[:4])}")
+        # Defer hard "Роли missing" until transferable check (skills/tools may still map)
+        _pending_role_miss = [str(x) for x in miss_roles[:4]]
     score += min(14, role_pts)
     grid_match_pts += min(14, role_pts)
     if role_pts:
@@ -2664,7 +2794,101 @@ def score_resume_vs_vacancy(
         matched.append(f"Домены: {', '.join(domain_hits[:4])}")
         rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
     elif vac_domains:
-        missing.append(f"Домены: {', '.join(domain_miss[:4] or sorted(vac_domains)[:4])}")
+        soft_domain_hits = [
+            d
+            for d in (domain_miss or sorted(vac_domains))
+            if _domain_present_in_blob(str(d), resume_text_blob)
+        ]
+        still_miss = [
+            d
+            for d in (domain_miss or sorted(vac_domains))
+            if str(d) not in {str(x) for x in soft_domain_hits}
+        ]
+        if soft_domain_hits:
+            # Present in KB blob but not exact grid hit — transferable, not hard zero
+            domain_pts = min(3, max(1, len(soft_domain_hits)))
+            score += domain_pts
+            allow_transferable = True
+            generalist_profile = True
+            matched.append(
+                f"Домены (смежный / в тексте KB): {', '.join(str(x) for x in soft_domain_hits[:4])}"
+            )
+            rationale.append(
+                "смежный профиль / адаптация опыта (домен в тексте KB, не exact title)"
+            )
+        if still_miss:
+            missing.append(f"Домены: {', '.join(str(x) for x in still_miss[:4])}")
+
+    # --- Generalist / transferable: exact role missing but adjacent skills/domains hit ---
+    transferable_signal = (
+        (skill_credit + tool_credit) >= 1.2
+        or domain_pts >= 1
+        or (len(skill_hit_maps) + len(tool_hit_maps)) >= 2
+    )
+    # Role-like JD skills often land in keySkills (not vac_roles) — still treat as title gap
+    _ROLEISH_SKILLS = {
+        "product ownership",
+        "product owner",
+        "roadmap",
+        "roadmap lead",
+        "po",
+        "project ownership",
+        "ownership продуктов",
+        "продакт",
+        "product manager",
+        "project manager",
+    }
+    roleish_miss = [
+        s
+        for s in (skill_miss or [])
+        if str(s).lower().strip() in _ROLEISH_SKILLS
+        or any(k in str(s).lower() for k in ("roadmap", "product owner", "ownership"))
+    ]
+    if _pending_role_miss:
+        if transferable_signal:
+            allow_transferable = True
+            generalist_profile = True
+            xfer_pts = 4
+            role_pts += xfer_pts
+            score += xfer_pts
+            grid_match_pts += xfer_pts
+            matched.append("Смежный профиль / адаптация опыта (роль не exact)")
+            rationale.append("смежный профиль / адаптация опыта")
+            missing.append(
+                f"Роль (точное название): {', '.join(_pending_role_miss)} - смежный профиль"
+            )
+        else:
+            missing.append(f"Роли: {', '.join(_pending_role_miss)}")
+    elif roleish_miss and transferable_signal and not title_in_resume:
+        allow_transferable = True
+        generalist_profile = True
+        xfer_pts = 4
+        score += xfer_pts
+        grid_match_pts += xfer_pts
+        matched.append("Смежный профиль / адаптация опыта (смежные skills/domains)")
+        rationale.append("смежный профиль / адаптация опыта")
+        # Soften roleish skill misses in UI labels
+        skill_miss = [s for s in skill_miss if s not in roleish_miss]
+        missing[:] = [m for m in missing if not str(m).startswith("Навыки:")]
+        if skill_miss:
+            missing.append(f"Навыки: {', '.join(skill_miss[:8])}")
+        missing.append(
+            f"Роль/скилл (точное): {', '.join(roleish_miss[:4])} - смежный профиль"
+        )
+    elif not role_hits and not title_in_resume and transferable_signal and vac_roles:
+        allow_transferable = True
+        generalist_profile = True
+    elif (
+        not title_in_resume
+        and transferable_signal
+        and bool(skill_miss)
+        and (skill_credit + tool_credit) >= 2.0
+        and domain_pts >= 1
+    ):
+        # Strong adjacent overlap with remaining skill gaps — mid-band generalist
+        allow_transferable = True
+        generalist_profile = True
+        rationale.append("смежный профиль / адаптация опыта")
 
     format_pts = 0
     # --- Work format (0–10) — kept for explainability; aux contribution capped later ---
@@ -2761,6 +2985,14 @@ def score_resume_vs_vacancy(
         domain_pts=float(domain_pts),
         grid_match_pts=float(grid_match_pts),
     )
+    # Mid-band floor for generalist/transferable (not hard zero when adjacent overlap exists)
+    if generalist_profile or allow_transferable:
+        if overlap >= 0.25 and score < 42:
+            score = max(score, 48)
+        elif overlap >= 0.15 and score < 38:
+            score = max(score, 42)
+        if "смежный профиль / адаптация опыта" not in " ".join(rationale).lower():
+            rationale.insert(0, "смежный профиль / адаптация опыта")
     rationale.insert(
         0,
         f"Hybrid RRF +{int(hybrid_base)} q={hybrid_meta.get('qualityEff', hybrid_meta.get('quality', 0))} "
@@ -2783,7 +3015,7 @@ def score_resume_vs_vacancy(
         if m.get("tier") and m.get("tier") != "exact"
     ]
 
-    return {
+    out: Dict[str, Any] = {
         "score": score,
         "rationale": rationale[:10],
         "matched": matched[:14],
@@ -2795,6 +3027,8 @@ def score_resume_vs_vacancy(
         "missingTools": tool_miss[:12],
         "semanticMatches": semantic_matches[:16],
         "matchedSemantic": semantic_matches[:16],
+        "allow_transferable": bool(allow_transferable or generalist_profile),
+        "generalistProfile": bool(generalist_profile or allow_transferable),
         "semanticGrid": {
             "fingerprint": grid.get("fingerprint"),
             "clusterCount": grid.get("clusterCount"),
@@ -2809,6 +3043,7 @@ def score_resume_vs_vacancy(
             "overlap": round(overlap, 3),
             "exactHits": exact_hits,
             "hybridMeta": hybrid_meta,
+            "transferable": bool(allow_transferable or generalist_profile),
         },
         "compactProfile": {
             "sourceCount": int(profile.get("source_count") or 0),
@@ -2817,6 +3052,7 @@ def score_resume_vs_vacancy(
             "roles": list(profile.get("roles") or [])[:8],
         },
     }
+    return attach_effectiveness_notes(out)
 
 
 def parse_drive_folder_id(folder_url_or_id: str) -> str:
@@ -2882,6 +3118,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
 10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
+11. Специалист широкого профиля: кандидат адаптирует смежный опыт из KB под JD (transferable skills, не только exact title). Маппинг только с именованными фактами из profile. Не выдумывай роли PO/roadmap/ownership/метрики, которых нет в KB. Нет факта -> skip.
 
 [OUT cover_letter]
 **Должность:** {title}
@@ -4508,7 +4745,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         return {
             "ok": True,
             "prompt": ULTRA_SHORT_SYSTEM_PROMPT,
-            "promptVersion": "ultra-short-tool-pin-v1",
+            "promptVersion": "ultra-short-generalist-v1",
+            "effectivenessPrompt": DEFAULT_EFFECTIVENESS_EVAL_PROMPT,
             "linksBlock": DEFAULT_LINKS_BLOCK,
             "canonicalLinks": list(DEFAULT_CANONICAL_LINKS),
         }
@@ -5464,6 +5702,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 rag_items, _truncated = cap_rag_items(list(rows), max_n=RELEVANCE_SOURCES_MAX)
                 merged = merge_profiles_from_rows(rag_items)
                 scored = score_resume_vs_vacancy(vacancy, rag_items, merged_profile=merged)
+                scored = attach_effectiveness_notes(
+                    scored,
+                    effectiveness_prompt=payload.effectivenessPrompt,
+                    use_llm=bool(payload.useLlmEffectiveness),
+                )
                 scored["workspaceId"] = str(workspace_id)
                 scored["ok"] = True
                 scored["sourcesUsed"] = [
@@ -5808,6 +6051,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         rag_items, truncated = cap_rag_items(list(rag_rows), max_n=SELECTED_SOURCES_MAX)
         merged = merge_profiles_from_rows(rag_items)
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
+        relevance = attach_effectiveness_notes(
+            relevance,
+            effectiveness_prompt=payload.effectivenessPrompt,
+            use_llm=bool(payload.useLlmEffectiveness),
+        )
         mode = "question_answers" if payload.mode in ("qa", "question_answers") else "cover_letter"
         merged_questions = list(payload.vacancy.questions or [])
         if payload.questions:

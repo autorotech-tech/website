@@ -473,14 +473,26 @@ const JR_API = (() => {
     });
   }
 
-  async function scoreRelevance({ vacancy, selectedSourceIds = [] }) {
+  async function scoreRelevance({
+    vacancy,
+    selectedSourceIds = [],
+    effectivenessPrompt,
+    useLlmEffectiveness,
+  }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
+    const eff = String(effectivenessPrompt || '').trim();
     return fetchJson(`${apiBase}/api/v1/job-responder/relevance`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ workspaceId, vacancy, selectedSourceIds }),
+      body: JSON.stringify({
+        workspaceId,
+        vacancy,
+        selectedSourceIds,
+        ...(eff ? { effectivenessPrompt: eff } : {}),
+        ...(useLlmEffectiveness === true ? { useLlmEffectiveness: true } : {}),
+      }),
       timeoutMs: 30000,
       errorKind: 'relevance',
       retries: 1,
@@ -588,12 +600,15 @@ const JR_API = (() => {
     customInstructions,
     profileOverrides,
     useGeminiRag,
+    effectivenessPrompt,
+    useLlmEffectiveness,
   }) {
     const apiBase = await getApiBase();
     const headers = await getAuthHeaders();
     const workspaceId = await getWorkspaceId();
     const template = String(coverTemplate || baseLetter || '').trim();
     const extra = String(promptExtra || customInstructions || '').trim();
+    const eff = String(effectivenessPrompt || '').trim();
     const overrides =
       profileOverrides && typeof profileOverrides === 'object' && !Array.isArray(profileOverrides)
         ? profileOverrides
@@ -615,6 +630,8 @@ const JR_API = (() => {
         ...(template ? { coverTemplate: template, baseLetter: template } : {}),
         ...(extra ? { promptExtra: extra, customInstructions: extra } : {}),
         ...(overrides && Object.keys(overrides).length ? { profileOverrides: overrides } : {}),
+        ...(eff ? { effectivenessPrompt: eff } : {}),
+        ...(useLlmEffectiveness === true ? { useLlmEffectiveness: true } : {}),
         ...(useGeminiRag === true ? { useGeminiRag: true } : {}),
         ...(useGeminiRag === false ? { useGeminiRag: false } : {}),
       }),

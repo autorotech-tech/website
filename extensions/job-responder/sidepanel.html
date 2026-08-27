@@ -273,6 +273,26 @@
       <p class="hint tight" id="promptExtraMeta">Сохраните после правок - иначе останется предыдущая версия.</p>
     </details>
 
+    <details class="card collapsible" id="effectivenessPromptDetails" data-jr-collapse="effectivenessPrompt">
+      <summary>Промпт оценки эффективности (dev)</summary>
+      <p class="hint tight">Для разработки: промпт объяснения vacancy↔resume. Сейчас notes строятся эвристикой; LLM judge - opt-in на API.</p>
+      <textarea
+        id="effectivenessPrompt"
+        class="growOnFocus"
+        rows="5"
+        placeholder="Промпт оценки эффективности…"
+      ></textarea>
+      <label class="row tight" style="gap:0.4rem;align-items:center;margin-top:0.4rem">
+        <input type="checkbox" id="useLlmRelevanceEval" />
+        <span class="hint tight" style="margin:0">jrUseLlmRelevanceEval (LLM judge, если API включит)</span>
+      </label>
+      <div class="row tight">
+        <button type="button" id="saveEffectivenessPromptBtn" class="btnCompact" disabled>Сохранить</button>
+        <button type="button" id="resetEffectivenessPromptBtn" class="secondary btnCompact">Сбросить</button>
+      </div>
+      <p class="hint tight" id="effectivenessPromptMeta">Ключ: jrEffectivenessPrompt</p>
+    </details>
+
     <footer class="footer">
       <button type="button" id="loginBtn" class="link" hidden>Вход</button>
       <button type="button" id="logoutBtn" class="link" hidden>Выход</button>

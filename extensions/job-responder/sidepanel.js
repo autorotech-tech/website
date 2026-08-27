@@ -555,6 +555,7 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
 10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
+11. Специалист широкого профиля: кандидат адаптирует смежный опыт из KB под JD (transferable skills, не только exact title). Маппинг только с именованными фактами из profile. Не выдумывай роли PO/roadmap/ownership/метрики, которых нет в KB. Нет факта -> skip.
 
 [OUT cover_letter]
 **Должность:** {title}
@@ -587,8 +588,73 @@ youtube: https://...
 
 [OUT qa] [{"question":"...","answer":"..."}]`;
 
+/** Dev: effectiveness/relevance explain prompt (jrEffectivenessPrompt). Synced with API DEFAULT_EFFECTIVENESS_EVAL_PROMPT. */
+const DEFAULT_EFFECTIVENESS_PROMPT = `[ROLE] Оценщик эффективности соответствия вакансии и профиля кандидата.
+
+[INPUT] vacancy | compact_profile | score_breakdown (matched / missing / rationale / score)
+
+[TASK]
+1. Кратко перечисли совпадения (matched) - только то, что есть в score_breakdown / profile.
+2. Кратко перечисли пробелы (missing) - без усиления формулировок JD.
+3. Адаптивность (специалист широкого профиля): если точная роль/title не совпала, но есть смежные skills/domains/tools - отметь "смежный профиль / адаптация опыта" и укажи 1-2 именованных факта из profile, которыми можно честно закрыть JD.
+4. Запрет: не выдумывай роли (PO/roadmap), метрики, ownership, CEFR/senior, tools которых нет в profile.
+5. Вывод: 3-6 коротких строк RU (matched / missing / adaptability). Без воды и AI-клише.
+
+[OUT]
+matched: ...
+missing: ...
+adaptability: ...
+summary: ...`;
+
 /** Prior shipped defaults (raw) - migrate exact fingerprint matches only; never wipe user edits. */
 const PREVIOUS_DEFAULT_PROMPT_RAW = [
+  // 0.9.18 OUT relevance + specialist line, before generalist rule 11
+  `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
+
+[INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
+
+[RULES]
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
+2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
+3. В письме: 4-6 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт. Всегда применяй скилы из базы знаний, которые помогут автоматизировать и оптимизировать процессы и бизнес, маркетинговые скилы.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
+9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
+10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
+
+[OUT cover_letter]
+**Должность:** {title}
+**Формат:** {format|remote|employment}
+---
+{Approximate Relevance of a Vacancy}
+{greeting}
+
+{2 short pitch sentence + relevant skills based experience}
+**Специалист широкого профиля**
+**Почему я подхожу под вакансию:**
+1. **{тема}** - {1-2 предложения с фактом}
+2. ...
+3. ...
+(макс 4 пункта)
+
+{1 sentence CTA}
+
+**Следующий шаг:** {коротко}
+
+## Контакты
+- Telegram: ...
+- Email: ...
+(только известные; без пустых строк и без лишнего текста)
+**Полное резюме и портфолио во вложении, или по ссылке**
+## Ссылки
+резюме: https://...
+youtube: https://...
+(все известные релевантные URL с подписями; не выдумывай)
+
+[OUT qa] [{"question":"...","answer":"..."}]`,
   // 0.9.x before OUT relevance + 4-6 facts + specialist line (had # ОТКЛИК / ## СОПРОВОДИТЕЛЬНОЕ)
   `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
 
@@ -850,6 +916,8 @@ function mergeContactsIntoStructuredTemplate(template, contacts) {
 
 /** Last saved prompt text (chrome.storage jrPromptExtra). */
 let savedPromptExtra = DEFAULT_PROMPT_EXTRA;
+/** Last saved effectiveness prompt (chrome.storage jrEffectivenessPrompt). */
+let savedEffectivenessPrompt = DEFAULT_EFFECTIVENESS_PROMPT;
 
 function syncPromptSaveButton() {
   const saveBtn = document.getElementById('savePromptBtn');
@@ -871,6 +939,26 @@ function syncPromptSaveButton() {
   }
 }
 
+function syncEffectivenessSaveButton() {
+  const saveBtn = saveEffectivenessPromptBtn || document.getElementById('saveEffectivenessPromptBtn');
+  const meta = effectivenessPromptMeta || document.getElementById('effectivenessPromptMeta');
+  const el = effectivenessPromptEl || document.getElementById('effectivenessPrompt');
+  if (!el || !saveBtn) return;
+  const current = String(el.value || '');
+  const dirty = current !== String(savedEffectivenessPrompt || '');
+  saveBtn.disabled = !dirty;
+  if (meta) {
+    const isDefault = normPromptBlob(current) === normPromptBlob(DEFAULT_EFFECTIVENESS_PROMPT);
+    if (dirty) {
+      meta.textContent = 'Есть несохранённые изменения (jrEffectivenessPrompt).';
+    } else if (isDefault) {
+      meta.textContent = 'Default effectiveness prompt. Уходит в /relevance и /generate.';
+    } else {
+      meta.textContent = 'Кастомный промпт сохранён (jrEffectivenessPrompt).';
+    }
+  }
+}
+
 /** Apply live default (local or API) into textarea + storage when empty/legacy/drifted. */
 async function applyRuntimePromptToUi(liveDefault) {
   const prompt = String(liveDefault || DEFAULT_PROMPT_EXTRA);
@@ -878,6 +966,14 @@ async function applyRuntimePromptToUi(liveDefault) {
   savedPromptExtra = prompt;
   await chrome.storage.local.set({ jrPromptExtra: prompt });
   syncPromptSaveButton();
+}
+
+async function applyEffectivenessPromptToUi(liveDefault) {
+  const prompt = String(liveDefault || DEFAULT_EFFECTIVENESS_PROMPT);
+  if (effectivenessPromptEl) effectivenessPromptEl.value = prompt;
+  savedEffectivenessPrompt = prompt;
+  await chrome.storage.local.set({ jrEffectivenessPrompt: prompt });
+  syncEffectivenessSaveButton();
 }
 /** Keys expanded after generate / with answers (not forced closed by restore). */
 const JR_SKIP_COLLAPSE_RESTORE = new Set(['result', 'qaResults']);
@@ -1652,18 +1748,33 @@ function renderRelevance(data) {
       return `<li class="relevanceMatched">${escapeHtml(label)}</li>`;
     })
     .join('');
+  const notes = data.effectivenessNotes || null;
+  const generalist =
+    data.generalistProfile || data.allow_transferable || data.scoreBreakdown?.transferable;
+  const adaptBits = notes?.adaptability
+    ? notes.adaptability.map((r) => `<li>${escapeHtml(r)}</li>`).join('')
+    : '';
+  const notesSummary = notes?.summary ? `<p class="hint tight">${escapeHtml(notes.summary)}</p>` : '';
   relevanceBox.hidden = false;
   relevanceBox.classList.toggle('fromCache', fromCache);
   relevanceBox.innerHTML = `
     <div class="relevanceScoreRow">
       <div class="relevanceScore">${Number(data.score)} / 100</div>
       ${fromCache ? '<span class="relevanceCacheDot" title="Из кэша, без API" aria-label="Из кэша"></span>' : ''}
+      ${generalist ? '<span class="hint tight" title="Смежный профиль">generalist</span>' : ''}
     </div>
     <div class="relevanceSubtitle">${escapeHtml(subtitle)}</div>
     ${bullets ? `<ul>${bullets}</ul>` : ''}
     ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
     ${sem && !/смысл|семантика/i.test(matchedJoined) ? `<div><b>Совпало (смысл)</b><ul>${sem}</ul></div>` : ''}
     ${missing ? `<div><b>Не хватает в профиле</b><ul>${missing}</ul></div>` : ''}
+    ${
+      adaptBits || notesSummary
+        ? `<div><b>Эффективность / адаптация</b>${notesSummary}${
+            adaptBits ? `<ul>${adaptBits}</ul>` : ''
+          }</div>`
+        : ''
+    }
   `;
 }
 
@@ -1978,6 +2089,8 @@ async function runRelevanceScore() {
   const data = await JR_API.scoreRelevance({
     vacancy,
     selectedSourceIds: getSelectedSourceIds(),
+    effectivenessPrompt: String(effectivenessPromptEl?.value || '').trim() || undefined,
+    useLlmEffectiveness: Boolean(useLlmRelevanceEvalEl?.checked),
   });
   renderRelevance(data);
   if (data && data.score != null) {
@@ -2044,6 +2157,8 @@ async function runGenerate(mode) {
       promptExtra,
       profileOverrides: Object.keys(profileOverrides).length ? profileOverrides : undefined,
       useGeminiRag: false,
+      effectivenessPrompt: String(effectivenessPromptEl?.value || '').trim() || undefined,
+      useLlmEffectiveness: Boolean(useLlmRelevanceEvalEl?.checked),
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
@@ -2119,6 +2234,11 @@ const coverTemplateEl = document.getElementById('coverTemplate');
 const promptExtraEl = document.getElementById('promptExtra');
 const resetPromptBtn = document.getElementById('resetPromptBtn');
 const savePromptBtn = document.getElementById('savePromptBtn');
+const effectivenessPromptEl = document.getElementById('effectivenessPrompt');
+const saveEffectivenessPromptBtn = document.getElementById('saveEffectivenessPromptBtn');
+const resetEffectivenessPromptBtn = document.getElementById('resetEffectivenessPromptBtn');
+const useLlmRelevanceEvalEl = document.getElementById('useLlmRelevanceEval');
+const effectivenessPromptMeta = document.getElementById('effectivenessPromptMeta');
 const coverFromRagBtn = document.getElementById('coverFromRagBtn');
 const saveCoverTemplateBtn = document.getElementById('saveCoverTemplateBtn');
 const migrateCoverTemplateBtn = document.getElementById('migrateCoverTemplateBtn');
@@ -2799,6 +2919,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
     promptExtraEl.value = next;
     syncPromptSaveButton();
   }
+  if (
+    changes.jrEffectivenessPrompt &&
+    effectivenessPromptEl &&
+    document.activeElement !== effectivenessPromptEl
+  ) {
+    const next = String(changes.jrEffectivenessPrompt.newValue || DEFAULT_EFFECTIVENESS_PROMPT);
+    savedEffectivenessPrompt = next;
+    effectivenessPromptEl.value = next;
+    syncEffectivenessSaveButton();
+  }
+  if (changes.jrUseLlmRelevanceEval && useLlmRelevanceEvalEl) {
+    useLlmRelevanceEvalEl.checked = Boolean(changes.jrUseLlmRelevanceEval.newValue);
+  }
   if (changes.jrRagEdits && ragEditsInput && document.activeElement !== ragEditsInput) {
     ragEditsInput.value = String(changes.jrRagEdits.newValue || '');
   }
@@ -2884,6 +3017,47 @@ if (resetPromptBtn) {
     }
     await applyRuntimePromptToUi(live);
     setSuccess('Инструкции сброшены (runtime ultra-short default)');
+  });
+}
+
+if (effectivenessPromptEl) {
+  effectivenessPromptEl.addEventListener('input', () => {
+    syncEffectivenessSaveButton();
+  });
+}
+
+if (saveEffectivenessPromptBtn) {
+  saveEffectivenessPromptBtn.addEventListener('click', async () => {
+    if (!effectivenessPromptEl) return;
+    const value = String(effectivenessPromptEl.value || '');
+    await chrome.storage.local.set({ jrEffectivenessPrompt: value });
+    savedEffectivenessPrompt = value;
+    syncEffectivenessSaveButton();
+    setSuccess('Промпт оценки эффективности сохранён');
+  });
+}
+
+if (resetEffectivenessPromptBtn) {
+  resetEffectivenessPromptBtn.addEventListener('click', async () => {
+    let live = DEFAULT_EFFECTIVENESS_PROMPT;
+    try {
+      const data = await JR_API.getDefaultPrompt();
+      if (data?.effectivenessPrompt) {
+        live = String(data.effectivenessPrompt);
+      }
+    } catch {
+      /* bundled */
+    }
+    await applyEffectivenessPromptToUi(live);
+    setSuccess('Промпт оценки сброшен к default');
+  });
+}
+
+if (useLlmRelevanceEvalEl) {
+  useLlmRelevanceEvalEl.addEventListener('change', async () => {
+    await chrome.storage.local.set({
+      jrUseLlmRelevanceEval: Boolean(useLlmRelevanceEvalEl.checked),
+    });
   });
 }
 
@@ -2984,7 +3158,13 @@ if (saveCoverTemplateBtn) {
     await resolvePanelWindowId();
     await restoreCollapseState();
     bindCollapsePersistence();
-    const savedTpl = await chrome.storage.local.get(['jrCoverTemplate', 'jrPromptExtra', 'jrRagEdits']);
+    const savedTpl = await chrome.storage.local.get([
+      'jrCoverTemplate',
+      'jrPromptExtra',
+      'jrRagEdits',
+      'jrEffectivenessPrompt',
+      'jrUseLlmRelevanceEval',
+    ]);
     if (ragEditsInput) {
       ragEditsInput.value = String(savedTpl.jrRagEdits || '');
     }
@@ -3011,10 +3191,14 @@ if (saveCoverTemplateBtn) {
     }
     // Resolve live runtime prompt (API if available, else bundled DEFAULT)
     let livePrompt = DEFAULT_PROMPT_EXTRA;
+    let liveEffectiveness = DEFAULT_EFFECTIVENESS_PROMPT;
     try {
       const data = await JR_API.getDefaultPrompt();
       if (data?.prompt && isJrSystemPromptText(data.prompt)) {
         livePrompt = String(data.prompt);
+      }
+      if (data?.effectivenessPrompt) {
+        liveEffectiveness = String(data.effectivenessPrompt);
       }
     } catch {
       /* offline / older API - keep bundled */
@@ -3028,6 +3212,20 @@ if (saveCoverTemplateBtn) {
         savedPromptExtra = savedExtra;
         syncPromptSaveButton();
       }
+    }
+    if (effectivenessPromptEl) {
+      const savedEff =
+        savedTpl.jrEffectivenessPrompt != null ? String(savedTpl.jrEffectivenessPrompt) : '';
+      if (!savedEff.trim()) {
+        await applyEffectivenessPromptToUi(liveEffectiveness);
+      } else {
+        effectivenessPromptEl.value = savedEff;
+        savedEffectivenessPrompt = savedEff;
+        syncEffectivenessSaveButton();
+      }
+    }
+    if (useLlmRelevanceEvalEl) {
+      useLlmRelevanceEvalEl.checked = Boolean(savedTpl.jrUseLlmRelevanceEval);
     }
     await refreshDriveStatus();
     await refreshAuthHint();
