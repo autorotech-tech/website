@@ -622,9 +622,17 @@ const JR_API = (() => {
       errorKind: 'generate',
     });
     if (data && data.ok === false) {
-      throw new Error(
+      const pe = Array.isArray(data.providerErrors) ? data.providerErrors.filter(Boolean) : [];
+      const err = new Error(
         sanitizeUserError(String(data.message || data.error || 'Генерация не удалась'))
       );
+      err.jrMeta = {
+        providerErrors: pe.slice(-4),
+        elapsedSec: data.elapsedSec,
+        timedOut: data.timedOut,
+        compactProfileChars: data.compactProfileChars,
+      };
+      throw err;
     }
     const text = pickGeneratedText(data);
     return { ...data, text };

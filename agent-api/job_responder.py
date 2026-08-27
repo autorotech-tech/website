@@ -49,18 +49,17 @@ from job_responder_optimize import (
 from job_responder_hybrid import hybrid_relevance_base
 from job_responder_budget import (
     COMPACT_PROFILE_CHARS,
-    COMPACT_PROFILE_CHARS_MANY,
     COMPACT_PROFILE_CHARS_RETRY,
-    COMPACT_PROFILE_MANY_SOURCES,
     COVER_TEMPLATE_CHARS,
     COVER_TEMPLATE_CHARS_RETRY,
     GEMINI_RAG_EARLY_SEC,
     GEMINI_RAG_MIN_BUDGET_SEC,
     GENERATE_BUDGET_SEC,
-    LLM_ATTEMPT_TIMEOUT_SEC,
-    LLM_MINI_RETRY_TIMEOUT_SEC,
+    JR_OPENMODEL_FAST_MODEL,
     LLM_PROVIDER_CAP_SEC,
     cascade_max_providers,
+    choose_profile_cap,
+    provider_timeout_for,
     should_attempt_mini_profile_retry,
     summarize_provider_errors,
 )
@@ -2071,7 +2070,8 @@ def format_compact_profile(
             ),
         )
 
-    max_chars = max(1200, int(max_chars))
+    # Allow mini-retry caps below 1200 (was flooring retry 800→1200 and defeating compression).
+    max_chars = max(500, int(max_chars))
 
     def render(
         *,
@@ -5536,14 +5536,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 prompt_extra,
                 {"rag_edits": str(merged.get("rag_edits") or "")[:1500]},
             )
-        # Aggressive compact on first try - especially with many Resume sources.
-        profile_cap = (
-            COMPACT_PROFILE_CHARS_MANY
-            if len(rag_items) >= COMPACT_PROFILE_MANY_SOURCES
-            else COMPACT_PROFILE_CHARS
-        )
-        cover_cap = COVER_TEMPLATE_CHARS
-        profile_compressed = len(rag_items) >= COMPACT_PROFILE_MANY_SOURCES
+        # Aggressive compact on first try - 12+ sources start at mini size immediately.
+        profile_cap, profile_compressed = choose_profile_cap(len(rag_items))
+        cover_cap = COVER_TEMPLATE_CHARS_RETRY if profile_compressed else COVER_TEMPLATE_CHARS
         vac_skills = list(
             (payload.vacancy.structured.keySkills if payload.vacancy.structured else None) or []
         )
@@ -5557,6 +5552,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         crag_hints = ""
         crag_refined = False
         crag_faith_failures: List[str] = []
+        # CRAG grade is cheap (no LLM); refine is gated later and skipped when compressed.
         if jr_crag.is_crag_lite_enabled():
             crag_grades = jr_crag.grade_jd_requirements(vac_skills, merged)
             crag_hints = jr_crag.build_crag_hints(crag_grades, domain_pin=domain_pin)
@@ -5570,16 +5566,15 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         global _gemini_rag_last_timeout_mono
         rag_status = jr_gemini_rag.get_status(pg_connect, workspace_id) if jr_gemini_rag.is_enabled() else {}
-        use_rag = payload.useGeminiRag
-        if use_rag is None:
-            use_rag = bool(jr_gemini_rag.is_enabled() and rag_status.get("ready"))
+        # File Search is slow (~timeout under CF). Only when caller explicitly opts in.
+        use_rag = True if payload.useGeminiRag is True else False
 
         def _run_llm(
             profile_max: int,
             cover_max: int,
-            attempt_timeout: float,
             *,
-            max_providers: int = 3,
+            max_providers: int = 2,
+            is_retry: bool = False,
         ):
             nonlocal has_template
             cover_template = resolve_cover_template(
@@ -5609,16 +5604,22 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 {"role": "user", "content": user_prompt},
             ]
             # Shorter outputs finish faster under CF soft budget.
-            max_tokens = 900 if mode == "question_answers" else 480
-            # Fast providers first with a real time slice each. OpenRouter skipped.
+            max_tokens = 700 if mode == "question_answers" else 360
+            # openmodel/haiku ≈4–5s for letters; gemini-3.5-flash ≈47s (skip under CF).
+            # GLM keys currently 429 - do not waste budget iterating them.
             attempts = (
-                {"tier_override": "fast", "route_provider_override": "openmodel", "route_model_override": ""},
                 {
                     "tier_override": "fast",
-                    "route_provider_override": "gemini",
-                    "route_model_override": JR_GEMINI_MODEL,
+                    "route_provider_override": "openmodel",
+                    "route_model_override": JR_OPENMODEL_FAST_MODEL,
+                    "route_strict": True,
                 },
-                {"tier_override": "fast", "route_provider_override": "glm", "route_model_override": ""},
+                {
+                    "tier_override": "fast",
+                    "route_provider_override": "openmodel",
+                    "route_model_override": "deepseek-v4-flash",
+                    "route_strict": True,
+                },
             )
             chat_result = None
             last_err = ""
@@ -5633,12 +5634,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     provider_errors.append("budget_exhausted")
                     break
                 provider = str(kwargs.get("route_provider_override") or "?")
-                # GLM is slow - skip unless we still have a healthy slice.
-                if provider == "glm" and remaining < 12.0:
-                    provider_errors.append("glm:skipped_low_budget")
-                    continue
-                t_cap = min(float(attempt_timeout), remaining - 0.5, LLM_PROVIDER_CAP_SEC)
-                if t_cap < 4.5:
+                model_label = str(kwargs.get("route_model_override") or "default")[:40]
+                t_cap = provider_timeout_for(
+                    provider,
+                    remaining_sec=remaining,
+                    is_retry=is_retry,
+                    attempt_index=tried,
+                )
+                if t_cap < 4.0:
                     last_err = "timeout"
                     provider_errors.append(f"{provider}:no_time")
                     break
@@ -5654,10 +5657,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     )
                 except FuturesTimeout:
                     last_err = "timeout"
-                    provider_errors.append(f"{provider}:timeout>{t_cap:.0f}s")
+                    provider_errors.append(f"{provider}/{model_label}:timeout>{t_cap:.0f}s")
                     _LOG.warning(
-                        "generate provider timeout provider=%s timeout=%.1f profile=%d remaining=%.1f",
+                        "generate provider timeout provider=%s model=%s timeout=%.1f profile=%d remaining=%.1f",
                         provider,
+                        model_label,
                         t_cap,
                         profile_max,
                         remaining,
@@ -5666,7 +5670,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     continue
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
-                    provider_errors.append(f"{provider}:{type(exc).__name__}:{str(exc)[:80]}")
+                    provider_errors.append(
+                        f"{provider}/{model_label}:{type(exc).__name__}:{str(exc)[:80]}"
+                    )
                     _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
                     chat_result = None
                     continue
@@ -5676,11 +5682,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 if chat_result is not None:
                     empty_detail = "empty_content"
                 last_err = last_err or empty_detail
-                provider_errors.append(f"{provider}:{empty_detail}")
+                provider_errors.append(f"{provider}/{model_label}:{empty_detail}")
                 chat_result = None
             return chat_result, last_err, compact_text, has_template
 
-        # Fast cascade first (openmodel / flash). File Search only if budget still healthy.
+        # Fast openmodel-only cascade. Gemini flash is too slow (~47s) for CF soft budget.
         first_max_providers = cascade_max_providers(
             profile_compressed=profile_compressed,
             remaining_sec=deadline - time.monotonic(),
@@ -5689,8 +5695,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         chat_result, last_err, compact_text, has_template = _run_llm(
             profile_cap,
             cover_cap,
-            LLM_ATTEMPT_TIMEOUT_SEC,
             max_providers=first_max_providers,
+            is_retry=False,
         )
         if chat_result and str(getattr(chat_result, "content", None) or "").strip():
             raw_text = str(chat_result.content).strip()
@@ -5783,7 +5789,6 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             profile_compressed = True
             profile_cap = COMPACT_PROFILE_CHARS_RETRY
             cover_cap = COVER_TEMPLATE_CHARS_RETRY
-            retry_timeout = min(LLM_MINI_RETRY_TIMEOUT_SEC, remaining - 1.0)
             _LOG.warning(
                 "generate mini-profile retry remaining=%.1f errs=%s",
                 remaining,
@@ -5792,12 +5797,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             chat_result, last_err, compact_text, has_template = _run_llm(
                 profile_cap,
                 cover_cap,
-                max(4.5, retry_timeout),
                 max_providers=cascade_max_providers(
                     profile_compressed=True,
                     remaining_sec=remaining,
                     is_retry=True,
                 ),
+                is_retry=True,
             )
             raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
 
@@ -5910,7 +5915,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             max_tokens_override=jr_crag.CRAG_REFINE_MAX_TOKENS,
                             tier_override="fast",
                             route_provider_override="openmodel",
-                            route_model_override="",
+                            route_model_override=JR_OPENMODEL_FAST_MODEL,
+                            route_strict=True,
                         )
                         refined = str(getattr(refine_result, "content", None) or "").strip()
                         if refined:
@@ -5952,8 +5958,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 # User-facing: no provider/model names (kept in providerErrors for logs/UI debug).
                 msg = (
                     "Не успели сформировать отклик за отведённое время. "
-                    "Нажмите «Отклик» ещё раз - обычно со второго раза быстрее "
-                    "(профиль уже сжат)."
+                    "Нажмите «Отклик» ещё раз через пару секунд."
                 )
             else:
                 msg = (

@@ -5338,6 +5338,7 @@ def openai_chat_completions_generic(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Any] = None,
     hermes_proxy: bool = False,
+    route_strict: bool = False,
 ) -> ChatCompletionsResult:
     """
     Универсальный обход цепочек провайдеров Swoop с ротацией ключей для обычного текстового (или JSON) ответа.
@@ -5373,10 +5374,20 @@ def openai_chat_completions_generic(
     forced_model = str(route_model_override or "").strip()
     if forced_provider in _LLM_ROUTING_PROVIDERS:
         forced_step = {"provider": forced_provider, "model": forced_model}
-        chain = [forced_step] + [
-            s for s in chain if not (str(s.get("provider") or "").strip().lower() == forced_provider and str(s.get("model") or "").strip() == forced_model)
-        ]
-    logger.info("LLM Generic routing tier=%s chain_len=%s", tier, len(chain))
+        if route_strict:
+            # Job Responder / latency-sensitive callers: do not burn the wall-clock
+            # walking the full tier+fallback chain after a forced provider fails.
+            chain = [forced_step]
+        else:
+            chain = [forced_step] + [
+                s
+                for s in chain
+                if not (
+                    str(s.get("provider") or "").strip().lower() == forced_provider
+                    and str(s.get("model") or "").strip() == forced_model
+                )
+            ]
+    logger.info("LLM Generic routing tier=%s chain_len=%s strict=%s", tier, len(chain), bool(route_strict))
 
     proxy_messages = messages
     proxy_tools = tools

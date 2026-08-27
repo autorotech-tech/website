@@ -1674,7 +1674,7 @@ async function runGenerate(mode) {
       coverTemplate: !isQa ? coverTemplate : undefined,
       promptExtra,
       profileOverrides: Object.keys(profileOverrides).length ? profileOverrides : undefined,
-      useGeminiRag: geminiRagReady,
+      useGeminiRag: false,
     });
     const letter = String(data.text || '').trim();
     resultText.value = letter;
@@ -1702,6 +1702,9 @@ async function runGenerate(mode) {
     if (data.usedCoverTemplate) bits.push('шаблон: да');
     if (data.elapsedSec != null) bits.push(`${data.elapsedSec}s`);
     if (data.limitMessage) bits.push(String(data.limitMessage));
+    if (Array.isArray(data.providerErrors) && data.providerErrors.length) {
+      bits.push(`dbg: ${data.providerErrors.slice(-3).join(' | ')}`);
+    }
     genMeta.textContent = bits.join(' · ');
     if (data.ok === false && data.message) {
       setError(String(data.message));
@@ -1713,7 +1716,11 @@ async function runGenerate(mode) {
     }
     setSuccess(isQa ? 'Ответы готовы' : 'Готово');
   } catch (err) {
-    genMeta.textContent = '';
+    const meta = err && err.jrMeta ? err.jrMeta : null;
+    const bits = [];
+    if (meta?.elapsedSec != null) bits.push(`${meta.elapsedSec}s`);
+    if (meta?.providerErrors?.length) bits.push(`dbg: ${meta.providerErrors.join(' | ')}`);
+    genMeta.textContent = bits.join(' · ');
     setError(String(err.message || err));
   } finally {
     setResultGenerating(false);
