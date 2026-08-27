@@ -54,6 +54,8 @@ from job_responder_optimize import (
 )
 from job_responder_hybrid import hybrid_relevance_base
 import job_responder_cross_encoder as jr_ce
+from job_responder_rag_pack import build_rag_context_pack, format_rag_evidence_block
+from job_responder_schemas import merged_profile_to_candidate
 
 # Semantic-grid hit credit: synonym/fuzzy must not count as full exact overlap.
 _SEMANTIC_TIER_CREDIT: Dict[str, float] = {
@@ -3584,6 +3586,7 @@ def build_user_prompt(
     prompt_extra: str = "",
     crag_hints: str = "",
     relevance: Optional[Dict[str, Any]] = None,
+    rag_evidence: str = "",
 ) -> str:
     host_label = HOST_LABELS.get(host, host or "web")
     resume_context = (compact_profile_text or "").strip() or "(empty - do not invent facts)"
@@ -3608,6 +3611,9 @@ def build_user_prompt(
         f"VACANCY:\n{vacancy_block}",
         f"RESUME CONTEXT:\n{resume_context}",
     ]
+    evidence = (rag_evidence or "").strip()
+    if evidence:
+        parts.append(evidence)
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template}")
     if mode == "question_answers":
@@ -6107,6 +6113,20 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         crag_hints = jr_crag.build_crag_hints(
             crag_grades, domain_pin=domain_pin, tool_pin=tool_pin
         )
+        # Stage 3+5 light retrieve: ranked evidence pack (BM25/RRF) for generate prompt.
+        rag_pack = build_rag_context_pack(
+            merged,
+            title=payload.vacancy.title or "",
+            description=payload.vacancy.description or "",
+            key_skills=vac_skills,
+            vacancy_domains=vacancy_domains,
+            domain_pin=domain_pin,
+            tool_pin=tool_pin,
+            top_k=8,
+        )
+        rag_evidence_block = format_rag_evidence_block(rag_pack, max_chars=1600)
+        # Thin ATS contract (debug / recruiter reverse hook); not dumped into prompt.
+        candidate_profile = merged_profile_to_candidate(merged)
         provider_errors: List[str] = []
         # After pre-LLM work: if rem is tight, mini profile + trim custom ultra-short.
         if should_shrink_for_pressure(remaining_sec=deadline - time.monotonic()):
@@ -6166,6 +6186,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 prompt_extra=prompt_extra,
                 crag_hints=crag_hints,
                 relevance=relevance,
+                rag_evidence=rag_evidence_block,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -6311,6 +6332,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 prompt_extra=prompt_extra,
                 host_labels=HOST_LABELS,
                 domain_boost=build_file_search_query_boost(vacancy_domains, domain_pin),
+                rag_evidence=rag_evidence_block,
             )
             # Early cancel: never burn the soft budget on a hung File Search call.
             rag_timeout = min(GEMINI_RAG_EARLY_SEC, remaining_after_fast - 8.0)
@@ -6707,6 +6729,17 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             "domainsMatched": list(domain_pin.get("domains_matched") or []),
             "domainPinBullets": list(domain_pin.get("pinned_bullets") or [])[:4],
             "toolPin": list(tool_pin.get("tools_matched") or [])[:8],
+            "ragPack": {
+                "evidenceCount": int(rag_pack.get("evidence_count") or 0),
+                "toolsMatched": list(rag_pack.get("tools_matched") or [])[:8],
+                "domainsMatched": list(rag_pack.get("domains_matched") or [])[:6],
+                "languages": list(rag_pack.get("languages") or [])[:8],
+                "topEvidence": list(rag_pack.get("top_evidence") or [])[:8],
+            },
+            "candidateProfileSkills": [
+                s.model_dump()
+                for s in (candidate_profile.skills[:12] if candidate_profile else [])
+            ],
             "cragLiteUsed": bool(jr_crag.is_crag_lite_enabled() and crag_refined),
             "cragGrades": crag_grades[:16] if crag_grades else [],
             "cragFaithFailures": crag_faith_failures,

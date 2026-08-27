@@ -563,6 +563,7 @@ def build_gemini_rag_user_prompt(
     prompt_extra: str = "",
     host_labels: Optional[Dict[str, str]] = None,
     domain_boost: str = "",
+    rag_evidence: str = "",
 ) -> str:
     labels = host_labels or {}
     host_label = labels.get(host, host or "web")
@@ -594,6 +595,9 @@ def build_gemini_rag_user_prompt(
             2,
             "DOMAIN RETRIEVAL HINT (prefer matching industry/project chunks):\n" + boost[:900],
         )
+    evidence = (rag_evidence or "").strip()
+    if evidence:
+        parts.append(evidence[:1600])
     if mode == "cover_letter" and cover_template:
         parts.append(f"COVER TEMPLATE (adapt, do not rewrite from scratch):\n{cover_template[:1200]}")
     if mode == "question_answers":

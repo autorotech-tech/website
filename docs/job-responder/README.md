@@ -312,6 +312,10 @@ Tier-схема (Tier 0 без LLM → ultra-cheap → flash generate → qualit
 
 SOTA-дорожная карта (CRAG-lite, hybrid BM25+RRF, ESCO synonym graph, faithfulness, eval): [rag-ats-optimization-playbook.md](./rag-ats-optimization-playbook.md).
 
+## ATS pipeline symbiosis + recruiter reverse
+
+Маппинг 5-stage ATS brief ↔ Autoro Hunt, generate RAG context pack, контракты `CandidateProfile` / bridge к reverse ranking: [ats-pipeline-symbiosis.md](./ats-pipeline-symbiosis.md).
+
 ## Фаза 2
 
 См. [phase2-autofill.md](./phase2-autofill.md)

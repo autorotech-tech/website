@@ -21,6 +21,8 @@ python3 -m py_compile \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/job_responder_platforms.py" \
   "$ROOT/agent-api/job_responder_outbound.py" \
+  "$ROOT/agent-api/job_responder_rag_pack.py" \
+  "$ROOT/agent-api/job_responder_schemas.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/swoop_openmodel.py" \
   "$ROOT/agent-api/main.py"
@@ -38,6 +40,8 @@ scp "${SSH_OPTS[@]}" \
   "$ROOT/agent-api/job_responder_gemini_rag.py" \
   "$ROOT/agent-api/job_responder_platforms.py" \
   "$ROOT/agent-api/job_responder_outbound.py" \
+  "$ROOT/agent-api/job_responder_rag_pack.py" \
+  "$ROOT/agent-api/job_responder_schemas.py" \
   "$ROOT/agent-api/kb_file_ingest.py" \
   "$ROOT/agent-api/swoop_openmodel.py" \
   "$ROOT/agent-api/main.py" \
@@ -68,6 +72,8 @@ docker cp /tmp/job_responder_format.py autoro-agent-api:/app/job_responder_forma
 docker cp /tmp/job_responder_gemini_rag.py autoro-agent-api:/app/job_responder_gemini_rag.py
 docker cp /tmp/job_responder_platforms.py autoro-agent-api:/app/job_responder_platforms.py
 docker cp /tmp/job_responder_outbound.py autoro-agent-api:/app/job_responder_outbound.py
+docker cp /tmp/job_responder_rag_pack.py autoro-agent-api:/app/job_responder_rag_pack.py
+docker cp /tmp/job_responder_schemas.py autoro-agent-api:/app/job_responder_schemas.py
 docker cp /tmp/kb_file_ingest.py autoro-agent-api:/app/kb_file_ingest.py
 docker cp /tmp/main.py autoro-agent-api:/app/main.py
 docker cp /tmp/swoop_openmodel.py autoro-agent-api:/app/swoop_openmodel.py
