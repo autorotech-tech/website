@@ -14,13 +14,13 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 [RULES]
 1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 коротких факта под вакансию (слова/метрики как в profile/RAG).
+3. В письме: 3-4 коротких факта с конкретными ссылками на опыт из Resume KB / compact profile (продукты, tools, метрики как в profile). Запрет общих фраз без факта ("опыт в отрасли", "механика применима", пустые аналогии без названий). Нет факта -> пропусти пункт.
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон (+ portfolio/GitHub/LinkedIn/сайт если даны). Блок ## Ссылки: все релевантные URL с подписями из template/profile/правок. Без опыта, навыков, smoke/test URL (example.com, jr-smoke). Не выдумывай URL.
-5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2). Proficient ≠ C1. Зеркаль RAG, не усиливай.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2). Proficient ≠ C1. Зеркаль RAG, не усиливай. Лексика как в profile.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
-7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
+7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
 8. Отрасль/домен: если в вакансии есть отрасль и в profile есть domains_matched / industry_experience / matched_projects - обязательно 1 пункт с реальными фактами. Не приукрашивай.
-9. Transferable: если skill из JD нет в profile - не выдумывай. Максимум 1 пункт "Смежный опыт: [факт]. Переносимо на [JD] через [механизм]." Без чужих KPI и без senior/CEFR.
+9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика] -> [JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -28,6 +28,8 @@ Side panel: **Сохранить промпт** (dirty vs last saved) / **Сбр
 ```
 
 Generate temperature: `JR_GENERATE_TEMPERATURE = 0.15` (openmodel / gemini / glm + File Search).
+
+Cover `max_tokens`: **550** (soft-retry 650 if mid-word truncate detected); QA: 700. Post-process: `strip_incomplete_trailing_text` before contacts rewrite.
 
 ## HH + no-ai-slop post-process
 
@@ -40,6 +42,7 @@ Backend `hh_format_text` (вызывается из `finalize_cover_letter_conta
 | `«»` / curly quotes | ASCII `"` |
 | RU/EN cover fluff phrases | stripped |
 | EN banned words (word-boundary): delve, leverage, utilize, cutting-edge, … | stripped |
+| `strip_incomplete_trailing_text` (до contacts rewrite) | mid-word / incomplete bullet -> last sentence or drop bullet |
 | `strip_embellished_language_claims` (до contacts rewrite) | CEFR / senior / эксперт без опоры в profile -> soften/drop |
 
 Skill source: [autorotech-tech/no-ai-slop](https://github.com/autorotech-tech/no-ai-slop) (локально `.cursor/skills/no-ai-slop`). Контакты/ссылки не ломаем - rewrite ## Контакты / ## Ссылки идёт до финального scrub.

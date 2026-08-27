@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import os
 
 from kb_file_ingest import MAX_FILE_BYTES, sanitize_extracted_text
-from job_responder_format import hh_format_text, strip_embellished_language_claims
+from job_responder_format import (
+    hh_format_text,
+    looks_truncated_cover,
+    strip_embellished_language_claims,
+    strip_incomplete_trailing_text,
+)
 import job_responder_crag as jr_crag
 from job_responder_semantic import (
     build_semantic_grid,
@@ -1560,7 +1565,7 @@ def finalize_cover_letter_contacts_and_links(
     profile_blob: str = "",
 ) -> str:
     """Post-process: anti-embellish + authoritative ## Контакты / ## Ссылки (V1) + HH/no-ai-slop."""
-    body = text or ""
+    body = strip_incomplete_trailing_text(text or "")
     if profile_blob:
         body, _emb = strip_embellished_language_claims(body, profile_blob)
     body, _meta = validate_and_rewrite_cover_letter_v1(body, contacts=contacts, links=links)
@@ -2708,13 +2713,13 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 [RULES]
 1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 коротких факта под вакансию (слова/метрики как в profile/RAG).
+3. В письме: 3-4 коротких факта с конкретными ссылками на опыт из Resume KB / compact profile (продукты, tools, метрики как в profile). Запрет общих фраз без факта ("опыт в отрасли", "механика применима", пустые аналогии без названий). Нет факта -> пропусти пункт.
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
-5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
-7. no-ai-slop: без воды и клише (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"). Факты и конкретика. Русский, если не просили иначе.
+7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
 8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про него с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
-9. Transferable: если в JD skill нет в profile - не выдумывай. Максимум 1 пункт "Смежный опыт: [факт из profile]. Переносимо на [требование JD] через [общий механизм]." Без чужих KPI и без "senior"/CEFR.
+9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
 
 [OUT cover_letter]
 # ОТКЛИК НА ВАКАНСИЮ
@@ -5575,6 +5580,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             *,
             max_providers: int = 2,
             is_retry: bool = False,
+            tokens_override: Optional[int] = None,
         ):
             nonlocal has_template
             cover_template = resolve_cover_template(
@@ -5603,8 +5609,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-            # Shorter outputs finish faster under CF soft budget.
-            max_tokens = 700 if mode == "question_answers" else 360
+            # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
+            default_tokens = 700 if mode == "question_answers" else 550
+            max_tokens = int(tokens_override) if tokens_override else default_tokens
             # openmodel/haiku ≈4–5s for letters; gemini-3.5-flash ≈47s (skip under CF).
             # GLM keys currently 429 - do not waste budget iterating them.
             attempts = (
@@ -5805,6 +5812,48 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 is_retry=True,
             )
             raw_text = str(getattr(chat_result, "content", None) or "").strip() if chat_result else ""
+
+        # Soft-retry once if cover looks mid-word truncated (max_tokens / stream cut).
+        if (
+            mode == "cover_letter"
+            and raw_text
+            and looks_truncated_cover(raw_text)
+            and (deadline - time.monotonic()) >= 6.0
+        ):
+            finish_reason = str(getattr(chat_result, "finish_reason", None) or "").lower()
+            provider_errors.append(
+                f"cover_truncated_retry:finish={finish_reason or 'unknown'}"
+            )
+            _LOG.warning(
+                "generate truncated cover soft-retry finish=%s remaining=%.1f",
+                finish_reason or "?",
+                deadline - time.monotonic(),
+            )
+            # Slightly higher tokens + already-compact profile if compressed.
+            retry_profile = COMPACT_PROFILE_CHARS_RETRY if profile_compressed else profile_cap
+            retry_cover = COVER_TEMPLATE_CHARS_RETRY if profile_compressed else cover_cap
+            chat_retry, _, compact_retry, has_template_retry = _run_llm(
+                retry_profile,
+                retry_cover,
+                max_providers=1,
+                is_retry=True,
+                tokens_override=650,
+            )
+            retry_text = str(getattr(chat_retry, "content", None) or "").strip() if chat_retry else ""
+            if retry_text and (
+                not looks_truncated_cover(retry_text)
+                or len(retry_text) > len(raw_text)
+            ):
+                raw_text = retry_text
+                chat_result = chat_retry
+                compact_text = compact_retry or compact_text
+                has_template = has_template_retry
+            if looks_truncated_cover(raw_text):
+                raw_text = strip_incomplete_trailing_text(raw_text)
+                provider_errors.append("cover_truncated_stripped")
+        elif mode == "cover_letter" and raw_text and looks_truncated_cover(raw_text):
+            raw_text = strip_incomplete_trailing_text(raw_text)
+            provider_errors.append("cover_truncated_stripped")
 
         # CRAG-lite: heuristic faith check + one refine pass if budget allows.
         if jr_crag.should_run_crag_refine(

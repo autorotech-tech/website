@@ -714,3 +714,30 @@ def test_hh_format_text_no_ai_slop():
     assert "@autoro_tech" in final
     assert "https://autoro.tech/resume/" in final
     assert "## Контакты" in final and "## Ссылки" in final
+
+
+def test_strip_incomplete_trailing_mid_word():
+    from job_responder_format import looks_truncated_cover, strip_incomplete_trailing_text
+
+    cut = (
+        "Здравствуйте!\n\n"
+        "Готов обсудить роль.\n\n"
+        "**Почему я подхожу под вакансию:**\n"
+        "1. **n8n** - автоматизировал сценарии для Askona.\n"
+        "2. **SEO** - выстроил сценарии использ"
+    )
+    assert looks_truncated_cover(cut) is True
+    cleaned = strip_incomplete_trailing_text(cut)
+    assert "использ" not in cleaned
+    assert "Askona" in cleaned
+    assert looks_truncated_cover(cleaned) is False
+
+    with_contacts = cut + "\n\n## Контакты\n- Telegram: @autoro_tech\n"
+    cleaned2 = strip_incomplete_trailing_text(with_contacts)
+    assert "## Контакты" in cleaned2
+    assert "@autoro_tech" in cleaned2
+    assert "использ" not in cleaned2
+
+    complete = cut.rsplit("\n", 1)[0] + "\n2. **SEO** - выстроил сценарии использования для e-commerce."
+    assert looks_truncated_cover(complete) is False
+    assert strip_incomplete_trailing_text(complete) == complete

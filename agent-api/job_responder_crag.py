@@ -13,7 +13,7 @@ CRAG_REFINE_MIN_BUDGET_SEC = 10.0
 CRAG_CRITIQUE_MIN_BUDGET_SEC = 14.0
 CRAG_REFINE_CAP_SEC = 8.0
 CRAG_CRITIQUE_MAX_TOKENS = 120
-CRAG_REFINE_MAX_TOKENS = 450
+CRAG_REFINE_MAX_TOKENS = 550
 
 
 def should_run_crag_refine(
@@ -106,7 +106,10 @@ def build_crag_hints(grades: Sequence[Dict[str, Any]], *, domain_pin: Optional[D
     """Prompt block injected before draft generate."""
     if not grades and not (domain_pin or {}).get("pinned_bullets"):
         return ""
-    lines = ["CRAG GRADE (facts only; Incorrect = skip or 1 transferable bullet, no KPI):"]
+    lines = [
+        "CRAG GRADE (facts only; Incorrect = skip OR 1 bullet with named profile fact "
+        "- no vague transferable fluff, no KPI):"
+    ]
     by_label: Dict[str, List[str]] = {"Correct": [], "Ambiguous": [], "Incorrect": []}
     for g in grades:
         label = str(g.get("label") or "")
@@ -172,7 +175,8 @@ def faith_check_failures(
 
 def build_critique_user_prompt(draft: str, failures: Sequence[str], profile_compact: str) -> str:
     return (
-        "List 1-3 concrete fixes for the draft (RU). Issues:\n"
+        "List 1-3 concrete fixes (RU). Drop vague transferable fluff without named profile facts. "
+        "Issues:\n"
         + "\n".join(f"- {f}" for f in failures)
         + f"\n\nProfile (facts only):\n{(profile_compact or '')[:2200]}\n\nDraft:\n{draft[:3500]}"
     )
@@ -185,7 +189,9 @@ def build_refine_user_prompt(
     crag_hints: str = "",
 ) -> str:
     parts = [
-        "Fix the cover letter. Remove ungrounded claims. Keep HH structure. Output full letter only.",
+        "Fix the cover letter. Remove ungrounded claims and vague transferable fluff. "
+        "Keep only bullets with named facts from Profile (tools/products/metrics). "
+        "Keep HH structure. Output full letter only.",
         f"Issues/fixes:\n{critique.strip()}",
     ]
     if crag_hints.strip():

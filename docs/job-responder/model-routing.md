@@ -21,7 +21,7 @@
 Константы в `agent-api/job_responder.py`:
 
 - `COMPACT_PROFILE_CHARS=2800`, `GENERATE_VACANCY_CHARS=1600`, `COVER_TEMPLATE_CHARS=1200`
-- `max_tokens`: 700 (cover), 1200 (qa)
+- `max_tokens`: 550 (cover; soft-retry 650 if truncated), 700 (qa)
 - `GENERATE_BUDGET_SEC=34`, `LLM_ATTEMPT_TIMEOUT_SEC=11`
 - Явный cascade: **openmodel → gemini (`JR_GEMINI_MODEL`) → glm**; OpenRouter пропущен
 
@@ -181,7 +181,7 @@ JR код: `openai_chat_completions_generic(..., scenario="job_responder_generat
 | system prompt | — | ~450 | Сократить duplicate rules в user |
 | questions JSON (QA) | 120 chars × N, max 15 Q / request | ~750 | Batch если N&gt;5 |
 | **Total input Tier 2a** | — | **≤3200 target, hard 4500** | Abort + compress before LLM |
-| **max_tokens output** | cover 700, qa 120×N max 1200 | | |
+| **max_tokens output** | cover 550 (retry 650), qa 700 | | |
 
 ### Unified profile vs File Search
 
