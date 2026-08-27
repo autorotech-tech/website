@@ -1,0 +1,27 @@
+---
+description: Long-Term Memory Protocol — use Obsidian MCP tools (search_vault, read_note, update_note, append_to_note) to maintain context across sessions and document progress.
+alwaysApply: true
+---
+
+# Long-Term Memory Protocol (via Obsidian MCP)
+
+## 1. Initialization (Read Phase)
+At the start of a new session or complex task, DO NOT guess or hallucinate past context.
+- Use `search_vault` to find relevant documentation.
+- Example: for the AI agents marketers platform, search "AI agents marketers platform architecture" or relevant tags.
+- For automation work, search for existing n8n workflows or WordPress/WooCommerce integration notes.
+- Read relevant notes with `read_note` before proposing code changes.
+
+## 2. Active Development (Execution Phase)
+- Rely on extracted memory to guide code generation.
+- On recurring errors or package conflicts, search the vault for prior solutions.
+
+## 3. Reflection and Archiving (Write Phase)
+On major milestones, complex bug fixes, or architectural decisions — document automatically:
+- Create or update a note summarizing the outcome.
+- Update corresponding `.md` files in Obsidian when finalizing content plans or structures.
+- Save prompt structures and finalized concepts in the appropriate Obsidian folder.
+- Format new notes with YAML frontmatter and relevant tags (`#ai`, `#architecture`, `#n8n`, `#marketing`).
+- Use `[[wiki-links]]` to connect new notes to existing concepts from the Read Phase.
+
+Always inform the user briefly when reading from or writing to Obsidian.

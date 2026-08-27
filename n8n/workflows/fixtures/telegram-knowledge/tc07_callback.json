@@ -1,0 +1,13 @@
+{
+  "update_id": 100007,
+  "callback_query": {
+    "id": "cb_1",
+    "from": { "id": 90007, "is_bot": false, "username": "qa_callback" },
+    "message": {
+      "message_id": 7,
+      "chat": { "id": 90007, "type": "private" },
+      "text": "Inline keyboard prompt"
+    },
+    "data": "TC-07:callback_save_to_kb"
+  }
+}

@@ -106,6 +106,10 @@ export type ProviderKeysState = {
   tavily_keys: string[]
   serpapi_keys: string[]
   serpapi_default_engine: string
+  google_cse_keys: string[]
+  google_cse_cx: string
+  bing_webmaster_keys: string[]
+  bing_webmaster_site_url: string
   apify_keys: string[]
   apify_default_actor: string
   brightdata_keys: string[]
@@ -353,6 +357,44 @@ export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
     modelLabel: 'Engine по умолчанию',
     modelPlaceholder: 'google',
     modelHint: 'Presets или свой engine slug (см. serpapi.com/search-engine-apis). Проверка ключа — account.json (бесплатно).',
+  },
+  {
+    id: 'google_cse_keys',
+    label: 'Google Custom Search',
+    shortLabel: 'Google CSE',
+    category: 'search',
+    description:
+      'Custom Search JSON API (не OAuth-клиент для входа). Нужны API key из GCP Credentials и cx из Programmable Search Engine. 100 запросов/день бесплатно у существующих клиентов; API закрыт для новых и снимается 1 янв 2027.',
+    keysField: 'google_cse_keys',
+    healthKey: 'google_cse_keys',
+    newKeyPlaceholder: 'AIza… ключ Custom Search API',
+    extraFields: [
+      {
+        field: 'google_cse_cx',
+        label: 'Search engine ID (cx)',
+        placeholder: 'xxxxxxxxxxxxxxxxx:yyyyyyyyyyy',
+        hint: 'programmablesearchengine.google.com → ваш движок → Search engine ID. Без cx проверка вернёт google_cse_cx_not_configured.',
+      },
+    ],
+  },
+  {
+    id: 'bing_webmaster_keys',
+    label: 'Bing Webmaster',
+    shortLabel: 'Bing WM',
+    category: 'search',
+    description:
+      'JSON API Bing Webmaster Tools (GetUserSites, GetQueryStats, SubmitUrl). Ключ из Bing Webmaster → Settings → API Access. SOAP/POX снимаются 31 авг 2026; JSON + apikey остаются.',
+    keysField: 'bing_webmaster_keys',
+    healthKey: 'bing_webmaster_keys',
+    newKeyPlaceholder: 'Bing Webmaster API key',
+    extraFields: [
+      {
+        field: 'bing_webmaster_site_url',
+        label: 'Verified site URL',
+        placeholder: 'https://autoro.tech',
+        hint: 'Сайт должен быть verified в Bing Webmaster Tools. Без trailing slash.',
+      },
+    ],
   },
   {
     id: 'apify_keys',

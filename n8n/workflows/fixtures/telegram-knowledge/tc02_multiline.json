@@ -1,0 +1,10 @@
+{
+  "update_id": 100002,
+  "message": {
+    "message_id": 2,
+    "from": { "id": 90002, "is_bot": false, "username": "qa_multiline" },
+    "chat": { "id": 90002, "type": "private" },
+    "date": 1777777778,
+    "text": "TC-02: первая строка контекста.\n\nВторая строка с деталями задачи для команды.\n\nСсылка: https://example.com/tc02-long\n\nЧетвёртая строка — выводы."
+  }
+}

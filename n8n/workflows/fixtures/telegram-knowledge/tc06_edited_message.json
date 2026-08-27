@@ -1,0 +1,10 @@
+{
+  "update_id": 100006,
+  "edited_message": {
+    "message_id": 6,
+    "from": { "id": 90006, "is_bot": false, "username": "qa_edited" },
+    "chat": { "id": 90006, "type": "private" },
+    "date": 1777777782,
+    "text": "TC-06: исправленный текст после редактирования — https://example.com/tc06-edited"
+  }
+}

@@ -614,6 +614,7 @@ const DEFAULT_PROMPT_EXTRA = `[ROLE] Ассистент откликов. Пиш
 **Формат:** {format|remote|employment}
 ---
 {Approximate Relevance of a Vacancy}
+(в письме только «Релевантность: N/100» - без matched/инструментов/подробностей)
 {greeting}
 
 {2 short pitch sentence + relevant skills based experience}
@@ -660,6 +661,54 @@ summary: ...`;
 
 /** Prior shipped defaults (raw) - migrate exact fingerprint matches only; never wipe user edits. */
 const PREVIOUS_DEFAULT_PROMPT_RAW = [
+  // 0.9.21 OUT without score-only relevance note
+  `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
+
+[INPUT] vacancy | profile | cover_template? | custom_instructions? | contacts?
+
+[RULES]
+1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
+2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
+3. В письме: 4-6 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт. Всегда применяй скилы из базы знаний, которые помогут автоматизировать и оптимизировать процессы и бизнес, маркетинговые скилы.
+4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
+5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
+6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
+7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
+9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
+10. Tools: если JD просит tool X и X есть в profile / TOOL PIN - обязательно назови X по имени (1 bullet или внутри подходящего пункта; только факты). Если X нет в profile - не выдумывай; опционально transferable без претензии на X.
+11. Специалист широкого профиля: кандидат адаптирует смежный опыт из KB под JD (transferable skills, не только exact title). Маппинг только с именованными фактами из profile. Не выдумывай роли PO/roadmap/ownership/метрики, которых нет в KB. Нет факта -> skip.
+
+[OUT cover_letter]
+**Должность:** {title}
+**Формат:** {format|remote|employment}
+---
+{Approximate Relevance of a Vacancy}
+{greeting}
+
+{2 short pitch sentence + relevant skills based experience}
+**Специалист широкого профиля**
+**Почему я подхожу под вакансию:**
+1. **{тема}** - {1-2 предложения с фактом}
+2. ...
+3. ...
+(макс 4 пункта)
+
+{1 sentence CTA}
+
+**Следующий шаг:** {коротко}
+
+## Контакты
+- Telegram: ...
+- Email: ...
+(только известные; без пустых строк и без лишнего текста)
+**Полное резюме и портфолио во вложении, или по ссылке**
+## Ссылки
+резюме: https://...
+youtube: https://...
+(все известные релевантные URL с подписями; не выдумывай)
+
+[OUT qa] [{"question":"...","answer":"..."}]`,
   // 0.9.18 OUT relevance + specialist line, before generalist rule 11
   `[ROLE] Ассистент откликов. Пишешь только по фактам кандидата. Без воды.
 
@@ -2324,7 +2373,13 @@ async function runGenerate(mode) {
     if (coverTemplateEl) {
       await chrome.storage.local.set({ jrCoverTemplate: coverTemplate });
     }
-    // Промпт: только через «Сохранить промпт»; на generate уходит текущее значение textarea.
+    // Persist dirty prompt so edits survive reload; generate always sends textarea value.
+    if (promptExtraEl && promptExtraRaw !== String(savedPromptExtra || '').trim()) {
+      await chrome.storage.local.set({ jrPromptExtra: String(promptExtraEl.value || '') });
+      savedPromptExtra = String(promptExtraEl.value || '');
+      syncPromptSaveButton();
+    }
+    const tClientStart = Date.now();
     const data = await JR_API.generateResponse({
       mode: isQa ? 'qa' : 'cover_letter',
       host: currentVacancy?.host || 'web',
@@ -2337,6 +2392,28 @@ async function runGenerate(mode) {
       effectivenessPrompt: String(effectivenessPromptEl?.value || '').trim() || undefined,
       useLlmEffectiveness: Boolean(useLlmRelevanceEvalEl?.checked),
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7257/ingest/44a048b8-430c-4e6f-b281-90dd8573d6e6', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '920d6a' },
+      body: JSON.stringify({
+        sessionId: '920d6a',
+        runId: 'post-fix',
+        hypothesisId: 'A',
+        location: 'sidepanel.js:runGenerate:ok',
+        message: 'generate success',
+        data: {
+          clientMs: Date.now() - tClientStart,
+          elapsedSec: data.elapsedSec,
+          textChars: String(data.text || '').length,
+          providerErrors: data.providerErrors || [],
+          debugBudget: data.debugBudget || null,
+          sources: (data.sources || []).length,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const letter = String(data.text || '').trim();
     resultText.value = letter;
     syncCopyButtonState();
@@ -2407,6 +2484,32 @@ async function runGenerate(mode) {
     if (meta?.elapsedSec != null) bits.push(`${meta.elapsedSec}s`);
     if (meta?.providerErrors?.length) bits.push(`dbg: ${meta.providerErrors.join(' | ')}`);
     genMeta.textContent = bits.join(' · ');
+    // #region agent log
+    fetch('http://127.0.0.1:7257/ingest/44a048b8-430c-4e6f-b281-90dd8573d6e6', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '920d6a' },
+      body: JSON.stringify({
+        sessionId: '920d6a',
+        runId: 'post-fix',
+        hypothesisId: 'A',
+        location: 'sidepanel.js:runGenerate:err',
+        message: 'generate failed',
+        data: {
+          errMsg: String(err && err.message ? err.message : err).slice(0, 240),
+          timedOut: meta?.timedOut,
+          elapsedSec: meta?.elapsedSec,
+          error: meta?.error,
+          providerErrors: meta?.providerErrors || [],
+          debugBudget: meta?.debugBudget || null,
+          compactProfileChars: meta?.compactProfileChars,
+          looksLikeClientTimeout: /прервана через|сервер не успел|шлюз оборвал/i.test(
+            String(err && err.message ? err.message : '')
+          ),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     setError(String(err.message || err));
   } finally {
     setResultGenerating(false);

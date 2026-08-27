@@ -1,0 +1,236 @@
+{
+  "id": "k2P2a501x7Lm9QdR",
+  "name": "Telegram Knowledge Ingestion Phase2 v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-knowledge-ingest",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook_telegram_knowledge",
+      "name": "Webhook Telegram Knowledge",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "tg-kb-ingest-prod-v1",
+      "position": [
+        220,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected = String($env.TELEGRAM_WEBHOOK_SECRET || '').trim();\nconst got = String($json.headers?.['x-telegram-bot-api-secret-token'] || $json.headers?.['X-Telegram-Bot-Api-Secret-Token'] || '').trim();\n\nconst rawText = String($json.body?.message?.text || $json.body?.edited_message?.text || $json.body?.callback_query?.data || '').trim();\nconst chatId = String($json.body?.message?.chat?.id ?? $json.body?.edited_message?.chat?.id ?? $json.body?.callback_query?.message?.chat?.id ?? '').trim();\n\nreturn [{\n  ...$json,\n  secret_valid: expected ? (got && got === expected) : true,\n  has_text: Boolean(rawText),\n  chat_id: chatId,\n  raw_text: rawText,\n}];"
+      },
+      "id": "code_prepare_input",
+      "name": "Prepare Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.secret_valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if_secret_valid",
+      "name": "Secret Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.has_text}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if_has_text",
+      "name": "Has Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const compact = (s) => String(s || '').replace(/\\s+/g, ' ').trim();\nconst text = compact($json.raw_text || '');\nconst senderUsername = String($json.body?.message?.from?.username || $json.body?.edited_message?.from?.username || $json.body?.callback_query?.from?.username || '').trim();\nconst sender = senderUsername ? `@${senderUsername}` : String($json.body?.message?.from?.id ?? $json.body?.edited_message?.from?.id ?? $json.body?.callback_query?.from?.id ?? '').trim();\nconst urlMatch = text.match(/https?:\\/\\/[^\\s]+/i);\nconst sourceUrl = urlMatch ? urlMatch[0] : null;\nconst category = /(ai|llm|gpt|gemini|anthropic|prompt)/i.test(text) ? 'ai-ml' : (/(api|sdk|typescript|javascript|python|docker|dev)/i.test(text) ? 'dev-tools' : (/(seo|ads|marketing|growth|lead)/i.test(text) ? 'marketing' : 'general'));\nconst tags = Array.from(new Set([category, 'telegram', 'knowledge', 'autoro']));\nconst title = compact(text.split('\\n')[0] || text).slice(0, 180) || 'Telegram message';\nconst aiSummary = text.length > 280 ? `${text.slice(0, 277)}...` : text;\nconst eventId = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;\nconst nowIso = new Date().toISOString();\n\nconst knowledgeCapturePayload = {\n  workspaceId: String($env.KNOWLEDGE_WORKSPACE_ID || '1'),\n  source: 'telegram',\n  originalSender: sender || null,\n  url: sourceUrl,\n  title,\n  text,\n  aiSummary,\n  category,\n  tags,\n  status: 'to_process',\n  capturedAt: nowIso,\n};\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.reliableSync) staticData.reliableSync = { pending: {}, failedCapture: [], failedObsidian: [] };\nstaticData.reliableSync.pending[eventId] = {\n  eventId,\n  createdAt: nowIso,\n  chatId: String($json.chat_id || ''),\n  payload: knowledgeCapturePayload,\n};\n\nconst fallbackMarkdown = [\n  '---',\n  'source: \"Telegram\"',\n  `original_sender: \"${sender || 'unknown'}\"`,\n  `url: \"${sourceUrl || ''}\"`,\n  `tags: [${tags.join(', ')}]`,\n  `date: ${nowIso.slice(0, 10)}`,\n  'status: \"to_process\"',\n  `category: \"${category}\"`,\n  `captured_at: \"${nowIso}\"`,\n  '---',\n  '',\n  `# ${title}`,\n  '',\n  '### \u041a\u0440\u0430\u0442\u043a\u0438\u0439 \u043a\u043e\u043d\u0442\u0435\u043a\u0441\u0442 (AI Generated)',\n  aiSummary || text,\n  '',\n  '### \u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u043e\u0435 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435',\n  text,\n].join('\\n');\n\nreturn [{\n  ...$json,\n  event_id: eventId,\n  knowledge_capture_payload: knowledgeCapturePayload,\n  fallback_markdown: fallbackMarkdown,\n}];"
+      },
+      "id": "code_build_payload",
+      "name": "Build Payload + Queue Pending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const eventId = String($json.event_id || '');\nconst payload = $json.knowledge_capture_payload || null;\nconst wsForPath = String((payload && payload.workspaceId) || $env.KNOWLEDGE_WORKSPACE_ID || '1').trim();\nconst vaultRootFb = String($env.KNOWLEDGE_OBSIDIAN_VAULT_ROOT || '').trim().replace(/\\/+$/, '') || ('Autoro KB/ws-' + wsForPath);\n\nconst apiBase = String($env.KNOWLEDGE_API_BASE || 'https://swoop.autoro.tech').replace(/\\/$/, '');\nconst apiToken = String($env.KNOWLEDGE_API_TOKEN || '').trim();\nconst obsidianBase = String($env.OBSIDIAN_LOCAL_REST_URL || 'http://127.0.0.1:27124').replace(/\\/$/, '');\nconst obsidianToken = String($env.OBSIDIAN_LOCAL_REST_API_KEY || '').trim();\nconst REQ_TIMEOUT_MS = Math.min(15000, Math.max(3000, Number($env.KNOWLEDGE_HTTP_TIMEOUT_MS || 8000) || 8000));\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.reliableSync) staticData.reliableSync = { pending: {}, failedCapture: [], failedObsidian: [] };\n\nasync function postJson(url, headers, body) {\n  return this.helpers.httpRequest({\n    method: 'POST',\n    url,\n    headers,\n    body,\n    json: true,\n    returnFullResponse: true,\n    timeout: REQ_TIMEOUT_MS,\n  });\n}\n\nlet captureOk = false;\nlet captureResponseBody = null;\nlet captureError = null;\n\nif (!payload || !apiToken) {\n  captureError = 'Knowledge payload or KNOWLEDGE_API_TOKEN missing';\n} else {\n  try {\n    const r = await postJson.call(this, `${apiBase}/api/v1/knowledge/capture`, {\n      Authorization: `Bearer ${apiToken}`,\n      'Content-Type': 'application/json',\n    }, payload);\n    captureOk = (r.statusCode >= 200 && r.statusCode < 300);\n    captureResponseBody = r.body;\n    if (!captureOk) captureError = `knowledge capture HTTP ${r.statusCode}`;\n  } catch (e) {\n    captureError = String(e?.message || e || 'capture failed');\n  }\n}\n\nconst notePath = String(captureResponseBody?.obsidian?.notePathSuggested || `${vaultRootFb}/Knowledge Inbox/${new Date().toISOString().slice(0, 10)}/${eventId || 'telegram'}.md`);\nconst markdown = String(captureResponseBody?.obsidian?.markdown || $json.fallback_markdown || '');\n\nlet obsidianOk = false;\nlet obsidianError = null;\n\nif (!obsidianToken) {\n  obsidianError = 'OBSIDIAN_LOCAL_REST_API_KEY missing';\n} else {\n  try {\n    const encodedPath = notePath.split('/').map(encodeURIComponent).join('/');\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${obsidianBase}/vault/${encodedPath}`,\n      headers: {\n        Authorization: `Bearer ${obsidianToken}`,\n        'Content-Type': 'text/markdown; charset=utf-8',\n      },\n      body: markdown,\n      returnFullResponse: true,\n      timeout: REQ_TIMEOUT_MS,\n    });\n    obsidianOk = (r.statusCode >= 200 && r.statusCode < 300);\n    if (!obsidianOk) obsidianError = `obsidian write HTTP ${r.statusCode}`;\n  } catch (e) {\n    obsidianError = String(e?.message || e || 'obsidian failed');\n  }\n}\n\nif (!captureOk) {\n  staticData.reliableSync.failedCapture.push({\n    eventId,\n    at: new Date().toISOString(),\n    error: captureError,\n    payload,\n  });\n}\n\nif (!obsidianOk) {\n  staticData.reliableSync.failedObsidian.push({\n    eventId,\n    at: new Date().toISOString(),\n    error: obsidianError,\n    notePath,\n    markdown,\n  });\n}\n\nif (captureOk || obsidianOk) {\n  delete staticData.reliableSync.pending[eventId];\n}\n\nconst MAX_QUEUE = 2000;\nif (staticData.reliableSync.failedCapture.length > MAX_QUEUE) {\n  staticData.reliableSync.failedCapture = staticData.reliableSync.failedCapture.slice(-MAX_QUEUE);\n}\nif (staticData.reliableSync.failedObsidian.length > MAX_QUEUE) {\n  staticData.reliableSync.failedObsidian = staticData.reliableSync.failedObsidian.slice(-MAX_QUEUE);\n}\n\nreturn [{\n  ...$json,\n  sync_result: {\n    eventId,\n    captureOk,\n    obsidianOk,\n    captureError,\n    obsidianError,\n    notePath,\n    knowledgeItemId: captureResponseBody?.knowledgeItemId || null,\n    pendingCount: Object.keys(staticData.reliableSync.pending || {}).length,\n    failedCaptureCount: (staticData.reliableSync.failedCapture || []).length,\n    failedObsidianCount: (staticData.reliableSync.failedObsidian || []).length,\n  },\n}];"
+      },
+      "id": "code_reliable_sync",
+      "name": "Reliable Sync (Capture + Obsidian + Fallback)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-knowledge-retry",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook_retry_sync",
+      "name": "Webhook Retry Sync",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "webhookId": "tg-kb-retry-prod-v1",
+      "position": [
+        220,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiBase = String($env.KNOWLEDGE_API_BASE || 'https://swoop.autoro.tech').replace(/\\/$/, '');\nconst apiToken = String($env.KNOWLEDGE_API_TOKEN || '').trim();\nconst obsidianBase = String($env.OBSIDIAN_LOCAL_REST_URL || 'http://127.0.0.1:27124').replace(/\\/$/, '');\nconst obsidianToken = String($env.OBSIDIAN_LOCAL_REST_API_KEY || '').trim();\n\nconst BATCH_CAPTURE = Math.min(50, Number($env.KNOWLEDGE_RETRY_BATCH_CAPTURE || 25) || 25);\nconst BATCH_OBSIDIAN = Math.min(50, Number($env.KNOWLEDGE_RETRY_BATCH_OBSIDIAN || 25) || 25);\nconst REQ_TIMEOUT_MS = Math.min(15000, Math.max(3000, Number($env.KNOWLEDGE_HTTP_TIMEOUT_MS || 8000) || 8000));\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.reliableSync) staticData.reliableSync = { pending: {}, failedCapture: [], failedObsidian: [] };\n\nconst currentFailedCapture = Array.isArray(staticData.reliableSync.failedCapture) ? staticData.reliableSync.failedCapture : [];\nconst currentFailedObsidian = Array.isArray(staticData.reliableSync.failedObsidian) ? staticData.reliableSync.failedObsidian : [];\n\nconst capQueue = [...currentFailedCapture];\nconst obsQueue = [...currentFailedObsidian];\nconst capBatch = capQueue.splice(0, BATCH_CAPTURE);\nconst obsBatch = obsQueue.splice(0, BATCH_OBSIDIAN);\n\nasync function tryCapture(entry) {\n  if (!apiToken || !entry?.payload) {\n    return { ok: false, error: 'missing token or payload' };\n  }\n  try {\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${apiBase}/api/v1/knowledge/capture`,\n      headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },\n      body: entry.payload,\n      json: true,\n      returnFullResponse: true,\n      timeout: REQ_TIMEOUT_MS,\n    });\n    const ok = r.statusCode >= 200 && r.statusCode < 300;\n    return { ok, error: ok ? null : `HTTP ${r.statusCode}` };\n  } catch (e) {\n    return { ok: false, error: String(e?.message || e || 'capture retry failed') };\n  }\n}\n\nasync function tryObsidian(entry) {\n  if (!obsidianToken || !entry?.notePath || !entry?.markdown) {\n    return { ok: false, error: 'missing obsidian token/path/markdown' };\n  }\n  try {\n    const encodedPath = String(entry.notePath).split('/').map(encodeURIComponent).join('/');\n    const r = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${obsidianBase}/vault/${encodedPath}`,\n      headers: { Authorization: `Bearer ${obsidianToken}`, 'Content-Type': 'text/markdown; charset=utf-8' },\n      body: String(entry.markdown),\n      returnFullResponse: true,\n      timeout: REQ_TIMEOUT_MS,\n    });\n    const ok = r.statusCode >= 200 && r.statusCode < 300;\n    return { ok, error: ok ? null : `HTTP ${r.statusCode}` };\n  } catch (e) {\n    return { ok: false, error: String(e?.message || e || 'obsidian retry failed') };\n  }\n}\n\nconst captureRemaining = [];\nconst obsidianRemaining = [];\nlet captureRecovered = 0;\nlet obsidianRecovered = 0;\n\nfor (const entry of capBatch) {\n  const res = await tryCapture.call(this, entry);\n  if (res.ok) {\n    captureRecovered += 1;\n  } else {\n    captureRemaining.push({ ...entry, lastRetryAt: new Date().toISOString(), error: res.error || entry.error || 'retry failed' });\n  }\n}\n\nfor (const entry of obsBatch) {\n  const res = await tryObsidian.call(this, entry);\n  if (res.ok) {\n    obsidianRecovered += 1;\n  } else {\n    obsidianRemaining.push({ ...entry, lastRetryAt: new Date().toISOString(), error: res.error || entry.error || 'retry failed' });\n  }\n}\n\nstaticData.reliableSync.failedCapture = [...captureRemaining, ...capQueue];\nstaticData.reliableSync.failedObsidian = [...obsidianRemaining, ...obsQueue];\n\nreturn [{\n  retry_summary: {\n    captureRecovered,\n    obsidianRecovered,\n    failedCaptureRemaining: staticData.reliableSync.failedCapture.length,\n    failedObsidianRemaining: staticData.reliableSync.failedObsidian.length,\n    deferredCapture: capQueue.length,\n    deferredObsidian: obsQueue.length,\n    batchCapture: capBatch.length,\n    batchObsidian: obsBatch.length,\n    pendingCount: Object.keys(staticData.reliableSync.pending || {}).length,\n  },\n}];"
+      },
+      "id": "code_retry_failed_queues",
+      "name": "Retry Failed Queues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        640
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Telegram Knowledge": {
+      "main": [
+        [
+          {
+            "node": "Prepare Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Input": {
+      "main": [
+        [
+          {
+            "node": "Secret Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secret Valid?": {
+      "main": [
+        [
+          {
+            "node": "Has Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Text?": {
+      "main": [
+        [
+          {
+            "node": "Build Payload + Queue Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Payload + Queue Pending": {
+      "main": [
+        [
+          {
+            "node": "Reliable Sync (Capture + Obsidian + Fallback)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reliable Sync (Capture + Obsidian + Fallback)": {
+      "main": [
+        []
+      ]
+    },
+    "Webhook Retry Sync": {
+      "main": [
+        [
+          {
+            "node": "Retry Failed Queues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Failed Queues": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 75
+  },
+  "active": true,
+  "versionId": "telegram-knowledge-ingestion-phase2-v3-obsidian-ws-root",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

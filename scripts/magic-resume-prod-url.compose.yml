@@ -1,0 +1,29 @@
+# Reference copy of VPS file: /home/vladx/apps/magic-resume/docker-compose.prod-url.yml
+services:
+  web:
+    image: node:22-alpine
+    container_name: magic-resume-web
+    working_dir: /app
+    command: sh -lc "command -v pnpm >/dev/null || npm i -g pnpm@10.3.0; test -d node_modules/.pnpm || pnpm install --frozen-lockfile; exec pnpm dev --host 0.0.0.0 --port 3000"
+    environment:
+      - NODE_ENV=development
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=resume.autoro.tech
+      - VIRTUAL_HOST=resume.autoro.tech
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=resume.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+      - HTTPS_METHOD=noredirect
+      - CLIENT_MAX_BODY_SIZE=50m
+      - PROXY_READ_TIMEOUT=300s
+      - PROXY_CONNECT_TIMEOUT=60s
+      - PROXY_SEND_TIMEOUT=300s
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    networks:
+      - default
+      - proxy
+
+networks:
+  proxy:
+    external: true

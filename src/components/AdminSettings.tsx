@@ -54,6 +54,10 @@ interface ServiceSettings {
   tavily_keys: string[]
   serpapi_keys: string[]
   serpapi_default_engine: string
+  google_cse_keys: string[]
+  google_cse_cx: string
+  bing_webmaster_keys: string[]
+  bing_webmaster_site_url: string
   apify_keys: string[]
   apify_default_actor: string
   brightdata_keys: string[]
@@ -229,6 +233,10 @@ export function AdminSettings() {
     tavily_keys: [],
     serpapi_keys: [],
     serpapi_default_engine: 'google',
+    google_cse_keys: [],
+    google_cse_cx: '',
+    bing_webmaster_keys: [],
+    bing_webmaster_site_url: 'https://autoro.tech',
     apify_keys: [],
     apify_default_actor: 'compass/crawler-google-places',
     brightdata_keys: [],
@@ -550,6 +558,10 @@ export function AdminSettings() {
           tavily_keys: (data.tavily_keys || []).filter((k: string) => k && k.trim()),
           serpapi_keys: ((data as Record<string, unknown>).serpapi_keys as string[] || []).filter((k: string) => k && k.trim()),
           serpapi_default_engine: String((data as Record<string, unknown>).serpapi_default_engine || 'google').trim() || 'google',
+          google_cse_keys: ((data as Record<string, unknown>).google_cse_keys as string[] || []).filter((k: string) => k && k.trim()),
+          google_cse_cx: String((data as Record<string, unknown>).google_cse_cx || '').trim(),
+          bing_webmaster_keys: ((data as Record<string, unknown>).bing_webmaster_keys as string[] || []).filter((k: string) => k && k.trim()),
+          bing_webmaster_site_url: String((data as Record<string, unknown>).bing_webmaster_site_url || 'https://autoro.tech').trim() || 'https://autoro.tech',
           apify_keys: ((data as Record<string, unknown>).apify_keys as string[] || []).filter((k: string) => k && k.trim()),
           apify_default_actor: String((data as Record<string, unknown>).apify_default_actor || 'compass/crawler-google-places').trim(),
           brightdata_keys: ((data as Record<string, unknown>).brightdata_keys as string[] || []).filter((k: string) => k && k.trim()),
@@ -983,6 +995,10 @@ export function AdminSettings() {
                 tavily_keys: settings.tavily_keys,
                 serpapi_keys: settings.serpapi_keys,
                 serpapi_default_engine: settings.serpapi_default_engine.trim() || 'google',
+                google_cse_keys: settings.google_cse_keys,
+                google_cse_cx: settings.google_cse_cx.trim(),
+                bing_webmaster_keys: settings.bing_webmaster_keys,
+                bing_webmaster_site_url: settings.bing_webmaster_site_url.trim() || 'https://autoro.tech',
                 apify_keys: settings.apify_keys,
                 apify_default_actor: settings.apify_default_actor.trim() || 'compass/crawler-google-places',
                 brightdata_keys: settings.brightdata_keys,

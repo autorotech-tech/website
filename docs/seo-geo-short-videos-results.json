@@ -1,0 +1,986 @@
+{
+  "probe_run": {
+    "at": "2026-07-23T06:55:46.350373+00:00",
+    "engine": "google_short_videos",
+    "geo": {
+      "google_domain": "google.ru",
+      "gl": "ru",
+      "hl": "ru",
+      "location": "Moscow, Russia"
+    },
+    "keywords_tested": 5,
+    "mode": "direct_serpapi_curl",
+    "script": "scripts/seo-geo-short-videos-probe.py"
+  },
+  "summaries": [
+    {
+      "keyword": "дешевые матрасы",
+      "page": "askona",
+      "tier": "HF",
+      "ok": true,
+      "count": 12,
+      "short_videos_present": "да",
+      "brand_in_short_videos": "нет",
+      "brand_match": false,
+      "top_sources": [
+        "Instagram",
+        "TikTok",
+        "YouTube",
+        "Китай Производители, Поставщики и Товары"
+      ],
+      "search_information": {
+        "short_video_results_state": "Results for exact spelling"
+      },
+      "google_short_videos_url": "https://www.google.ru/search?q=%D0%B4%D0%B5%D1%88%D0%B5%D0%B2%D1%8B%D0%B5+%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+      "sample": [
+        {
+          "pos": 1,
+          "title": "Простой способ выбрать матрас, не погружаясь в дебри ...",
+          "link": "https://www.instagram.com/reel/DXpBwb4M8ud/",
+          "source": "Instagram",
+          "channel": "МАТРАСЫ • КРОВАТИ • ПОДУШКИ • ОДЕЯЛА • ФАБРИКА СНА"
+        },
+        {
+          "pos": 2,
+          "title": "Видео о Как Сделать OEM Устойчивый Дешевый Матрас ...",
+          "link": "https://ru.made-in-china.com/video-channel/fsqisheng_lNBxIdgPhQVr_OEM-Resilient-Cheap-Mattress-24cm-High-with-Resilient-Foam-Layer-and-Bonnell-Spring.html",
+          "source": "Китай Производители, Поставщики и Товары",
+          "channel": ""
+        },
+        {
+          "pos": 3,
+          "title": "Петропавловск on Instagram: \" Дешёвый ≠ хороший ...",
+          "link": "https://www.instagram.com/reel/DW3HHgpqIR4/",
+          "source": "Instagram",
+          "channel": "Матрасы Фабрики Сова|Казахстан|Петропавловск"
+        }
+      ],
+      "error": null,
+      "raw_ok": true
+    },
+    {
+      "keyword": "матрасы купить",
+      "page": "askona",
+      "tier": "HF",
+      "ok": true,
+      "count": 12,
+      "short_videos_present": "да",
+      "brand_in_short_videos": "да",
+      "brand_match": true,
+      "top_sources": [
+        "Facebook",
+        "Instagram",
+        "Threads",
+        "TikTok",
+        "Пикабу"
+      ],
+      "search_information": {
+        "short_video_results_state": "Results for exact spelling"
+      },
+      "google_short_videos_url": "https://www.google.ru/search?q=%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B+%D0%BA%D1%83%D0%BF%D0%B8%D1%82%D1%8C&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+      "sample": [
+        {
+          "pos": 1,
+          "title": "А у вас есть матрас от Askona? Я выбрал матрас ручной ...",
+          "link": "https://www.instagram.com/reel/DbAVEsctQEG/",
+          "source": "Instagram",
+          "channel": "CHINGIZ KAPIN"
+        },
+        {
+          "pos": 2,
+          "title": "Владикавказ on Instagram: \"Где купить качественный ...",
+          "link": "https://www.instagram.com/reel/Da7nL7nMIGp/",
+          "source": "Instagram",
+          "channel": "МАТРАСЫ МЕБЕЛЬ| Владикавказ"
+        },
+        {
+          "pos": 3,
+          "title": "Кровати и Матрасы от Производителя МОСКОВСКАЯ ...",
+          "link": "https://www.threads.com/@matras_krovati_lux_krasnodar/post/DaPVdGnkSyY/video-%D0%BA%D1%80%D0%BE%D0%B2%D0%B0%D1%82%D0%B8-%D0%B8-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B-%D0%BE%D1%82-%D0%BF%D1%80%D0%BE%D0%B8%D0%B7%D0%B2%D0%BE%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D1%8F-%D0%BC%D0%BE%D1%81%D0%BA%D0%BE%D0%B2%D1%81%D0%BA%D0%B0%D1%8F-125%D0%BA1-8-961-501-50-67-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B%D0%BA%D1%80%D0%B0%D1%81%D0%BD/",
+          "source": "Threads",
+          "channel": "matras_krovati_lux_krasnodar"
+        }
+      ],
+      "error": null,
+      "raw_ok": true
+    },
+    {
+      "keyword": "дешевые матрасы askona",
+      "page": "askona",
+      "tier": "MF",
+      "ok": true,
+      "count": 12,
+      "short_videos_present": "да",
+      "brand_in_short_videos": "да",
+      "brand_match": true,
+      "top_sources": [
+        "Instagram"
+      ],
+      "search_information": {
+        "short_video_results_state": "Results for exact spelling"
+      },
+      "google_short_videos_url": "https://www.google.ru/search?q=%D0%B4%D0%B5%D1%88%D0%B5%D0%B2%D1%8B%D0%B5+%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B+askona&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+      "sample": [
+        {
+          "pos": 1,
+          "title": "А у вас есть матрас от Askona? Я выбрал матрас ручной ...",
+          "link": "https://www.instagram.com/reel/DbAVEsctQEG/",
+          "source": "Instagram",
+          "channel": "CHINGIZ KAPIN"
+        },
+        {
+          "pos": 2,
+          "title": "🛏️ -20% на все кровати и матрасы Askona! Это тот ...",
+          "link": "https://www.instagram.com/reel/DZ9Z5UyACgw/",
+          "source": "Instagram",
+          "channel": "JUMBO CENTRUL COMERCIAL"
+        },
+        {
+          "pos": 3,
+          "title": "Время обновить сон В Askona сейчас действует приятная ...",
+          "link": "https://www.instagram.com/reel/DU3Q2CHDQoh/",
+          "source": "Instagram",
+          "channel": "KHANSHAIYM PLAZA | TURKISTAN"
+        }
+      ],
+      "error": null,
+      "raw_ok": true
+    },
+    {
+      "keyword": "женские спортивные брюки",
+      "page": "lamoda",
+      "tier": "HF",
+      "ok": true,
+      "count": 12,
+      "short_videos_present": "да",
+      "brand_in_short_videos": "нет",
+      "brand_match": false,
+      "top_sources": [
+        "DHgate",
+        "Instagram",
+        "Pinterest",
+        "Temu",
+        "TikTok"
+      ],
+      "search_information": {
+        "short_video_results_state": "Results for exact spelling"
+      },
+      "google_short_videos_url": "https://www.google.ru/search?q=%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5+%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5+%D0%B1%D1%80%D1%8E%D0%BA%D0%B8&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+      "sample": [
+        {
+          "pos": 1,
+          "title": "3 шт. женские модные штаны для йоги спортивные штаны ...",
+          "link": "https://www.temu.com/il-ru/3-%D1%88%D1%82-%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5-%D0%BC%D0%BE%D0%B4%D0%BD%D1%8B%D0%B5-%D1%88%D1%82%D0%B0%D0%BD%D1%8B-%D0%B4%D0%BB%D1%8F-%D0%B9%D0%BE%D0%B3%D0%B8-%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5-%D1%88%D1%82%D0%B0%D0%BD%D1%8B-%D0%B4%D0%BB%D1%8F-%D1%84%D0%B8%D1%82%D0%BD%D0%B5%D1%81%D0%B0-%D0%B8-%D0%B0%D0%BA%D1%82%D0%B8%D0%B2%D0%BD%D0%BE%D0%B3%D0%BE-%D0%BE%D1%82%D0%B4%D1%8B%D1%85%D0%B0-%D0%BB%D0%B5%D0%B3%D0%B3%D0%B8%D0%BD%D1%81%D1%8B-%D1%81-%D1%8D%D1%84%D1%84%D0%B5%D0%BA%D1%82%D0%BE%D0%BC-%D0%BA%D0%BE%D0%BD%D1%82%D1%80%D0%BE%D0%BB%D1%8F-%D0%B6%D0%B8%D0%B2%D0%BE%D1%82%D0%B0-%D0%B8-%D0%BF%D0%BE%D0%B4%D1%82%D1%8F%D0%B6%D0%BA%D0%B8-%D1%8F%D0%B3%D0%BE%D0%B4%D0%B8%D1%86-%D1%83%D0%B4%D0%BE%D0%B1%D0%BD%D1%8B%D0%B5-%D0%B4%D1%8B%D1%88%D0%B0%D1%89%D0%B8%D0%B5-%D0%B2%D0%BB%D0%B0%D0%B3%D0%BE%D0%BE%D1%82%D0%B2%D0%BE%D0%B4%D1%8F%D1%89%D0%B8%D0%B5-%D0%B4%D0%BB%D0%B8%D0%BD%D0%BD%D1%8B%D0%B5-%D0%B1%D1%80%D1%8E%D0%BA%D0%B8-g-601103597507524.html",
+          "source": "Temu",
+          "channel": ""
+        },
+        {
+          "pos": 2,
+          "title": "Женские спортивные штаны Удобные, лёгкие и ...",
+          "link": "https://www.instagram.com/reel/DWQndNWDVDY/",
+          "source": "Instagram",
+          "channel": "МАГАЗИН ❇️ ОДЕЖДЫ ❇️ БИШКЕК"
+        },
+        {
+          "pos": 3,
+          "title": "Новинка! Брюки \"Паркер\" уже доступны на Wildberries ...",
+          "link": "https://ru.pinterest.com/pin/917186280378428662/",
+          "source": "Pinterest",
+          "channel": "lk_urban_dress"
+        }
+      ],
+      "error": null,
+      "raw_ok": true
+    },
+    {
+      "keyword": "женские спортивные штаны lamoda",
+      "page": "lamoda",
+      "tier": "MF",
+      "ok": true,
+      "count": 12,
+      "short_videos_present": "да",
+      "brand_in_short_videos": "да",
+      "brand_match": true,
+      "top_sources": [
+        "Instagram"
+      ],
+      "search_information": {
+        "short_video_results_state": "Results for exact spelling"
+      },
+      "google_short_videos_url": "https://www.google.ru/search?q=%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5+%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5+%D1%88%D1%82%D0%B0%D0%BD%D1%8B+lamoda&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+      "sample": [
+        {
+          "pos": 1,
+          "title": "день, когда хочется быть собой когда одежда становится ...",
+          "link": "https://www.instagram.com/reel/DazqKQfs4Qu/",
+          "source": "Instagram",
+          "channel": "Torae Black | ЖЕНСКАЯ ОДЕЖДА"
+        },
+        {
+          "pos": 2,
+          "title": "Идеальные костюмы Я нашла на Lamoda Бежевый ...",
+          "link": "https://www.instagram.com/reel/DZ4PVoSIK7B/",
+          "source": "Instagram",
+          "channel": "Tanya Godunova"
+        },
+        {
+          "pos": 3,
+          "title": "Артикулы в описании WB: брюки - #468192720 свитшот ...",
+          "link": "https://www.instagram.com/reel/DSuYEwsCCBO/",
+          "source": "Instagram",
+          "channel": "GRAY MOSS | РОССИЙСКИЙ БРЕНД"
+        }
+      ],
+      "error": null,
+      "raw_ok": true
+    }
+  ],
+  "results": [
+    {
+      "request": {
+        "keyword": "дешевые матрасы",
+        "page": "askona",
+        "tier": "HF"
+      },
+      "response": {
+        "ok": true,
+        "http_code": 200,
+        "short_video_results": [
+          {
+            "position": 1,
+            "title": "Простой способ выбрать матрас, не погружаясь в дебри ...",
+            "link": "https://www.instagram.com/reel/DXpBwb4M8ud/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h_tl3jSBjdXoHFzwBj1No2g.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hwmMwvP326111SjhK9pX8GWFT7hlHIfx1LZ6EKG_yJ1g.png",
+            "channel": "МАТРАСЫ • КРОВАТИ • ПОДУШКИ • ОДЕЯЛА • ФАБРИКА СНА",
+            "duration": "0:36"
+          },
+          {
+            "position": 2,
+            "title": "Видео о Как Сделать OEM Устойчивый Дешевый Матрас ...",
+            "link": "https://ru.made-in-china.com/video-channel/fsqisheng_lNBxIdgPhQVr_OEM-Resilient-Cheap-Mattress-24cm-High-with-Resilient-Foam-Layer-and-Bonnell-Spring.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hwSVf6K2oNYeJIRvlJAelpU.jpeg",
+            "source": "Китай Производители, Поставщики и Товары",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABLUlEQVR4AcTUAUQEYRCG4Z9jCSxYYgMciFgAHHEggAM4IoBAAAcORACIQABxRAQQgYgAlghELBFHHMdyfL0A5GeGYfEAw7wYkyQNaviA9cE4yjmS0yJq-QQ9ksMcili-j28IyWiKPiKgwAvkCDjCLxQRcA05Amp0UETAGeQIKNFCEQENto6AAs9QRECFT8gYMMIKiggY4QlyBNxAUQFXkCNgAUUFzCBHwByKCjjExhEwRR8VUOIDMvj3aCICHiCjGh0UFbCEHFooKuAEO8gjKmCMNTREwB5aKOMRcnj3BtxBGW-oIKMNGk_ABZTRoUIJGZ2itAYcI3d0WzRIjoAVkjWgxg-UMUNyBHyhtAYUeIUylkiOgB0mSNaAWyjjHskZcOmZ_9toz2jUAaMOAADbWhyd3Yi4lQAAAABJRU5ErkJggg.png",
+            "channel": "",
+            "duration": "0:39"
+          },
+          {
+            "position": 3,
+            "title": "Петропавловск on Instagram: \" Дешёвый ≠ хороший ...",
+            "link": "https://www.instagram.com/reel/DW3HHgpqIR4/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hxu99TySFpF832NsqIy_c_Q.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hwgWY_6bCVNq0GdNOGlPBFmNr2BspOMjnHM4OLCSCrrO.png",
+            "channel": "Матрасы Фабрики Сова|Казахстан|Петропавловск",
+            "duration": "0:42"
+          },
+          {
+            "position": 4,
+            "title": "Выбирайте матрас отдельно",
+            "link": "https://www.youtube.com/shorts/2G-td-3TnRc",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h3ttR73a33jzlFwq1QkEElM.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcRqUiv5-tz3XbQrBJVXRXrcEztFZ0rFIdK4rQ",
+            "source": "YouTube",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8_9hAAAAhUlEQVR4AWNwL_ChCFPHgP8MxqxA7ArEKVBcCcUNIAznI-RdQXrABgAZpv8ZjP6Tg0F6QQbsosCAXSADHmGVVPIC0jKEDHgAMuAbmgRE445D___feYzXIJBeBigH04BVW_9DAcgwqEGYaik2gGIvUByIlEbjDooTEiwps5GRlNmolpkowgBVP9wMSzSKGAAAAABJRU5ErkJggg.png",
+            "channel": "Matro Boss",
+            "duration": "1:06"
+          },
+          {
+            "position": 5,
+            "title": "мы не продаемся на маркетплейсах! знаете, что чаще ...",
+            "link": "https://www.instagram.com/reel/DZe2VD8NdA-/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hyXUCnLSvUJpW4AOW6re4hI.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h5Yn9Xjp67ywO7BdxVg_lDAna_x_Vw2o4DANfH1aAUDt.png",
+            "channel": "МАТРАСЫ | КРОВАТИ | Новосибирск",
+            "duration": "0:51"
+          },
+          {
+            "position": 6,
+            "title": "Доступные матрасы на Wildberries: мягкость и качество",
+            "link": "https://www.tiktok.com/@lubimwb/video/7543970696985103630",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h07nLIMC52z-Ng1yH1DxVm0.jpeg",
+            "source": "TikTok",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAw1BMVEUAAAAAAAAFT1IAQUNBub6u5eexxcpyQ0wIAABaxsv5____9_nGj5oyAAD____84eeEYmvm4uN4f4A5P0MAFBXx-vu019khAAD60tr37vDlmqpXAAsALzAKc3gpo6hjpqr_6O3idYqcbHTSrLP6iJ9rABOc5Ofi-vvJYnXLbn8_AAI9HyWWIDhRz9TH9PffY3oDAAC99vjhSGe7KEenACiF4-f_1961PVaB09bFkZswjJGwuLr__f7xqbYYHh_9tsTiL1Yh8R0_AAAAAXRSTlP-GuMHfQAAANJJREFUeAG90kUCg1AMBNDiPtTd3d2V-5-quMOS2b6vSXI5IjnZIElSyUgzLMcnoSBKspKMUPMpiEKxVE5EVKr5WgTLBkr1BtBsBbHd6fZKOvYHw1F9PAkgSU9njXlNx8Vyxa2XfmxvtoC0M1GH_d6P3QPU8fFkY_Ar7Q0ag3ONIOKQvOB60i0WqSnUG6FnI6rzMJbvkB76zo5-wk0JIf8EGq9ndzN7f9bRrlQBcTYTcT22iAh-X9Ib7_dPm8Q1u5Zvfpq7c4uIQ56otVrLjEYzJX-4mxcG80U-CwAAAABJRU5ErkJggg.png",
+            "channel": "lubimwb",
+            "duration": "0:17"
+          },
+          {
+            "position": 7,
+            "title": "🌠 \"Nur_matras\" не производит самые дешевые ...",
+            "link": "https://www.facebook.com/nuurmatrasuz/posts/-nur_matras-%D0%BD%D0%B5-%D0%BF%D1%80%D0%BE%D0%B8%D0%B7%D0%B2%D0%BE%D0%B4%D0%B8%D1%82-%D1%81%D0%B0%D0%BC%D1%8B%D0%B5-%D0%B4%D0%B5%D1%88%D0%B5%D0%B2%D1%8B%D0%B5-%D0%BE%D1%80%D1%82%D0%BE%D0%BF%D0%B5%D0%B4%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%B8%D0%B5-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B-%D1%8D%D1%82%D0%BE-%D0%BD%D0%B5-%D0%BD%D0%B0%D1%88%D0%B0-%D1%86%D0%B5%D0%BB%D1%8C-/110541945183601/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h3bCerSgPHPEkHtPsYlBAfk.jpeg",
+            "source": "Facebook",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAXVBMVEVHcEwHZv8HaP8IZ_8IZ_8IZv8IaP8IZ_8HZv8Haf8IZ_8IaP8IZ_8AXv8AV_8AYv-SqP_P1__m6__e5f9wlP____-tvP9jiv82c_8IZ_8Iaf-fsf________8AW_-wrobhAAAAH3RSTlMAM4bC6v1h7v8Z3UL_______7_________wRiFwenBhp_Z0gAAAOhJREFUeAFtk0UWwzAMBWWHFHOZe_9bBn9Nr7Mdg5AiQjZt17WNFFTTDxwZ-kKNigvUmJw2XGF0dByx1jlnPTPDjiYqDofj8XQ4L9bsL6vozpedq13_3eJk4G-XXPIac8zBHUs5EIl48Q4Tws3ziiAZ5f7j3Vq7O5b0iOGE1Z0cRxpqS3mwSbbU4VHndukW8GwHiQ_BzUO2KceIw7MIqJBHyIZk_WwKSv6KcD_frlsqt_P5joBELJ-3iNZD8YDC_82zz1pWS5U1u5bmmY1JLdMQmVoaOIxmIdVYDXWUxVAD8Xp_FvnN1mEG0f0e5ixC4ikAAAAASUVORK5CYII.png",
+            "channel": "Nurmatras",
+            "duration": "0:20"
+          },
+          {
+            "position": 8,
+            "title": "💡 *Почему матрас лучше покупать отдельно от спального ...",
+            "link": "https://www.instagram.com/reel/DVpzRmyDOcf/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h5aTqe7wBo8K3bzbXTnVKYA.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h5ree6YjBl1z6t5YgxarzuN-WmXhW8MM0xLQT4KKZfJg.png",
+            "channel": "Мир Мебели и Электроники",
+            "duration": "0:31"
+          },
+          {
+            "position": 9,
+            "title": "Хороший матрас не может стоить дёшево и не может ...",
+            "link": "https://www.instagram.com/reel/DY1Cj2mOnDd/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8hw6hjYKfJyZi9bJIyqhuoU0.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h0pPWhSUTO9IjyM00CYhXZQ1tqqvq6GFOMjPDTN-Zqap.png",
+            "channel": "Матрасы Кровати Подушки | Пенза | Спи Как Надо",
+            "duration": "0:07"
+          },
+          {
+            "position": 10,
+            "title": "МИНУС 25% НА ВСЕ ОРТОПЕДИЧЕСКИЕ МАТРАСЫ И это ...",
+            "link": "https://www.instagram.com/reel/DY9OdZkoLML/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h49v7ml5gXOUYMTZ9aA5-yY.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h1OhdjObYAbzFJsSPegn_vV6gOP4s0JLSI8OMKh0UmTr.png",
+            "channel": "МАТРАСЫ | ПОДУШКИ | КРОВАТИ | АЛМАТЫ",
+            "duration": "0:26"
+          },
+          {
+            "position": 11,
+            "title": "Владикавказ on Instagram: \"Где купить качественный ...",
+            "link": "https://www.instagram.com/reel/Da7nL7nMIGp/",
+            "thumbnail": "https://serpapi.com/images/i/R0lGODlhAQABAIAAAP_______yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw.gif",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h4H50qWTWTKeddXE1SRtOsl2XjhXzMhJFG0xSM_losHP.png",
+            "channel": "МАТРАСЫ МЕБЕЛЬ| Владикавказ",
+            "duration": "0:12"
+          },
+          {
+            "position": 12,
+            "title": "Спальня Вашей мечты теперь ещё доступнее. С 20 июня ...",
+            "link": "https://www.instagram.com/reel/DacCNfAMYUC/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h96OFD4-xD1DUWzg_3qBln3oZjIjNrvR_jvI9t6fxojC.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac22ddc43ded18a056f/images/qowvLIJTz-Ycs4kSLKU8h9pWmsm867pnJKcjulgwM6gLF5g8iSTM1kUkhZUYtBsw.png",
+            "channel": "МЕБЕЛЬ • КЫЗЫЛ • Заман|Давита|Трия|Эра|Аврора",
+            "duration": "0:16"
+          }
+        ],
+        "search_information": {
+          "short_video_results_state": "Results for exact spelling"
+        },
+        "search_metadata": {
+          "id": "6a61bac22ddc43ded18a056f",
+          "status": "Success",
+          "json_endpoint": "https://serpapi.com/searches/wlzxRhUrRbOW7QqjgYwWUg/6a61bac22ddc43ded18a056f.json",
+          "created_at": "2026-07-23 06:54:58 UTC",
+          "processed_at": "2026-07-23 06:54:58 UTC",
+          "google_short_videos_url": "https://www.google.ru/search?q=%D0%B4%D0%B5%D1%88%D0%B5%D0%B2%D1%8B%D0%B5+%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+          "raw_html_file": "https://serpapi.com/searches/wlzxRhUrRbOW7QqjgYwWUg/6a61bac22ddc43ded18a056f.html",
+          "total_time_taken": 0.84
+        },
+        "error": null
+      }
+    },
+    {
+      "request": {
+        "keyword": "матрасы купить",
+        "page": "askona",
+        "tier": "HF"
+      },
+      "response": {
+        "ok": true,
+        "http_code": 200,
+        "short_video_results": [
+          {
+            "position": 1,
+            "title": "А у вас есть матрас от Askona? Я выбрал матрас ручной ...",
+            "link": "https://www.instagram.com/reel/DbAVEsctQEG/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfKhsdRjhCDgRGTT5QoQr5fA.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfAuUGCUA1zF6L5ioyWtN1ZGTYW0ftgpTf18W4NEAoyTm.png",
+            "channel": "CHINGIZ KAPIN",
+            "duration": "2:01"
+          },
+          {
+            "position": 2,
+            "title": "Владикавказ on Instagram: \"Где купить качественный ...",
+            "link": "https://www.instagram.com/reel/Da7nL7nMIGp/",
+            "thumbnail": "https://serpapi.com/images/i/R0lGODlhAQABAIAAAP_______yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw.gif",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfNC_q9jQ_AqJemWAIZFB9pAFjOeyrQYl2riQxCMS7rUU.png",
+            "channel": "МАТРАСЫ МЕБЕЛЬ| Владикавказ",
+            "duration": "0:12"
+          },
+          {
+            "position": 3,
+            "title": "Кровати и Матрасы от Производителя МОСКОВСКАЯ ...",
+            "link": "https://www.threads.com/@matras_krovati_lux_krasnodar/post/DaPVdGnkSyY/video-%D0%BA%D1%80%D0%BE%D0%B2%D0%B0%D1%82%D0%B8-%D0%B8-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B-%D0%BE%D1%82-%D0%BF%D1%80%D0%BE%D0%B8%D0%B7%D0%B2%D0%BE%D0%B4%D0%B8%D1%82%D0%B5%D0%BB%D1%8F-%D0%BC%D0%BE%D1%81%D0%BA%D0%BE%D0%B2%D1%81%D0%BA%D0%B0%D1%8F-125%D0%BA1-8-961-501-50-67-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B%D0%BA%D1%80%D0%B0%D1%81%D0%BD/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfEp6vxw7Ly-TmN-rFsLAweI.jpeg",
+            "source": "Threads",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAn1BMVEVHcEypqamDg4Nra2tlZWVaWlpQUFBFRUVBQUE1NTU9PT1NTU3GxsZycnI5OTkmJiYtLS0yMjIvLy8jIyMdHR2QkJCwsLC5ubmkpKR9fX0ODg4qKiru7u7____Ly8vg4OCYmJjDw8P09PQTExMAAAAYGBgpKSna2toICAiJiYmdnZ2BgYH7-_vo6OjQ0NALCwsLCwtISEgQEBAJCQl7e3s5Muc9AAAANXRSTlMAXLPf_v7___Tfs1wu_v7___8u__________________________L__________9-zs1z1LgSFudwAAAGmSURBVHgBdc2FeuwgFEVhbhvpSKwQYyC6M5Cx6vs_2z2kbn8864PDnH9X157n-SQgYXizWm_Yi20UJynJnJdHHGc3t0vzkuw3savRR0sTznmSvlWal6WvROLnRVnVsXyZkm7YlUjTHeFJrvSLJhQ7Z82uReKIsNVaFV3e9YPW3piQFfMpci5CpVWNRdprHU40fU9RCC5Go00Km4ShkBN6XY9ciIQFI1U76yGz4kBT2whTHEAIF0OKk2z1DJRaNUZr347jRASnOE0y0EpOMuwzoNINphcujiOOugc9hHes81MLOS44i-kNhe5g0Z01OQ0zpOOilRLliUbOWpVzVA3DqYSV9JuzDBQLF5tTDeAwFO0pgrTWcpbA0oanysUZiNQ5rhUtXSIHCU4XoB7Oxgxqhq8aEIrT8jRnDzhezu0louGqgOOiUyvDAZmlFtgZFcFJmMCiaC8-Fp45l1js2R3equnz-tg1Z1MILFbsHq-80rROH-HVA3vEu9g7HqMY7zaMPeEPMWPs1uJX6TNz9ftaCxK75jze3z1Za-U4TkIInuxXDxtG_gOe7lItW1xiWAAAAABJRU5ErkJggg.png",
+            "channel": "matras_krovati_lux_krasnodar",
+            "duration": "1:38"
+          },
+          {
+            "position": 4,
+            "title": "Японские латексные матрасы - 24.05.25 06:24",
+            "link": "https://pikabu.ru/story/yaponskie_lateksnyie_matrasyi_12760315",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfOjWu2tRMlu4ndF3mh5m2n8.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcQ8kBiN4R0xOua8n-Es7ffzaEKWY746RI3zJQ",
+            "source": "Пикабу",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAYFBMVEWKyFiKyFiFyFeYxleGzFrf2HP_44z-2XzTay7jSSjeVyTcfTmXt1CvxFnANg67hDr_znHUj0TPTB3Hwl2tLwq_PhXJRhv-vWD-xWf8tFr3n0nzuV6wn0btpkz7q1TykT2SKiH5AAAAAXRSTlP484CiSAAAAQFJREFUeAGt0sGSgyAMgOEVqGK0gKnEQlHf_y03MCPV2dme-h-4fMkF-Plc829fQCGklI1qhPqDQt7atu063cMwqiuKe1saTM9ZdUHpMnXtZDCrVicUD8fUda6bPXHGqjMuLptzz3n2HJ3xHhaXidMzRzfxxjGGV5ZlWZ6vSQ9P9xAHqgTrFpZSYM_JupkA1sKhlOce4ti0ALBHZo6P3Kt5I2oYYozbUQiyIiKAh32P3FZG1gNFIgQkQr1zsYys9fpGRPQe0ZjMJVlRWSRP6I3hUw_DlKQ4kFUjEbGhJ4BJXd9T2b4sE1tiq1hSSfc9Yn3sKyo1JmtToSvWgW99zY_9Any3GNjRVLLVAAAAAElFTkSuQmCC.png",
+            "channel": "https://pikabu.ru/@mazlow",
+            "duration": "0:26"
+          },
+          {
+            "position": 5,
+            "title": "Выбор матраса: советы и рекомендации",
+            "link": "https://www.tiktok.com/@teplo_domik/video/7337596031393172742",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfOHgEKZbsFF4p-MsQ2vHagw.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcSFz6rK4jLMvjhzGjnAkXFLA5tmHf30AJ7lOA",
+            "source": "TikTok",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAw1BMVEUAAAAAAAAFT1IAQUNBub6u5eexxcpyQ0wIAABaxsv5____9_nGj5oyAAD____84eeEYmvm4uN4f4A5P0MAFBXx-vu019khAAD60tr37vDlmqpXAAsALzAKc3gpo6hjpqr_6O3idYqcbHTSrLP6iJ9rABOc5Ofi-vvJYnXLbn8_AAI9HyWWIDhRz9TH9PffY3oDAAC99vjhSGe7KEenACiF4-f_1961PVaB09bFkZswjJGwuLr__f7xqbYYHh_9tsTiL1Yh8R0_AAAAAXRSTlP-GuMHfQAAANJJREFUeAG90kUCg1AMBNDiPtTd3d2V-5-quMOS2b6vSXI5IjnZIElSyUgzLMcnoSBKspKMUPMpiEKxVE5EVKr5WgTLBkr1BtBsBbHd6fZKOvYHw1F9PAkgSU9njXlNx8Vyxa2XfmxvtoC0M1GH_d6P3QPU8fFkY_Ar7Q0ag3ONIOKQvOB60i0WqSnUG6FnI6rzMJbvkB76zo5-wk0JIf8EGq9ndzN7f9bRrlQBcTYTcT22iAh-X9Ib7_dPm8Q1u5Zvfpq7c4uIQ56otVrLjEYzJX-4mxcG80U-CwAAAABJRU5ErkJggg.png",
+            "channel": "teplo_domik",
+            "duration": "0:28"
+          },
+          {
+            "position": 6,
+            "title": "Михаил написал: «Такие матрасы можно купить где угодно ...",
+            "link": "https://www.facebook.com/Mobilier.MD/videos/%D0%BC%D0%B8%D1%85%D0%B0%D0%B8%D0%BB-%D0%BD%D0%B0%D0%BF%D0%B8%D1%81%D0%B0%D0%BB-%D1%82%D0%B0%D0%BA%D0%B8%D0%B5-%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B-%D0%BC%D0%BE%D0%B6%D0%BD%D0%BE-%D0%BA%D1%83%D0%BF%D0%B8%D1%82%D1%8C-%D0%B3%D0%B4%D0%B5-%D1%83%D0%B3%D0%BE%D0%B4%D0%BD%D0%BE%D0%B8-%D0%B4%D0%B0-%D0%B2%D1%8B-%D0%BF%D1%80%D0%B0%D0%B2%D1%8B-%D0%BC%D0%BE%D0%B6%D0%BD%D0%BE%D0%BD%D0%BE-%D0%B2%D0%BE%D0%BF%D1%80%D0%BE%D1%81/1885749055457667/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfFRgoPdMHIOIEqqcd1AxVF8.jpeg",
+            "source": "Facebook",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAXVBMVEVHcEwHZv8HaP8IZ_8IZ_8IZv8IaP8IZ_8HZv8Haf8IZ_8IaP8IZ_8AXv8AV_8AYv-SqP_P1__m6__e5f9wlP____-tvP9jiv82c_8IZ_8Iaf-fsf________8AW_-wrobhAAAAH3RSTlMAM4bC6v1h7v8Z3UL_______7_________wRiFwenBhp_Z0gAAAOhJREFUeAFtk0UWwzAMBWWHFHOZe_9bBn9Nr7Mdg5AiQjZt17WNFFTTDxwZ-kKNigvUmJw2XGF0dByx1jlnPTPDjiYqDofj8XQ4L9bsL6vozpedq13_3eJk4G-XXPIac8zBHUs5EIl48Q4Tws3ziiAZ5f7j3Vq7O5b0iOGE1Z0cRxpqS3mwSbbU4VHndukW8GwHiQ_BzUO2KceIw7MIqJBHyIZk_WwKSv6KcD_frlsqt_P5joBELJ-3iNZD8YDC_82zz1pWS5U1u5bmmY1JLdMQmVoaOIxmIdVYDXWUxVAD8Xp_FvnN1mEG0f0e5ixC4ikAAAAASUVORK5CYII.png",
+            "channel": "Mobilier.MD",
+            "duration": "1:33"
+          },
+          {
+            "position": 7,
+            "title": "3 МИФА О МАТРАСАХ: жесткий, дорогой, пружинный — что ...",
+            "link": "https://www.youtube.com/shorts/fGdNMDP1nj8",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfILnWzzcgPBB8ySdcYshD60.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcSfRimUJfnDKYfDX4rC3odPPOKo5kpvxzvWtQ",
+            "source": "YouTube",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8_9hAAAAhUlEQVR4AWNwL_ChCFPHgP8MxqxA7ArEKVBcCcUNIAznI-RdQXrABgAZpv8ZjP6Tg0F6QQbsosCAXSADHmGVVPIC0jKEDHgAMuAbmgRE445D___feYzXIJBeBigH04BVW_9DAcgwqEGYaik2gGIvUByIlEbjDooTEiwps5GRlNmolpkowgBVP9wMSzSKGAAAAABJRU5ErkJggg.png",
+            "channel": "Гуру Сна - интернет магазин матрасов",
+            "duration": "0:18"
+          },
+          {
+            "position": 8,
+            "title": "Видео о Что такое Сжатая мебель для спальни, матрас с ...",
+            "link": "https://ru.made-in-china.com/video-channel/xiquanfoam_JogxzMnHsyfv_Compressed-Bedroom-Furnitue-Pocket-Spring-Mattress-Hotel-Mattress-in-a-Pallet.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfKQ1t1yvrGWTGAoTBL9UMSs.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcSfAnMydp1bs7DLAhgrQqeH7NeIoh6T1P-e3w",
+            "source": "Китай Производители, Поставщики и Товары",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABLUlEQVR4AcTUAUQEYRCG4Z9jCSxYYgMciFgAHHEggAM4IoBAAAcORACIQABxRAQQgYgAlghELBFHHMdyfL0A5GeGYfEAw7wYkyQNaviA9cE4yjmS0yJq-QQ9ksMcili-j28IyWiKPiKgwAvkCDjCLxQRcA05Amp0UETAGeQIKNFCEQENto6AAs9QRECFT8gYMMIKiggY4QlyBNxAUQFXkCNgAUUFzCBHwByKCjjExhEwRR8VUOIDMvj3aCICHiCjGh0UFbCEHFooKuAEO8gjKmCMNTREwB5aKOMRcnj3BtxBGW-oIKMNGk_ABZTRoUIJGZ2itAYcI3d0WzRIjoAVkjWgxg-UMUNyBHyhtAYUeIUylkiOgB0mSNaAWyjjHskZcOmZ_9toz2jUAaMOAADbWhyd3Yi4lQAAAABJRU5ErkJggg.png",
+            "channel": "",
+            "duration": "0:29"
+          },
+          {
+            "position": 9,
+            "title": "КРОВАТИ | МАТРАСЫ on Instagram: \"А вы так можете ...",
+            "link": "https://www.instagram.com/reel/DZ5J6m8CiAv/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfAgHpx1Qlp7pkCANnHBo1TE.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcS3gnB6qTSRQBJ9gAolG2pFb0aDk2_2MCalDA",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfLdbBm6aYIu1gSaJZOk0Hem95hhN5hwpng_Gs0q-IvrR.png",
+            "channel": "МЕБЕЛЬ БОБРУЙСК | КУХНИ | КРОВАТИ | МАТРАСЫ",
+            "duration": "0:48"
+          },
+          {
+            "position": 10,
+            "title": "Самый мягкий натуральный латексный матрас в Таиланде ...",
+            "link": "https://www.reddit.com/r/interesting/comments/1njf3sv/thailands_softest_natural_latex_mattress/?tl=ru",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfNEtrB-niP2pDQrUDoZYEBc.jpeg",
+            "source": "Reddit",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAhFBMVEVHcEz_RQD_RQD_RQD_RQD_RQD_RQD_RQD_RQD_PQD_NgD-XS32dlf5vK3____64dusLADUz9H-jXLOPAoSHiFrLBm3uLn3_f7jVS_b6e77pJDJo6H718__RQDw9ffs5-jm8fPIXlHqKwD5-PjolIP_VgP_SQLQ2uAyODvQ4ekABAhqcHK4ptuCAAAAHnRSTlMAPobB7P9mHdb__________________________8J6YdtgAAABWUlEQVR4AWySYZNDMBCGWyw2SI9TGnWqILT____dm6Enc-MZH8Qz2V3Je_rj7Lgekec659N_fIgPnn-yCULaYaYwsCqShYhiQXQ-dJxIedltQDZfqZQyY6K1st3vO78WsiyNDI3zySK_caJUygTMzN7eTnxdBXMcb3-0TsMC30RUJfciqSIs8JCZycHwWV1n2UVuXDKzxsDOySWu5AGVoB_TUh5imhJFpQTNfav7uDcSlBERJLUN9LOLewn6LnpCNS0EyvKg-vLRjVRLUIuxe8hSDYyyLqatyr68jdO6cxpvWGIeDOQQujagNs7YuumbJmYiZz0E3aJvMc95Ps8F-rV6PQQ0JY4XpVqVv0Cu2lYps9HbDp6HRS9Kv1-vt1Z4HeDI_1yZiFMNFIzWqYkChftl8zSkegE6HSYmENgxYYQHRGzUHiLHyh3ModvZo7nHxA71ofwdSnYAAPpVIo4RUPiIAAAAAElFTkSuQmCC.png",
+            "channel": "DarthiusFatticus",
+            "duration": "0:25"
+          },
+          {
+            "position": 11,
+            "title": "А как вы выбираете матрас? Вот уже месяц как мы ...",
+            "link": "https://www.instagram.com/reel/DSHQvzsDbBp/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfC4z7WA85EGWg-mR8dpHeORsg-6dV28D2mHYiGRXaa9c.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfAI36PccG-k4oq82Fctyq6dTuEzaY-wD4XTNkOSLgy1F.png",
+            "channel": "Бекзада Жолборсова",
+            "duration": "1:23"
+          },
+          {
+            "position": 12,
+            "title": "💡 *Почему матрас лучше покупать отдельно от спального ...",
+            "link": "https://www.instagram.com/reel/DVpzRmyDOcf/",
+            "thumbnail": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfDbvz9EmbB0LTKeK7WhqnjSLwwdt-y3ktYZ1CAuSAjpG.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bac5b2c613cb662918b8/images/aZmnxXo-T9RbUr8bJhfEfGWMAMhIJkJR55hio2jAi9vX65LLSnLGl2COpVPc-3KI.png",
+            "channel": "Мир Мебели и Электроники",
+            "duration": "0:31"
+          }
+        ],
+        "search_information": {
+          "short_video_results_state": "Results for exact spelling"
+        },
+        "search_metadata": {
+          "id": "6a61bac5b2c613cb662918b8",
+          "status": "Success",
+          "json_endpoint": "https://serpapi.com/searches/KWf2PInyb2leTDOqE660sg/6a61bac5b2c613cb662918b8.json",
+          "created_at": "2026-07-23 06:55:01 UTC",
+          "processed_at": "2026-07-23 06:55:01 UTC",
+          "google_short_videos_url": "https://www.google.ru/search?q=%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B+%D0%BA%D1%83%D0%BF%D0%B8%D1%82%D1%8C&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+          "raw_html_file": "https://serpapi.com/searches/KWf2PInyb2leTDOqE660sg/6a61bac5b2c613cb662918b8.html",
+          "total_time_taken": 2.82
+        },
+        "error": null
+      }
+    },
+    {
+      "request": {
+        "keyword": "дешевые матрасы askona",
+        "page": "askona",
+        "tier": "MF"
+      },
+      "response": {
+        "ok": true,
+        "http_code": 200,
+        "short_video_results": [
+          {
+            "position": 1,
+            "title": "А у вас есть матрас от Askona? Я выбрал матрас ручной ...",
+            "link": "https://www.instagram.com/reel/DbAVEsctQEG/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5wRy91wTCJYsQU0w8NUmMv4.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE54s4urAgCTcxMv5c12LJXhmmFE4zLnF2mFQzMMECdB8Y.png",
+            "channel": "CHINGIZ KAPIN",
+            "duration": "2:01"
+          },
+          {
+            "position": 2,
+            "title": "🛏️ -20% на все кровати и матрасы Askona! Это тот ...",
+            "link": "https://www.instagram.com/reel/DZ9Z5UyACgw/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE50Dqhgk2C_THQH-G3-d3zyk.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE56rz3aXy2CB9vwdXjsB3PeQPY-v4r0KKXAMxMZWBkKPA.png",
+            "channel": "JUMBO CENTRUL COMERCIAL",
+            "duration": "0:19"
+          },
+          {
+            "position": 3,
+            "title": "Время обновить сон В Askona сейчас действует приятная ...",
+            "link": "https://www.instagram.com/reel/DU3Q2CHDQoh/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5wjK3_bjEN_bJachbNE505g.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE50rC3JEyn8U6Q6V5OgtbAhH5sWvOyuINaOnc4LQdWBnD.png",
+            "channel": "KHANSHAIYM PLAZA | TURKISTAN",
+            "duration": "0:18"
+          },
+          {
+            "position": 4,
+            "title": "КРОВАТИ | МАТРАСЫ on Instagram: \"А вы так можете ...",
+            "link": "https://www.instagram.com/reel/DZ5J6m8CiAv/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE52vFgpWLNNsSjLuSTtKEwX0.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcS3gnB6qTSRQBJ9gAolG2pFb0aDk2_2MCalDA",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5yBZOGctvHjUadAZ7IlosLzfMUHgbWey670uC_SIPqWu.png",
+            "channel": "МЕБЕЛЬ БОБРУЙСК | КУХНИ | КРОВАТИ | МАТРАСЫ",
+            "duration": "0:48"
+          },
+          {
+            "position": 5,
+            "title": "Минус 65% на комфорт! Забирайте свой идеальный ...",
+            "link": "https://www.instagram.com/reel/DVvUSmNiCDi/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5wjHYSgv0l5nAS8e1IAAyzo.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE53cbHqqkDwWVZBmrhFLf8CJEu9u_ptzmbAVHXK3S6WfA.png",
+            "channel": "💎ТРЦ DiaMond city💎",
+            "duration": "0:20"
+          },
+          {
+            "position": 6,
+            "title": "Петропавловск on Instagram: \" Дешёвый ≠ хороший ...",
+            "link": "https://www.instagram.com/reel/DW3HHgpqIR4/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5937k_Jxq6nWqXztYyRKMBQ.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5w9H7cSokQ0aT60x9yRYyzlvNtsF4nBxcbJZZ3Xk_Ow7.png",
+            "channel": "Матрасы Фабрики Сова|Казахстан|Петропавловск",
+            "duration": "0:42"
+          },
+          {
+            "position": 7,
+            "title": "Ждем всех в Аскона, дорогие друзья #матрас ...",
+            "link": "https://www.instagram.com/reel/DPTJZJTDHjK/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5wvowG6xfg5RdrLReyJ5DWA.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5_Up-haxjOYFWvc_Q3cQaz1i45PaJF4dvJLPho1-cr88.png",
+            "channel": "Матрасы▫️Кровати▫️Диваны▫️Мебель▫️Текстиль",
+            "duration": "0:09"
+          },
+          {
+            "position": 8,
+            "title": "🛏️ СКИДКИ В АСКОНА Спите дешевле — просыпайтесь ...",
+            "link": "https://www.instagram.com/reel/DUoF0H4DK-p/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE56T0doRJtidhKKfx6w7vLvo.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcRmMX9z8EobMSjEThSN8I8G833DOHhgXqrXvw",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE51I0-718e9MkvO07YgvHW1G8KX3ug6f37THpdCDRotHu.png",
+            "channel": "ТЦ \"Карусель\" | Бобруйск",
+            "duration": "0:35"
+          },
+          {
+            "position": 9,
+            "title": "В магазине @askona_by знают все о здоровом сне ...",
+            "link": "https://www.instagram.com/reel/DMZ5FnXoL1k/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE5wfRELjaVRX_b_qCDxCCS7w.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE550L8UYWzMnLTzM5Cvqlp7lkxRvy0vx8Kp5vQ55cSrjx.png",
+            "channel": "💎ТРЦ DiaMond city💎",
+            "duration": "0:10"
+          },
+          {
+            "position": 10,
+            "title": "Почему я выбираю Askona и на что обращаю внимание ...",
+            "link": "https://www.instagram.com/reel/Da70x2jI5YO/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE56FHk5KamVv6itFWI4xklHk.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE56BZTTxD5Cz0PSa4eJFIbxoVaiAxwaJaf6F0EnUlFJ8h.png",
+            "channel": "Dyson | Дайсон | Canon | iPhone | medicube",
+            "duration": "0:30"
+          },
+          {
+            "position": 11,
+            "title": "Не все знают, но у нас есть матрасы и аксессуары от ...",
+            "link": "https://www.instagram.com/reel/DTaTEu6DVUl/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE50MZDVX5jl3QwRjiXw9Yg_vuVW-II8s1idxWOHBhZY48.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE58hq0RvithxQW7yQFYy3IlorUCK_yiKxFp0NhkPSyEtA.png",
+            "channel": "МЕБЕЛЬ СО СКЛАДА | ШЫМКЕНТ",
+            "duration": "0:32"
+          },
+          {
+            "position": 12,
+            "title": "Миллениалы, перекличка: сколько вам сейчас лет… и ...",
+            "link": "https://www.instagram.com/reel/DWtRsNBAkOh/",
+            "thumbnail": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE51mhTkQIiJl0muaFxJYSA7l6ixhJIqSDEgB3BiTS8_rm.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61baca6e22379426b3e85d/images/FvQskYC8o9w1rDE1ngkE52xjLynreQKzya3hAQwTZUuS23231sPhN0aQHU9_kfMc.png",
+            "channel": "Аскона Беларусь",
+            "duration": "0:11"
+          }
+        ],
+        "search_information": {
+          "short_video_results_state": "Results for exact spelling"
+        },
+        "search_metadata": {
+          "id": "6a61baca6e22379426b3e85d",
+          "status": "Success",
+          "json_endpoint": "https://serpapi.com/searches/8bFqrvTi2UlUNlm1cougcg/6a61baca6e22379426b3e85d.json",
+          "created_at": "2026-07-23 06:55:07 UTC",
+          "processed_at": "2026-07-23 06:55:07 UTC",
+          "google_short_videos_url": "https://www.google.ru/search?q=%D0%B4%D0%B5%D1%88%D0%B5%D0%B2%D1%8B%D0%B5+%D0%BC%D0%B0%D1%82%D1%80%D0%B0%D1%81%D1%8B+askona&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+          "raw_html_file": "https://serpapi.com/searches/8bFqrvTi2UlUNlm1cougcg/6a61baca6e22379426b3e85d.html",
+          "total_time_taken": 4.07
+        },
+        "error": null
+      }
+    },
+    {
+      "request": {
+        "keyword": "женские спортивные брюки",
+        "page": "lamoda",
+        "tier": "HF"
+      },
+      "response": {
+        "ok": true,
+        "http_code": 200,
+        "short_video_results": [
+          {
+            "position": 1,
+            "title": "3 шт. женские модные штаны для йоги спортивные штаны ...",
+            "link": "https://www.temu.com/il-ru/3-%D1%88%D1%82-%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5-%D0%BC%D0%BE%D0%B4%D0%BD%D1%8B%D0%B5-%D1%88%D1%82%D0%B0%D0%BD%D1%8B-%D0%B4%D0%BB%D1%8F-%D0%B9%D0%BE%D0%B3%D0%B8-%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5-%D1%88%D1%82%D0%B0%D0%BD%D1%8B-%D0%B4%D0%BB%D1%8F-%D1%84%D0%B8%D1%82%D0%BD%D0%B5%D1%81%D0%B0-%D0%B8-%D0%B0%D0%BA%D1%82%D0%B8%D0%B2%D0%BD%D0%BE%D0%B3%D0%BE-%D0%BE%D1%82%D0%B4%D1%8B%D1%85%D0%B0-%D0%BB%D0%B5%D0%B3%D0%B3%D0%B8%D0%BD%D1%81%D1%8B-%D1%81-%D1%8D%D1%84%D1%84%D0%B5%D0%BA%D1%82%D0%BE%D0%BC-%D0%BA%D0%BE%D0%BD%D1%82%D1%80%D0%BE%D0%BB%D1%8F-%D0%B6%D0%B8%D0%B2%D0%BE%D1%82%D0%B0-%D0%B8-%D0%BF%D0%BE%D0%B4%D1%82%D1%8F%D0%B6%D0%BA%D0%B8-%D1%8F%D0%B3%D0%BE%D0%B4%D0%B8%D1%86-%D1%83%D0%B4%D0%BE%D0%B1%D0%BD%D1%8B%D0%B5-%D0%B4%D1%8B%D1%88%D0%B0%D1%89%D0%B8%D0%B5-%D0%B2%D0%BB%D0%B0%D0%B3%D0%BE%D0%BE%D1%82%D0%B2%D0%BE%D0%B4%D1%8F%D1%89%D0%B8%D0%B5-%D0%B4%D0%BB%D0%B8%D0%BD%D0%BD%D1%8B%D0%B5-%D0%B1%D1%80%D1%8E%D0%BA%D0%B8-g-601103597507524.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAHPSZpYPotkXDmhD75D3_hg.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcT1fQFhuFKoVOKGK__OXTGt6xIRYaPaZIg5sw",
+            "source": "Temu",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAOVBMVEVHcEz7dwL7dwH7dwH7dwD7dwH7bwD7dAD8iyv9v5D9nVT9rnT____-0q_7awD_9-38gA3_7dz-4MZj7DjuAAAABnRSTlMAA3fZ_0ZRLfIMAAABHklEQVR4AYzQBYLEIAwF0EomgRiQ-x92w5Su28fhVbfMfpzwTc5j3555wI95_Hq-xA6_Zt-O38Gxnb-Dc4M_8k-ARADZVmi2uVyASmUh5LIEcRIRyf4GquZFG3qfwNvApqrtBuBD2U11xMB5gQ7WEkWZLoCSZ46cF1Und44q2mpTuQB1zVQec485ormIZhbI2GjBKFaNySIKClYzq68v6RkEfPbZEeWAiA4LdMkwrb4DMhMTZLsAimZGmX10De86uvb8-LLegbA2x6KA6MlkfAaQAHOdkaJVm_0AmDn7bvwE_gHoBBFRc9fdhrdRR0NYgNgQekwAMZcVu4V1ugHgtOtvzAswa85fBgKUpyiCiZZgsieYcQhlPcKZl2D2BwBa0RmcTGf5NgAAAABJRU5ErkJggg.png",
+            "channel": "",
+            "duration": "0:22"
+          },
+          {
+            "position": 2,
+            "title": "Женские спортивные штаны Удобные, лёгкие и ...",
+            "link": "https://www.instagram.com/reel/DWQndNWDVDY/",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAJipsDCnHzaQvRDievvJpN0.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAMjAc95cTALFbEt5UBxA17m5WJ0VA9e5pEJxEXNyZAIM.png",
+            "channel": "МАГАЗИН ❇️ ОДЕЖДЫ ❇️ БИШКЕК",
+            "duration": "0:39"
+          },
+          {
+            "position": 3,
+            "title": "Новинка! Брюки \"Паркер\" уже доступны на Wildberries ...",
+            "link": "https://ru.pinterest.com/pin/917186280378428662/",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBABlywn9nk1PyJjA1atw-Efs.jpeg",
+            "source": "Pinterest",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAKlBMVEVHcEzmACPmACPmACPmACLmACPmACPmACPmACPmACPlACPmACPmACPmACNXoEKOAAAADXRSTlMAeg3EBduLpk9lJS7p902OrQAAALtJREFUKJG9UksWxCAIQ0XwU-9_3QHss1rH3bxhpYTEAAL8Ibw_AOhik4gOd8y1Ee6NhTZF-IYxEe-oaeZ-Ti9l1HuRPFESy3rDhZihmmJE4z5U7UHpHPp7l9QMUL0InSzdPKirMRc5k2RK16j2jJ9AFrCahtTQBFpKbGTIdrKuF0MMLRmFTOkxdM8VwUd1FZZWsHcI3lqndQidyvJkTvnaFqNKCfi8lgoHTJVLOi1bRoHh-E16wemD_TQ-ta8LyZ7XxUgAAAAASUVORK5CYII.png",
+            "channel": "lk_urban_dress",
+            "duration": "0:22"
+          },
+          {
+            "position": 4,
+            "title": "Стильные спортивные брюки для вас",
+            "link": "https://www.tiktok.com/@aliksidor/video/7620909102704741654",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAHiTz9sGgK5efoERpjjLUQA.jpeg",
+            "source": "TikTok",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAw1BMVEUAAAAAAAAFT1IAQUNBub6u5eexxcpyQ0wIAABaxsv5____9_nGj5oyAAD____84eeEYmvm4uN4f4A5P0MAFBXx-vu019khAAD60tr37vDlmqpXAAsALzAKc3gpo6hjpqr_6O3idYqcbHTSrLP6iJ9rABOc5Ofi-vvJYnXLbn8_AAI9HyWWIDhRz9TH9PffY3oDAAC99vjhSGe7KEenACiF4-f_1961PVaB09bFkZswjJGwuLr__f7xqbYYHh_9tsTiL1Yh8R0_AAAAAXRSTlP-GuMHfQAAANJJREFUeAG90kUCg1AMBNDiPtTd3d2V-5-quMOS2b6vSXI5IjnZIElSyUgzLMcnoSBKspKMUPMpiEKxVE5EVKr5WgTLBkr1BtBsBbHd6fZKOvYHw1F9PAkgSU9njXlNx8Vyxa2XfmxvtoC0M1GH_d6P3QPU8fFkY_Ar7Q0ag3ONIOKQvOB60i0WqSnUG6FnI6rzMJbvkB76zo5-wk0JIf8EGq9ndzN7f9bRrlQBcTYTcT22iAh-X9Ib7_dPm8Q1u5Zvfpq7c4uIQ56otVrLjEYzJX-4mxcG80U-CwAAAABJRU5ErkJggg.png",
+            "channel": "aliksidor",
+            "duration": "0:14"
+          },
+          {
+            "position": 5,
+            "title": "Женские брюки, женские спортивные штаны, лето 2024 ...",
+            "link": "https://ru.dhgate.com/video/940054064.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAGFQM6kXP3I8oIO6Gx24Cs0.jpeg",
+            "source": "DHgate",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAKlBMVEWampr___9tbnHExs3_xADppBD_8cP-wwFLTE7Gwa2ur7GCg4WOh27_--78UowWAAAASklEQVR4AWOAA0ZBMBBgEIQCBENIScnQNTE9kEFIo0kTwmhcrQNlSPW4uLhDGaHhIMaKHtdcoBRQl2YpSI1ER4chiIFpMsJSGAAATXoW98J1awAAAAAASUVORK5CYII.png",
+            "channel": "",
+            "duration": "0:21"
+          },
+          {
+            "position": 6,
+            "title": "Классные легкие-спорт брюки! Очень удобные для лета ...",
+            "link": "https://www.instagram.com/reel/DYo1ZBuq6bn/",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAIgcUiWTjxWx1WWiPKBFSmU.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBADvGXXG_3BFTTgLItsDQBB7cI1hTRAVImoPBjDdYFUYQ.png",
+            "channel": "DENIM CLUB - Мужская Одежда",
+            "duration": "0:12"
+          },
+          {
+            "position": 7,
+            "title": "1 шт. женские летние легкие спортивные длинные брюки из",
+            "link": "https://www.temu.com/il-ru/1-%D1%88%D1%82-%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5-%D0%BB%D0%B5%D1%82%D0%BD%D0%B8%D0%B5-%D0%BB%D0%B5%D0%B3%D0%BA%D0%B8%D0%B5-%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5-%D0%B4%D0%BB%D0%B8%D0%BD%D0%BD%D1%8B%D0%B5-%D0%B1%D1%80%D1%8E%D0%BA%D0%B8-%D0%B8%D0%B7-%D0%BB%D0%B5%D0%B4%D1%8F%D0%BD%D0%BE%D0%B3%D0%BE-%D0%B2%D0%BE%D0%BB%D0%BE%D0%BA%D0%BD%D0%B0-%D1%82%D0%BE%D0%BD%D0%BA%D0%B8%D0%B5-%D0%BF%D0%BE%D0%B2%D1%81%D0%B5%D0%B4%D0%BD%D0%B5%D0%B2%D0%BD%D1%8B%D0%B5-%D0%B1%D1%80%D1%8E%D0%BA%D0%B8-%D1%81-%D0%BC%D0%B0%D0%BD%D0%B6%D0%B5%D1%82%D0%B0%D0%BC%D0%B8-%D0%BF%D0%BE%D0%B4%D1%85%D0%BE%D0%B4%D1%8F%D1%82-%D0%B4%D0%BB%D1%8F-%D0%B1%D0%B5%D0%B3%D0%B0-%D0%B2%D0%B5%D0%BB%D0%BE%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B0-%D0%B8-%D0%BF%D0%BE%D1%85%D0%BE%D0%B4%D0%BE%D0%B2-%D0%BD%D0%B0-%D1%81%D0%B2%D0%B5%D0%B6%D0%B5%D0%BC-%D0%B2%D0%BE%D0%B7%D0%B4%D1%83%D1%85%D0%B5-g-601099571568635.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAJ5tsAV211n52jTphXbw_mM.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcRUUcXskLdERk5T6DzRX-yWidOozzxXBFU0Wg",
+            "source": "Temu",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAOVBMVEVHcEz7dwL7dwH7dwH7dwD7dwH7bwD7dAD8iyv9v5D9nVT9rnT____-0q_7awD_9-38gA3_7dz-4MZj7DjuAAAABnRSTlMAA3fZ_0ZRLfIMAAABHklEQVR4AYzQBYLEIAwF0EomgRiQ-x92w5Su28fhVbfMfpzwTc5j3555wI95_Hq-xA6_Zt-O38Gxnb-Dc4M_8k-ARADZVmi2uVyASmUh5LIEcRIRyf4GquZFG3qfwNvApqrtBuBD2U11xMB5gQ7WEkWZLoCSZ46cF1Und44q2mpTuQB1zVQec485ormIZhbI2GjBKFaNySIKClYzq68v6RkEfPbZEeWAiA4LdMkwrb4DMhMTZLsAimZGmX10De86uvb8-LLegbA2x6KA6MlkfAaQAHOdkaJVm_0AmDn7bvwE_gHoBBFRc9fdhrdRR0NYgNgQekwAMZcVu4V1ugHgtOtvzAswa85fBgKUpyiCiZZgsieYcQhlPcKZl2D2BwBa0RmcTGf5NgAAAABJRU5ErkJggg.png",
+            "channel": "",
+            "duration": "0:18"
+          },
+          {
+            "position": 8,
+            "title": "Женские брюки, женские спортивные штаны, однотонные ...",
+            "link": "https://ru.dhgate.com/video/927735142.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAKn40b4wYdB8IxKUZETPeg4.jpeg",
+            "source": "DHgate",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAKlBMVEWampr___9tbnHExs3_xADppBD_8cP-wwFLTE7Gwa2ur7GCg4WOh27_--78UowWAAAASklEQVR4AWOAA0ZBMBBgEIQCBENIScnQNTE9kEFIo0kTwmhcrQNlSPW4uLhDGaHhIMaKHtdcoBRQl2YpSI1ER4chiIFpMsJSGAAATXoW98J1awAAAAAASUVORK5CYII.png",
+            "channel": "",
+            "duration": "0:18"
+          },
+          {
+            "position": 9,
+            "title": "Видео о Что такое Женские сексуальные спортивные ...",
+            "link": "https://ru.made-in-china.com/video-channel/manbusports_kfqRoZmAsTWr_Womens-Sexy-Line-Butt-Lift-Sports-Pants-High-Waist-Stretch-Gym-Fitness-Yoga-Leggings.html",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAFt5EM51F-LXCmJU3GUno_4.jpeg",
+            "clip": "https://encrypted-vtbn0.gstatic.com/video?q=tbn:ANd9GcTXNUNmDImv7nVUpOpcLOqiIsmkz7KKF8qgOA",
+            "source": "Made-in-China.com",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABLUlEQVR4AcTUAUQEYRCG4Z9jCSxYYgMciFgAHHEggAM4IoBAAAcORACIQABxRAQQgYgAlghELBFHHMdyfL0A5GeGYfEAw7wYkyQNaviA9cE4yjmS0yJq-QQ9ksMcili-j28IyWiKPiKgwAvkCDjCLxQRcA05Amp0UETAGeQIKNFCEQENto6AAs9QRECFT8gYMMIKiggY4QlyBNxAUQFXkCNgAUUFzCBHwByKCjjExhEwRR8VUOIDMvj3aCICHiCjGh0UFbCEHFooKuAEO8gjKmCMNTREwB5aKOMRcnj3BtxBGW-oIKMNGk_ABZTRoUIJGZ2itAYcI3d0WzRIjoAVkjWgxg-UMUNyBHyhtAYUeIUylkiOgB0mSNaAWyjjHskZcOmZ_9toz2jUAaMOAADbWhyd3Yi4lQAAAABJRU5ErkJggg.png",
+            "channel": "",
+            "duration": "0:34"
+          },
+          {
+            "position": 10,
+            "title": "Легкие, удобные спортивные брюки, которые подойдут на ...",
+            "link": "https://www.instagram.com/reel/DW8-BEJiOPY/",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAF_I8k8t6MYilyRBg1WsMFA.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAIui97hUd2Kw0DmK0t__vUKtYQl8YqDkhruztyZi_ZZK.png",
+            "channel": "ЖЕНСКАЯ ОДЕЖДА • ОБУВЬ • АКСЕССУАРЫ • ШОУРУМ, Калининград",
+            "duration": "0:27"
+          },
+          {
+            "position": 11,
+            "title": "Бестселлер! Брюки шерсть-лен всесезонные \"Харли ...",
+            "link": "https://ru.pinterest.com/pin/98797785571907114/",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBAASLRdhWmfYehIsoCdcFwU_Gzreh58zlrMs8Jm0JDtFV.jpeg",
+            "source": "Pinterest",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAKlBMVEVHcEzmACPmACPmACPmACLmACPmACPmACPmACPmACPlACPmACPmACPmACNXoEKOAAAADXRSTlMAeg3EBduLpk9lJS7p902OrQAAALtJREFUKJG9UksWxCAIQ0XwU-9_3QHss1rH3bxhpYTEAAL8Ibw_AOhik4gOd8y1Ee6NhTZF-IYxEe-oaeZ-Ti9l1HuRPFESy3rDhZihmmJE4z5U7UHpHPp7l9QMUL0InSzdPKirMRc5k2RK16j2jJ9AFrCahtTQBFpKbGTIdrKuF0MMLRmFTOkxdM8VwUd1FZZWsHcI3lqndQidyvJkTvnaFqNKCfi8lgoHTJVLOi1bRoHh-E16wemD_TQ-ta8LyZ7XxUgAAAAASUVORK5CYII.png",
+            "channel": "lk_urban_dress",
+            "duration": "0:33"
+          },
+          {
+            "position": 12,
+            "title": "Обзор широких спортивных штанов для стильного образа",
+            "link": "https://www.tiktok.com/@m.a.n1311/video/7616349286510464276",
+            "thumbnail": "https://serpapi.com/searches/6a61bad1f9c5e9d2342a4260/images/H-KswEY-zZLAsRisY_nBALmb3U6E-V63WsAY5qfws8BIw3MLy124u-_JaYh63RY2.jpeg",
+            "source": "TikTok",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAw1BMVEUAAAAAAAAFT1IAQUNBub6u5eexxcpyQ0wIAABaxsv5____9_nGj5oyAAD____84eeEYmvm4uN4f4A5P0MAFBXx-vu019khAAD60tr37vDlmqpXAAsALzAKc3gpo6hjpqr_6O3idYqcbHTSrLP6iJ9rABOc5Ofi-vvJYnXLbn8_AAI9HyWWIDhRz9TH9PffY3oDAAC99vjhSGe7KEenACiF4-f_1961PVaB09bFkZswjJGwuLr__f7xqbYYHh_9tsTiL1Yh8R0_AAAAAXRSTlP-GuMHfQAAANJJREFUeAG90kUCg1AMBNDiPtTd3d2V-5-quMOS2b6vSXI5IjnZIElSyUgzLMcnoSBKspKMUPMpiEKxVE5EVKr5WgTLBkr1BtBsBbHd6fZKOvYHw1F9PAkgSU9njXlNx8Vyxa2XfmxvtoC0M1GH_d6P3QPU8fFkY_Ar7Q0ag3ONIOKQvOB60i0WqSnUG6FnI6rzMJbvkB76zo5-wk0JIf8EGq9ndzN7f9bRrlQBcTYTcT22iAh-X9Ib7_dPm8Q1u5Zvfpq7c4uIQ56otVrLjEYzJX-4mxcG80U-CwAAAABJRU5ErkJggg.png",
+            "channel": "m.a.n1311",
+            "duration": "0:57"
+          }
+        ],
+        "search_information": {
+          "short_video_results_state": "Results for exact spelling"
+        },
+        "search_metadata": {
+          "id": "6a61bad1f9c5e9d2342a4260",
+          "status": "Success",
+          "json_endpoint": "https://serpapi.com/searches/N5iFNZAsmnLKRCVQcNi_Sg/6a61bad1f9c5e9d2342a4260.json",
+          "created_at": "2026-07-23 06:55:13 UTC",
+          "processed_at": "2026-07-23 06:55:13 UTC",
+          "google_short_videos_url": "https://www.google.ru/search?q=%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5+%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5+%D0%B1%D1%80%D1%8E%D0%BA%D0%B8&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+          "raw_html_file": "https://serpapi.com/searches/N5iFNZAsmnLKRCVQcNi_Sg/6a61bad1f9c5e9d2342a4260.html",
+          "total_time_taken": 8.52
+        },
+        "error": null
+      }
+    },
+    {
+      "request": {
+        "keyword": "женские спортивные штаны lamoda",
+        "page": "lamoda",
+        "tier": "MF"
+      },
+      "response": {
+        "ok": true,
+        "http_code": 200,
+        "short_video_results": [
+          {
+            "position": 1,
+            "title": "день, когда хочется быть собой когда одежда становится ...",
+            "link": "https://www.instagram.com/reel/DazqKQfs4Qu/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgXwkHaznSY30Ei1_FMF3kHM.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgYbLWUOqlyzPELcKnavoKMJJVMlE6wh8iDL0fO-xQ6_r.png",
+            "channel": "Torae Black | ЖЕНСКАЯ ОДЕЖДА",
+            "duration": "0:33"
+          },
+          {
+            "position": 2,
+            "title": "Идеальные костюмы Я нашла на Lamoda Бежевый ...",
+            "link": "https://www.instagram.com/reel/DZ4PVoSIK7B/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgf_l3ANe_hIYl6Tw9xoVg6M.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgbLjO_79EtrD7PL6WKf8CfUFJXLs15Luub-zGLsnM5yF.png",
+            "channel": "Tanya Godunova",
+            "duration": "0:51"
+          },
+          {
+            "position": 3,
+            "title": "Артикулы в описании WB: брюки - #468192720 свитшот ...",
+            "link": "https://www.instagram.com/reel/DSuYEwsCCBO/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgdC7Uvhaq2Xl889HEGFo6yQ.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgXd_kKRYyCwj2d1rZzFvEYOd2pvfJu067TYnDn5SvhxU.png",
+            "channel": "GRAY MOSS | РОССИЙСКИЙ БРЕНД",
+            "duration": "0:08"
+          },
+          {
+            "position": 4,
+            "title": "Артикулы ⬇️ Lamoda: #MP002XW1DYWZ ...",
+            "link": "https://www.instagram.com/reel/DZHR5RANdIB/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgSW1O2_Rm_8DaBvc-iesj1U.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgcwEJiGoMQb7IET0OIU5NMEMNhbFiMc9d-G2JCk8ncx5.png",
+            "channel": "ЗИНА",
+            "duration": "0:26"
+          },
+          {
+            "position": 5,
+            "title": "Самые мягкие брюки за всю историю ВТ Арт. LAMODA ...",
+            "link": "https://www.instagram.com/p/DXKCCIRDf4u/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgYVlCj9bQTr87ga_a_AQC_o.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgeOrBSTuNKJphsLrZ21Eoit3XqhDhuXEHTgpEXxgcBkX.png",
+            "channel": "BOUTIQUE TREE | Женская одежда LAMODA WB Я.МАРКЕТ",
+            "duration": "0:45"
+          },
+          {
+            "position": 6,
+            "title": "Те самые штаны на лето, в которых удобно и не жарко ...",
+            "link": "https://www.instagram.com/reel/DYmCxvWIUei/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgcEO6fpT-KuRmOACi2bPDNg.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgQo-Xn9twyGBPLHjIjRPFlRZi9z_nn0PkpRg4X0HL0J_.png",
+            "channel": "СТИЛИСТ | МУЖСКОЙ СТИЛИСТ | UGC CREATOR",
+            "duration": "0:24"
+          },
+          {
+            "position": 7,
+            "title": "Стиль в зале, спорт в жизни. Новые спортивные коллекции ...",
+            "link": "https://www.instagram.com/reel/DYR7RQTqytJ/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgR6Th_4bmLvIZeDkmrVtMHs.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgbk0Po9-U7L_H6grR0ojEOEX8erZskXfcy_QejnsQDRd.png",
+            "channel": "lamoda.by",
+            "duration": "0:10"
+          },
+          {
+            "position": 8,
+            "title": "Артикул ⬇️ lamoda брюки - #MP002XW0UW90",
+            "link": "https://www.instagram.com/reel/DY6znX8IqRX/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgewdKcVRR1So_0kI4DajNtc.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgXoitp_khGGXEYelrJQ1SdYs_STKPCLdyV7s1GMMZWqA.png",
+            "channel": "GRAY MOSS | РОССИЙСКИЙ БРЕНД",
+            "duration": "0:07"
+          },
+          {
+            "position": 9,
+            "title": "Lamoda on Instagram: \"Что ни ты, то Lamoda Sport Меняйся ...",
+            "link": "https://www.instagram.com/reel/DM8CYbjIKkY/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgdLP96gK7xcnJdcFQCwNS94.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgdHDsKx69u_PF8X9Qe3bTQp_-KUy7-0NficrZkcNfSXm.png",
+            "channel": "Lamoda",
+            "duration": "0:09"
+          },
+          {
+            "position": 10,
+            "title": "Началась глобальная распродажа @bt_est2018 на LAMODA",
+            "link": "https://www.instagram.com/reel/Da14o4oCIQ2/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXge3PiVwuyVUNDX12Mx-sfJ4.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgRd0o5UgO_M12Btm38PROar8iCk_5FEYTJarCV-zUUSV.png",
+            "channel": "BOUTIQUE TREE | ЖЕНСКАЯ ОДЕЖДА | LAMODA WB Я.МАРКЕТ OZON СЕЛЕКТ",
+            "duration": "0:17"
+          },
+          {
+            "position": 11,
+            "title": "Получили легкие брюки в полоску 🌪️ Арт. LAMODA ...",
+            "link": "https://www.instagram.com/reel/DZO3h9eizgp/",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgdLhwEtbWeiMRlat4Z_DHqkmHRR50Tlnis8faqNZxm-s.jpeg",
+            "source": "Instagram",
+            "source_icon": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgUdFEDRDun6y_HKJCxTIJF2XTp9FpuMXmOJCBYIRe6TE.png",
+            "channel": "BOUTIQUE TREE | ЖЕНСКАЯ ОДЕЖДА | LAMODA WB Я.МАРКЕТ OZON СЕЛЕКТ",
+            "duration": "0:22"
+          },
+          {
+            "position": 12,
+            "title": "супер классные штаны с Ламоды серый меланж ...",
+            "link": "https://www.tiktok.com/@aalla_wb/video/7631578314808757522",
+            "thumbnail": "https://serpapi.com/searches/6a61badc526c48091d601b45/images/UPW47GANcRE7vn-J3tjXgbeFsYY0DVXkucMfA8186lDoTF_qHZPHYABdvQTwewog.jpeg",
+            "source": "TikTok",
+            "source_icon": "https://serpapi.com/images/i/iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAMAAABF0y-mAAAAw1BMVEUAAAAAAAAFT1IAQUNBub6u5eexxcpyQ0wIAABaxsv5____9_nGj5oyAAD____84eeEYmvm4uN4f4A5P0MAFBXx-vu019khAAD60tr37vDlmqpXAAsALzAKc3gpo6hjpqr_6O3idYqcbHTSrLP6iJ9rABOc5Ofi-vvJYnXLbn8_AAI9HyWWIDhRz9TH9PffY3oDAAC99vjhSGe7KEenACiF4-f_1961PVaB09bFkZswjJGwuLr__f7xqbYYHh_9tsTiL1Yh8R0_AAAAAXRSTlP-GuMHfQAAANJJREFUeAG90kUCg1AMBNDiPtTd3d2V-5-quMOS2b6vSXI5IjnZIElSyUgzLMcnoSBKspKMUPMpiEKxVE5EVKr5WgTLBkr1BtBsBbHd6fZKOvYHw1F9PAkgSU9njXlNx8Vyxa2XfmxvtoC0M1GH_d6P3QPU8fFkY_Ar7Q0ag3ONIOKQvOB60i0WqSnUG6FnI6rzMJbvkB76zo5-wk0JIf8EGq9ndzN7f9bRrlQBcTYTcT22iAh-X9Ib7_dPm8Q1u5Zvfpq7c4uIQ56otVrLjEYzJX-4mxcG80U-CwAAAABJRU5ErkJggg.png",
+            "channel": "aalla_wb",
+            "duration": "0:07"
+          }
+        ],
+        "search_information": {
+          "short_video_results_state": "Results for exact spelling"
+        },
+        "search_metadata": {
+          "id": "6a61badc526c48091d601b45",
+          "status": "Success",
+          "json_endpoint": "https://serpapi.com/searches/g5wwFD9WZZ-WLbKIyvEo-w/6a61badc526c48091d601b45.json",
+          "created_at": "2026-07-23 06:55:24 UTC",
+          "processed_at": "2026-07-23 06:55:24 UTC",
+          "google_short_videos_url": "https://www.google.ru/search?q=%D0%B6%D0%B5%D0%BD%D1%81%D0%BA%D0%B8%D0%B5+%D1%81%D0%BF%D0%BE%D1%80%D1%82%D0%B8%D0%B2%D0%BD%D1%8B%D0%B5+%D1%88%D1%82%D0%B0%D0%BD%D1%8B+lamoda&uule=w+CAIQICINTW9zY293LFJ1c3NpYQ&hl=ru&gl=ru&udm=39",
+          "raw_html_file": "https://serpapi.com/searches/g5wwFD9WZZ-WLbKIyvEo-w/6a61badc526c48091d601b45.html",
+          "total_time_taken": 21.13
+        },
+        "error": null
+      }
+    }
+  ]
+}

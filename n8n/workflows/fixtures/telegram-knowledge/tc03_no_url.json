@@ -1,0 +1,10 @@
+{
+  "update_id": 100003,
+  "message": {
+    "message_id": 3,
+    "from": { "id": 90003, "is_bot": false, "username": "qa_nourl" },
+    "chat": { "id": 90003, "type": "private" },
+    "date": 1777777779,
+    "text": "TC-03: только текст без ссылки — напоминание проверить категоризацию и теги automation"
+  }
+}

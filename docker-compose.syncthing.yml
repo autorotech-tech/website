@@ -1,0 +1,26 @@
+# Syncthing для vault Obsidian (вариант A: один vault на VPS + синк на Mac).
+# Запуск на VPS: docker compose -f docker-compose.syncthing.yml up -d
+# UI: http://<vps-ip>:8384 — связать устройство Mac, shared folder ObsidianVault.
+
+services:
+  syncthing:
+    image: syncthing/syncthing:1
+    container_name: autoro-syncthing
+    restart: unless-stopped
+    hostname: autoro-vps
+    environment:
+      - STGUIADDRESS=0.0.0.0:8384
+      # Без PUID/PGID том config часто root-only → cert.pem permission denied (crash loop)
+      - PUID=1000
+      - PGID=1000
+    ports:
+      - "8384:8384"
+      - "22000:22000/tcp"
+      - "22000:22000/udp"
+      - "21027:21027/udp"
+    volumes:
+      - ${OBSIDIAN_VAULT_MOUNT:-/home/vladx/obsidian-vault}:/var/syncthing/ObsidianVault
+      - syncthing_config:/var/syncthing/config
+
+volumes:
+  syncthing_config:

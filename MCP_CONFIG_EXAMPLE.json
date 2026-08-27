@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "tailwindcss": {
+      "command": "npx",
+      "args": ["-y", "tailwindcss-mcp-server"]
+    },
+    "nextjs-docs": {
+      "command": "npx",
+      "args": ["-y", "@taiyokimura/nextjs-docs-mcp@latest"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "--allowed-directories", "/Users/vlad_x/Desktop/n8n/autoro.tech/website"]
+    }
+  }
+}
+
+
+
+
+

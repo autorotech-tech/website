@@ -1,0 +1,36 @@
+---
+description: SuperClaude Framework workflows adapted for Cursor (research, pm, implement, brainstorm, etc.). Apply when user invokes SuperClaude or /sc:* patterns.
+globs:
+alwaysApply: false
+---
+
+# SuperClaude in Cursor
+
+SuperClaude is installed as **Cursor skills** under `superclaude-*` (global: `~/.cursor/skills/skills/`).
+
+## When to apply
+
+- User mentions **SuperClaude**, **`/sc:`**, or a command name (`research`, `brainstorm`, `pm`, `implement`, …).
+- Task matches a workflow: deep research, PM gates, structured implement, repo index, business panel.
+
+## How to use
+
+1. Read **`superclaude-catalog`** skill for the command list.
+2. Open the matching **`superclaude-<command>`** skill and follow its workflow.
+3. Before large implementations, use **`superclaude-confidence-check`** (≥90% readiness).
+
+## Install / update
+
+From repo root:
+
+```bash
+bash scripts/install-superclaude-cursor.sh
+```
+
+Requires venv at `~/.local/superclaude-venv` (created by the agent on first install).
+
+## Note
+
+Native slash commands target **Claude Code** (`~/.claude/commands/sc`). In Cursor there are no `/sc:*` slash commands — use skills instead.
+
+Upstream: https://github.com/SuperClaude-Org/SuperClaude_Framework

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "900001",
+    "name": "n8n / automation project (remote)",
+    "alternate_url": "https://hh.uz/vacancy/900001",
+    "employer": {
+      "name": "Direct Product Co",
+      "site_url": "https://example.com",
+      "type": "company"
+    },
+    "published_at": "2026-07-24T12:00:00+0500",
+    "employment_form": { "id": "PROJECT" },
+    "work_format": [{ "id": "REMOTE" }],
+    "snippet": {
+      "requirement": "n8n, Playwright, automation",
+      "responsibility": "Build outbound and ops workflows"
+    },
+    "salary": { "from": 2000, "currency": "USD" }
+  },
+  {
+    "id": "900002",
+    "name": "Менеджер по подбору через агентство",
+    "alternate_url": "https://hh.uz/vacancy/900002",
+    "employer": {
+      "name": "Кадровое агентство Тест",
+      "type": "agency"
+    },
+    "published_at": "2026-07-24T12:00:00+0500",
+    "employment_form": { "id": "PROJECT" },
+    "work_format": [{ "id": "REMOTE" }],
+    "snippet": {
+      "requirement": "sales",
+      "responsibility": "откликайтесь через бота screening"
+    }
+  }
+]

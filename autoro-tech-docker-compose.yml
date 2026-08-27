@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  website:
+    image: nginx:alpine
+    container_name: autoro-website
+    restart: always
+    expose:
+      - "80"
+    environment:
+      - VIRTUAL_HOST=autoro.tech,www.autoro.tech,cdn.autoro.tech
+      - LETSENCRYPT_HOST=autoro.tech,www.autoro.tech,cdn.autoro.tech
+      - LETSENCRYPT_EMAIL=autoro.tech@gmail.com
+      - HTTPS_METHOD=noredirect
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /home/vladx/projects/autoro.tech/html:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - proxy
+      - supabase_net
+
+networks:
+  proxy:
+    external: true
+  supabase_net:
+    name: vladx_anythingllm-n8n-bridge
+    external: true

@@ -1,0 +1,40 @@
+---
+description: Использовать shadcn/ui для UI-компонентов в blog-autoro и autoro.tech.
+alwaysApply: false
+globs: ["**/blog-autoro/**", "**/website/**"]
+---
+
+# shadcn/ui для дизайна
+
+## Когда срабатывает
+При работе с UI, компонентами, дизайном страниц в `blog-autoro` или основном сайте autoro.tech.
+
+## Что использовать
+
+1. **Компоненты shadcn/ui** в `blog-autoro/components/ui/`:
+   - `Button`, `Card`, `Badge` — кнопки, карточки, бейджи
+   - `DropdownMenu` — выпадающие меню (в т.ч. переключатель языков)
+   - `Input`, `Label` — формы
+   - `Skeleton` — скелетоны загрузки
+
+2. **Утилита `cn()`** из `@/lib/utils` для объединения классов:
+   ```tsx
+   import { cn } from '@/lib/utils'
+   <div className={cn("base-class", condition && "conditional", className)} />
+   ```
+
+3. **CSS-переменные** в `app/globals.css`:
+   - `--blog-color-accent`, `--blog-color-bg`, `--blog-color-text` и др.
+   - `--primary`, `--background`, `--foreground` (shadcn tokens)
+
+4. **Tailwind** с `darkMode: ["class"]` — тёмная тема через `className="dark"` на `<html>`.
+
+## Добавление новых компонентов
+```bash
+cd blog-autoro && npx shadcn@latest add <component-name>
+```
+
+## Примеры
+- Переключатель языков: `DropdownMenu` + `DropdownMenuTrigger` + `DropdownMenuContent`
+- Карточка статьи: `Card`, `CardHeader`, `CardContent`
+- Кнопка CTA: `Button` с `variant="default"` или кастомными классами `blog-cta`

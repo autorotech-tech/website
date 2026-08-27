@@ -644,10 +644,12 @@ const JR_API = (() => {
         sanitizeUserError(String(data.message || data.error || 'Генерация не удалась'))
       );
       err.jrMeta = {
-        providerErrors: pe.slice(-4),
+        providerErrors: pe.slice(-8),
         elapsedSec: data.elapsedSec,
         timedOut: data.timedOut,
         compactProfileChars: data.compactProfileChars,
+        error: data.error,
+        debugBudget: data.debugBudget || null,
       };
       throw err;
     }

@@ -1,0 +1,323 @@
+{
+  "platform": {
+    "title": {
+      "en": "AUTORO-API",
+      "ru": "AUTORO-API"
+    },
+    "description": {
+      "en": "Our OpenAI-compatible LLM gateway: automatic model selection, tier routing, key rotation and provider failover for all Autoro services.",
+      "ru": "Наш OpenAI-compatible LLM gateway: авто-выбор модели, tier routing, ротация ключей и failover провайдеров для всех сервисов Autoro."
+    },
+    "features": {
+      "en": [
+        "OpenAI-compatible API: POST /api/v1/chat/completions",
+        "Automatic model selection by tier (general, fast, code, reasoning, vision)",
+        "API key pools with health checks, round-robin rotation and provider failover",
+        "Single gateway for chat, scrape, search, enrich + worker orchestration"
+      ],
+      "ru": [
+        "OpenAI-compatible API: POST /api/v1/chat/completions",
+        "Авто-выбор модели по тирам (general, fast, code, reasoning, vision)",
+        "Пулы API-ключей с health-check, round-robin ротацией и failover провайдеров",
+        "Единый шлюз для chat, scrape, search, enrich + оркестрация воркеров"
+      ]
+    },
+    "cta": {
+      "en": "Autoro Dashboard",
+      "ru": "Autoro Dashboard"
+    }
+  },
+  "services": [
+    {
+      "id": "marketing-audit",
+      "icon": "chart",
+      "status": "live",
+      "domain": "marketing",
+      "tags": ["analytics", "RAG", "ads"],
+      "title": {
+        "en": "Marketing Audit",
+        "ru": "Marketing Audit"
+      },
+      "description": {
+        "en": "Upload ad exports and analytics reports. AI cleans, indexes, and analyzes campaigns with RAG-backed insights.",
+        "ru": "Загрузка выгрузок рекламы и аналитики. AI очищает, индексирует и анализирует кампании с RAG-инсайтами."
+      },
+      "capabilities": {
+        "en": [
+          "Google Ads, Meta, TikTok, Yandex Direct, GA4",
+          "CSV, XLSX, PDF, DOC and Google Sheets",
+          "Vector search over audit history",
+          "Multi-LLM analysis (Gemini, GLM, Groq, OpenRouter)"
+        ],
+        "ru": [
+          "Google Ads, Meta, TikTok, Яндекс.Директ, GA4",
+          "CSV, XLSX, PDF, DOC и Google Sheets",
+          "Векторный поиск по истории аудитов",
+          "Multi-LLM анализ (Gemini, GLM, Groq, OpenRouter)"
+        ]
+      }
+    },
+    {
+      "id": "chat-agent",
+      "icon": "message",
+      "status": "live",
+      "domain": "marketing",
+      "tags": ["chat", "n8n", "embed"],
+      "title": {
+        "en": "Chat Agent",
+        "ru": "Chat Agent"
+      },
+      "description": {
+        "en": "Deploy embeddable chat bots on client domains. Admin assigns n8n webhooks, tracks domains and snippets.",
+        "ru": "Встраиваемые чат-боты на доменах клиентов. Админ назначает n8n webhook, домены и snippet."
+      },
+      "capabilities": {
+        "en": [
+          "Client → bot → domain management",
+          "Embeddable widget with multi-language support",
+          "n8n webhook routing per bot",
+          "Knowledge base roles per agent"
+        ],
+        "ru": [
+          "Управление клиент → бот → домены",
+          "Виджет для встраивания, мультиязычность",
+          "Маршрутизация n8n webhook на бота",
+          "Knowledge base по ролям агента"
+        ]
+      }
+    },
+    {
+      "id": "blog-generation",
+      "icon": "file",
+      "status": "beta",
+      "domain": "content",
+      "tags": ["content", "SEO", "LLM"],
+      "title": {
+        "en": "Blog Generation",
+        "ru": "Blog Generation"
+      },
+      "description": {
+        "en": "AI-assisted blog posts with SEO metadata, featured images, and publishing to autoro.tech blog.",
+        "ru": "AI-генерация статей блога с SEO-метаданными, обложками и публикацией на autoro.tech/blog."
+      },
+      "capabilities": {
+        "en": [
+          "Chat-style post generation (Gemini, GLM, Groq)",
+          "SEO title, description, slug",
+          "Featured image pipeline",
+          "Cross-posting workflow to social (planned)"
+        ],
+        "ru": [
+          "Генерация постов в чат-стиле (Gemini, GLM, Groq)",
+          "SEO title, description, slug",
+          "Pipeline обложек",
+          "Workflow кросс-постинга в соцсети (в планах)"
+        ]
+      }
+    },
+    {
+      "id": "social-crossposting",
+      "icon": "share",
+      "status": "planned",
+      "domain": "content",
+      "tags": ["social", "crosspost"],
+      "title": {
+        "en": "Social Crossposting",
+        "ru": "Social Crossposting"
+      },
+      "description": {
+        "en": "Post once, publish everywhere. Unified API with content and media adaptation per platform.",
+        "ru": "Post once. Publish everywhere. Единый API с адаптацией контента и медиа под платформы."
+      },
+      "capabilities": {
+        "en": [
+          "X, Threads, Instagram, LinkedIn, Facebook",
+          "Platform-specific length and media rules",
+          "Postproxy / Late unified API",
+          "Blog → AI → social pipeline"
+        ],
+        "ru": [
+          "X, Threads, Instagram, LinkedIn, Facebook",
+          "Лимиты длины и медиа под каждую платформу",
+          "Единый API Postproxy / Late",
+          "Pipeline блог → AI → соцсети"
+        ]
+      }
+    },
+    {
+      "id": "web-scraping",
+      "icon": "globe",
+      "status": "live",
+      "domain": "data",
+      "tags": ["scrapling", "stealth", "gologin"],
+      "title": {
+        "en": "Web Scraping (Stealth)",
+        "ru": "Web Scraping (Stealth)"
+      },
+      "description": {
+        "en": "Unified scraping and browser automation via Scrapling and GoLogin Cloud Browser with AI extraction.",
+        "ru": "Единый скрапинг и browser automation через Scrapling и GoLogin Cloud Browser с AI-извлечением."
+      },
+      "capabilities": {
+        "en": [
+          "Modes: fetcher, stealth, dynamic, GoLogin",
+          "Single URL, batch, and crawl jobs",
+          "CSV templates and proxy pools",
+          "REST API: POST /api/v1/scrape"
+        ],
+        "ru": [
+          "Режимы: fetcher, stealth, dynamic, GoLogin",
+          "Задачи: URL, batch, crawl",
+          "CSV-шаблоны и пулы прокси",
+          "REST API: POST /api/v1/scrape"
+        ]
+      }
+    },
+    {
+      "id": "deep-search",
+      "icon": "search",
+      "status": "live",
+      "domain": "research",
+      "tags": ["research", "citations", "perplexity-level"],
+      "title": {
+        "en": "Deep Search",
+        "ru": "Deep Search"
+      },
+      "description": {
+        "en": "Perplexity-level research: multi-iteration search across ArXiv, Brave News, SearXNG, Wikipedia with citations.",
+        "ru": "Исследования уровня Perplexity: многоитерационный поиск по ArXiv, Brave News, SearXNG, Wikipedia с цитатами."
+      },
+      "capabilities": {
+        "en": [
+          "3+ iterations, 25+ pages per query",
+          "Source pills: arxiv, wikipedia, news, web",
+          "Citation-backed answers",
+          "API: /api/deep-search"
+        ],
+        "ru": [
+          "3+ итерации, 25+ страниц на запрос",
+          "Источники: arxiv, wikipedia, news, web",
+          "Ответы с цитатами",
+          "API: /api/deep-search"
+        ]
+      }
+    },
+    {
+      "id": "expired-domains",
+      "icon": "link",
+      "status": "live",
+      "domain": "data",
+      "tags": ["SEO", "domains", "scoring"],
+      "title": {
+        "en": "Expired Domains",
+        "ru": "Expired Domains"
+      },
+      "description": {
+        "en": "Search expired domains via expireddomains.net with keyword, theme, spam, and authority scoring.",
+        "ru": "Поиск истёкших доменов через expireddomains.net с оценкой keyword, theme, spam и authority."
+      },
+      "capabilities": {
+        "en": [
+          "Keyword and theme relevance scoring",
+          "Spam and authority filters",
+          "SEO prospect and business scores",
+          "API: /api/v1/expired-domains"
+        ],
+        "ru": [
+          "Scoring по ключевым словам и теме",
+          "Фильтры spam и authority",
+          "SEO prospect и business score",
+          "API: /api/v1/expired-domains"
+        ]
+      }
+    },
+    {
+      "id": "keept",
+      "icon": "bookmark",
+      "status": "live",
+      "domain": "research",
+      "tags": ["KB", "bookmarks", "RAG"],
+      "title": {
+        "en": "Keept",
+        "ru": "Keept"
+      },
+      "description": {
+        "en": "Personal knowledge base: bookmark sync, Telegram capture, RAG search. Data plane at keept.me, ops in Autoro dashboard.",
+        "ru": "Персональная база знаний: синк закладок, захват из Telegram, RAG-поиск. Data plane на keept.me, ops в Autoro dashboard."
+      },
+      "capabilities": {
+        "en": [
+          "Browser extension bookmark sync",
+          "Telegram message capture",
+          "RAG over personal library",
+          "Moderation queue in Keept Admin"
+        ],
+        "ru": [
+          "Синхронизация закладок через расширение",
+          "Захват сообщений из Telegram",
+          "RAG по личной библиотеке",
+          "Очередь модерации в Keept Admin"
+        ]
+      },
+      "href": "https://keept.me"
+    },
+    {
+      "id": "deerflow",
+      "icon": "brain",
+      "status": "live",
+      "domain": "research",
+      "tags": ["multi-agent", "research"],
+      "title": {
+        "en": "DeerFlow (Research)",
+        "ru": "DeerFlow (Research)"
+      },
+      "description": {
+        "en": "External multi-agent research stack. API keys sync from Autoro service_settings on a schedule.",
+        "ru": "Внешний multi-agent research stack. Ключи синхронизируются из Autoro service_settings по расписанию."
+      },
+      "capabilities": {
+        "en": [
+          "Autonomous research agents",
+          "Live key sync from Autoro (Gemini, OpenRouter, GLM…)",
+          "systemd timer: sync_swoop_models.py",
+          "Gateway + LangGraph containers"
+        ],
+        "ru": [
+          "Автономные research-агенты",
+          "Live-синк ключей из Autoro (Gemini, OpenRouter, GLM…)",
+          "systemd timer: sync_swoop_models.py",
+          "Контейнеры gateway + LangGraph"
+        ]
+      }
+    },
+    {
+      "id": "custom-ai-agents",
+      "icon": "brain",
+      "status": "live",
+      "domain": "consulting",
+      "tags": ["agents", "custom", "n8n"],
+      "title": {
+        "en": "Custom AI Agents",
+        "ru": "Custom AI Agents"
+      },
+      "description": {
+        "en": "End-to-end design and deployment of task-specific AI agents — workflows, tools, knowledge bases, and integrations for your stack.",
+        "ru": "Полный цикл разработки AI-агентов под задачу: workflow, инструменты, базы знаний и интеграции под ваш стек."
+      },
+      "capabilities": {
+        "en": [
+          "Discovery → architecture → production rollout",
+          "n8n + agent-api + multi-LLM tier routing",
+          "Custom tools, RAG, and admin dashboards",
+          "Hosting and ongoing ops on Autoro platform"
+        ],
+        "ru": [
+          "Discovery → архитектура → production rollout",
+          "n8n + agent-api + multi-LLM tier routing",
+          "Кастомные tools, RAG и admin dashboards",
+          "Хостинг и сопровождение на платформе Autoro"
+        ]
+      }
+    }
+  ]
+}

@@ -44,8 +44,9 @@ def test_format_and_apply_relevance_placeholder():
         "matched": ["Инструменты: n8n, Apify", "Опыт: e-commerce"],
     }
     line = jr.format_relevance_line(relevance)
-    assert line.startswith("Релевантность: 72/100")
-    assert "n8n" in line
+    assert line == "Релевантность: 72/100"
+    assert "n8n" not in line
+    assert "|" not in line
 
     draft = (
         "**Должность:** Test\n"
@@ -54,9 +55,23 @@ def test_format_and_apply_relevance_placeholder():
         "Здравствуйте!\n"
     )
     out = jr.apply_relevance_placeholder(draft, relevance)
-    assert "Релевантность: 72/100" in out
+    assert out.count("Релевантность: 72/100") == 1
+    assert "n8n" not in out
     assert jr.RELEVANCE_PLACEHOLDER_TOKEN not in out
     assert "{Approximate" not in out
+
+
+def test_apply_relevance_collapses_verbose_score_line():
+    verbose = (
+        "Релевантность: 60/100 | Инструменты: git, telegram; "
+        "Совпало (семантика): b2b marketing <- https://example.com\n"
+        "Привет!\n"
+    )
+    out = jr.apply_relevance_placeholder(verbose, {"score": 60})
+    assert "Релевантность: 60/100" in out
+    assert "Инструменты" not in out
+    assert "b2b marketing" not in out
+    assert "|" not in out.split("Привет!")[0]
 
 
 def test_apply_relevance_strips_leftover_placeholder():
@@ -102,14 +117,17 @@ def test_provider_timeout_fail_fast_primary_then_fallback():
     assert primary <= budget.LLM_PRIMARY_TIMEOUT_SEC + 0.01
     assert primary <= budget.LLM_PROVIDER_CAP_SEC
     assert fallback <= budget.LLM_FALLBACK_TIMEOUT_SEC + 0.01
-    assert primary + fallback <= budget.GENERATE_BUDGET_SEC + 1.0
+    assert budget.race_timeout_for(remaining_sec=25.0) <= budget.LLM_RACE_TIMEOUT_SEC
+    assert budget.LLM_RACE_TIMEOUT_SEC + 6.0 <= budget.GENERATE_BUDGET_SEC
 
 
 def test_generate_wall_still_under_cf_soft():
-    assert budget.GENERATE_BUDGET_SEC <= 27.0
-    assert budget.GENERATE_HARD_WALL_SEC <= 27.0
-    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
+    assert budget.GENERATE_BUDGET_SEC <= 35.0
+    assert budget.GENERATE_HARD_WALL_SEC <= 40.0
+    assert budget.LLM_PROVIDER_CAP_SEC <= 16.0
     assert budget.JR_OPENMODEL_FALLBACK_MODEL
+    assert budget.JR_OPENROUTER_FAST_MODEL
     from swoop_openmodel import OPENMODEL_CHAT_TIMEOUT_SEC
 
-    assert OPENMODEL_CHAT_TIMEOUT_SEC <= 10
+    # Default openmodel timeout for non-JR paths; JR passes request_timeout_sec.
+    assert OPENMODEL_CHAT_TIMEOUT_SEC <= 45

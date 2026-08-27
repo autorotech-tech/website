@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="es" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autoro Tech - Automatización IA y Marketing</title>
+    <meta name="description" content="Creamos sistemas de automatización inteligentes que realizan tareas repetitivas, optimizan flujos de trabajo y abren nuevas fuentes de ingresos.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Chatbot -->
+    <link rel="stylesheet" href="/chatbot.css?v=2">
+
+    <!-- Tailwind CSS (Dev Mode) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                        body: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#ccfbf1',
+                            500: '#00F5D4', // Autoro Accent (Teal)
+                            600: '#0d9488',
+                            900: '#0c4a6e',
+                        },
+                        accent: '#00F5D4',
+                        dark: {
+                            900: '#020617', 
+                            800: '#0F172A', // Autoro Dark Blue
+                            700: '#1e293b', 
+                        }
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* Autoro Dark Blue */
+            color: #F8FAFC;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(0, 245, 212, 0.1); /* Teal border hint */
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #00F5D4 0%, #38bdf8 50%, #818cf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .glow-bg {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(0, 245, 212, 0.15) 0%, rgba(15, 23, 42, 0) 70%);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: -1;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body class="antialiased overflow-x-hidden selection:bg-accent/30 selection:text-accent">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 transition-all duration-300 glass-card border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                <div class="flex-shrink-0 flex items-center gap-2 cursor-pointer" onclick="window.scrollTo(0,0)">
+                    <!-- Logo -->
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-sky-500 flex items-center justify-center">
+                        <span class="text-dark-800 font-bold text-lg">A</span>
+                    </div>
+                    <span class="font-bold text-xl tracking-tight text-white">Autoro Tech</span>
+                </div>
+                
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-8">
+                        <a href="#features" class="text-slate-300 hover:text-accent transition-colors px-3 py-2 rounded-md text-sm font-medium">Características</a>
+                        <a href="#solutions" class="text-slate-300 hover:text-accent transition-colors px-3 py-2 rounded-md text-sm font-medium">Soluciones</a>
+                        <a href="#pricing" class="text-slate-300 hover:text-accent transition-colors px-3 py-2 rounded-md text-sm font-medium">Precios</a>
+                    </div>
+                </div>
+
+                <div class="hidden md:block">
+                    <a href="#" class="bg-accent text-dark-900 hover:bg-white px-5 py-2.5 rounded-full font-semibold text-sm transition-all transform hover:scale-105 shadow-[0_0_15px_rgba(0,245,212,0.3)]">
+                        Comenzar hoy
+                    </a>
+                </div>
+
+                <!-- Mobile menu button -->
+                <div class="-mr-2 flex md:hidden">
+                    <button type="button" class="inline-flex items-center justify-center p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 focus:outline-none">
+                        <span class="sr-only">Open main menu</span>
+                        <svg class="h-6 w-6" stroke="currentColor" fill="none" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <div class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
+        <div class="glow-bg top-0"></div>
+        
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center relative z-10">
+            <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full glass-card border border-accent/20 mb-8 animate-fade-in-up">
+                <span class="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                <span class="text-accent text-sm font-medium tracking-wide uppercase">Next Gen Automation</span>
+            </div>
+            
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-tight">
+                Automatización IA y Marketing <br class="hidden md:block" />
+                <span class="gradient-text">que optimiza tu negocio</span>
+            </h1>
+            
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400 mb-10">
+                Creamos sistemas de automatización inteligentes que realizan tareas repetitivas, optimizan flujos de trabajo y abren nuevas fuentes de ingresos.
+            </p>
+            
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <a href="#" class="w-full sm:w-auto bg-gradient-to-r from-accent to-sky-500 text-dark-900 px-8 py-4 rounded-full font-bold text-lg hover:opacity-90 transition-opacity shadow-lg shadow-accent/25">
+                    Comenzar hoy
+                </a>
+                <a href="#demo" class="w-full sm:w-auto px-8 py-4 rounded-full font-bold text-lg text-white border border-slate-700 hover:bg-slate-800 transition-colors">
+                    Ver Demo
+                </a>
+            </div>
+
+            <!-- UI Mockup / Visual -->
+            <div class="mt-20 relative mx-auto max-w-5xl animate-float">
+                <div class="rounded-2xl glass-card p-2 border border-white/10 shadow-2xl shadow-sky-900/20">
+                    <img src="https://placehold.co/1200x675/0f172a/FFFFFF/png?text=Dashboard+Interface+Preview" alt="Autoro Interface" class="rounded-xl w-full h-auto opacity-90">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Social Proof -->
+    <div class="py-12 border-y border-white/5 bg-slate-900/30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <p class="text-center text-sm font-semibold text-slate-500 uppercase tracking-wider mb-8">Confían en nosotros</p>
+            <div class="flex flex-wrap justify-center gap-8 md:gap-16 opacity-50 grayscale hover:grayscale-0 transition-all duration-500">
+                <div class="text-xl font-bold text-white">EMPRESA</div>
+                <div class="text-xl font-bold text-white">MARCA</div>
+                <div class="text-xl font-bold text-white">STARTUP</div>
+                <div class="text-xl font-bold text-white">AGENCIA</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Features Grid (Bento Style) with Translated Stats -->
+    <div id="features" class="py-24 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-5xl font-bold mb-4">Nuestro <span class="gradient-text">Arsenal de Automatización</span></h2>
+                <p class="text-slate-400 text-lg max-w-2xl mx-auto">Aprovechamos herramientas y plataformas de IA de vanguardia para entregar soluciones poderosas.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Large Card 1: 10x Faster -->
+                <div class="md:col-span-2 glass-card rounded-3xl p-8 border border-white/5 hover:border-accent/30 transition-all group relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-accent/10 rounded-full blur-3xl group-hover:bg-accent/20 transition-all"></div>
+                    <div class="relative z-10">
+                        <div class="w-12 h-12 rounded-xl bg-accent/20 flex items-center justify-center mb-6">
+                            <svg class="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        </div>
+                        <h3 class="text-4xl font-bold mb-3 text-white">10x</h3>
+                        <p class="text-slate-400 text-lg mb-6">
+                            Ejecución más rápida. Automatiza tareas repetitivas y enfócate en el crecimiento.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Card 2: 99% Accuracy -->
+                <div class="glass-card rounded-3xl p-8 border border-white/5 hover:border-purple-500/30 transition-all group">
+                    <div class="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <h3 class="text-3xl font-bold mb-3 text-white">99%</h3>
+                    <p class="text-slate-400 mb-4">Precisión de datos. Perspectivas impulsadas por IA en las que puedes confiar.</p>
+                </div>
+
+                <!-- Card 3: 300% ROI -->
+                <div class="glass-card rounded-3xl p-8 border border-white/5 hover:border-pink-500/30 transition-all group">
+                    <div class="w-12 h-12 rounded-xl bg-pink-500/20 flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <h3 class="text-3xl font-bold mb-3 text-white">300%</h3>
+                    <p class="text-slate-400 mb-4">Aumento de ROI. Resultados medibles para tu negocio.</p>
+                </div>
+
+                <!-- Large Card 4: Arsenal -->
+                <div class="md:col-span-2 glass-card rounded-3xl p-8 border border-white/5 hover:border-orange-500/30 transition-all group overflow-hidden relative">
+                    <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-transparent to-orange-500/5"></div>
+                    <div class="relative z-10">
+                         <div class="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center mb-6">
+                            <svg class="w-6 h-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                        </div>
+                        <h3 class="text-2xl font-bold mb-3 text-white">Tecnología Avanzada</h3>
+                        <p class="text-slate-400 text-lg mb-6">Utilizamos las mejores herramientas: LLM Agents, ChatGPT, Automation Tools.</p>
+                        <div class="flex gap-4 flex-wrap">
+                            <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">CRM Sync</span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">Lead Scoring</span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs text-slate-300">Auto-Posting</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CTA Section -->
+    <div class="py-24">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-3xl md:text-5xl font-bold mb-8">Cuéntanos sobre <span class="gradient-text">tu negocio</span></h2>
+            <p class="text-xl text-slate-400 mb-10">Pensaremos y te ofreceremos automatización y optimización. Gratis.</p>
+            
+            <a href="#" class="inline-block bg-white text-slate-900 px-10 py-5 rounded-full font-bold text-xl hover:bg-slate-100 transition-transform hover:-translate-y-1 shadow-2xl shadow-white/10">
+                Obtener Consulta Gratuita
+            </a>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5 bg-slate-950 pt-16 pb-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
+                <div class="col-span-1 md:col-span-1">
+                    <div class="flex items-center gap-2 mb-6">
+                        <div class="w-6 h-6 rounded bg-gradient-to-br from-accent to-sky-500 flex items-center justify-center">
+                            <span class="text-dark-800 font-bold text-xs">A</span>
+                        </div>
+                        <span class="font-bold text-lg">Autoro Tech</span>
+                    </div>
+                    <p class="text-slate-500 text-sm">
+                        Empoderando negocios con herramientas de automatización IA de próxima generación.
+                    </p>
+                </div>
+                
+                <div>
+                    <h4 class="font-bold text-white mb-4">Producto</h4>
+                    <ul class="space-y-2 text-sm text-slate-400">
+                        <li><a href="#" class="hover:text-accent transition-colors">Agentes IA</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Flujos de trabajo</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Integraciones</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Precios</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h4 class="font-bold text-white mb-4">Soluciones</h4>
+                    <ul class="space-y-2 text-sm text-slate-400">
+                        <li><a href="#" class="hover:text-accent transition-colors">Para Marketing</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Para Agencias</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Para E-commerce</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Para Startups</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h4 class="font-bold text-white mb-4">Empresa</h4>
+                    <ul class="space-y-2 text-sm text-slate-400">
+                        <li><a href="#" class="hover:text-accent transition-colors">Sobre nosotros</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Blog</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Contacto</a></li>
+                        <li><a href="#" class="hover:text-accent transition-colors">Privacidad</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="border-t border-white/5 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+                <p class="text-slate-600 text-sm">© 2025 Autoro Tech. Todos los derechos reservados.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Chat Script -->
+    <script src="/chatbot.js"></script>
+
+</body>
+</html>

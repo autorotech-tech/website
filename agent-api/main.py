@@ -5726,7 +5726,14 @@ def openai_chat_completions_generic(
             om_keys = om_keys[:max_keys]
             if not om_keys:
                 continue
-            per_key = max(5, wall // len(om_keys)) if len(om_keys) > 1 else max(5, min(wall, int(_OPENMODEL_CHAT_TIMEOUT_SEC)))
+            # When JR/race passes request_timeout_sec, honor full wall for a single key.
+            # Previously min(wall, OPENMODEL_CHAT_TIMEOUT_SEC=9) capped cover letters → soft timeout.
+            if len(om_keys) > 1:
+                per_key = max(5, wall // len(om_keys))
+            elif request_timeout_sec is not None:
+                per_key = max(5, wall)
+            else:
+                per_key = max(5, min(wall, int(_OPENMODEL_CHAT_TIMEOUT_SEC)))
 
             def _openmodel_chat_attempt(api_key: str):
                 if hermes_proxy:

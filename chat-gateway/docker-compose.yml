@@ -1,0 +1,127 @@
+version: "3.8"
+
+services:
+  chat-gateway:
+    build: .
+    container_name: autoro-chat-gateway
+    restart: always
+    environment:
+      - PORT=8080
+      - VIRTUAL_HOST=chat.autoro.tech
+      - VIRTUAL_PORT=8080
+      - LETSENCRYPT_HOST=chat.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+      # nginx-proxy: n8n/LLM responses can take 60–90s
+      - PROXY_READ_TIMEOUT=120
+      - PROXY_SEND_TIMEOUT=120
+      - PROXY_CONNECT_TIMEOUT=10
+
+      # Required: Supabase (server-side)
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
+      # Optional fallback: used only if bot doesn't have its own n8n webhook URL
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      # Optional security (recommended)
+      - N8N_SHARED_SECRET=${N8N_SHARED_SECRET}
+
+      # pquoc unified RAG (chat-gateway -> admin-api internal ask-phu-quoc)
+      - PQUOC_ADMIN_INTERNAL_URL=${PQUOC_ADMIN_INTERNAL_URL:-https://pquoc.com/admin-api}
+      - PQUOC_N8N_CALLBACK_SECRET=${PQUOC_N8N_CALLBACK_SECRET}
+      - PQUOC_RAG_BOT_IDS=${PQUOC_RAG_BOT_IDS:-5a298eec-6b34-47ef-9ab1-48e30e6732a7}
+
+      # Widget public base (what script uses to call API)
+      - WIDGET_PUBLIC_URL=https://chat.autoro.tech
+
+      # Inline Telegram RAG + sales LLM (non-pquoc bots)
+      - SWOOP_API_BASE=${SWOOP_API_BASE:-https://swoop.autoro.tech}
+      - SWOOP_API_KEY=${SWOOP_API_KEY:-}
+      - CHAT_AGENT_LLM_MODEL=${CHAT_AGENT_LLM_MODEL:-openai/gpt-4o-mini}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - CHROMA_URL=${CHROMA_URL:-http://chroma:8000}
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+
+      # Limits
+      - MAX_MESSAGE_LEN=500
+      - RATE_LIMIT_WINDOW_MS=30000
+      - RATE_LIMIT_MAX=12
+      - ENFORCE_ALLOWED_DOMAINS=true
+    networks:
+      - proxy
+      - default
+      - supabase_default
+
+  chat-provisioner:
+    build:
+      context: .
+      dockerfile: provisioner.Dockerfile
+    container_name: autoro-chat-provisioner
+    restart: always
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - WEBHOOK_BASE_URL=https://tech.autoro.tech
+      - N8N_CONTAINER=n8n
+      - POLL_INTERVAL_MS=15000
+      - BATCH_SIZE=3
+      - TEMPLATE_PATH=/app/chat-agent-template.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy
+      - default
+
+  chat-indexer:
+    build:
+      context: ../chat-indexer
+      dockerfile: Dockerfile
+    container_name: autoro-chat-indexer
+    restart: always
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - CHROMA_URL=http://chroma:8000
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-qwen2.5:3b}
+      - POLL_INTERVAL_MS=5000
+      - MAX_HTML_BYTES=2000000
+      - URL_TIMEOUT_MS=12000
+      - CHUNK_SIZE=1200
+      - CHUNK_OVERLAP=200
+    networks:
+      - default
+      - proxy
+      - supabase_default
+
+  marketing-audit-processor:
+    build:
+      context: ../marketing-audit-processor
+      dockerfile: Dockerfile
+    container_name: autoro-marketing-audit-processor
+    restart: always
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL:-qwen2.5:3b}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - POLL_INTERVAL_SEC=5
+      - MAX_FILE_BYTES=20000000
+    networks:
+      - default
+      - proxy
+      - supabase_default
+      - ollama_network
+
+networks:
+  proxy:
+    external: true
+  supabase_default:
+    external: true
+  ollama_network:
+    external: true
+    name: vladx_anythingllm-n8n-bridge
+
+

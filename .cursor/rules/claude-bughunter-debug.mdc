@@ -1,0 +1,41 @@
+---
+description: Отладка багов, 502, CI, security-регрессии — systematic-debugging + Claude-BugHunter (cbh-*). Читать cbh-debug-playbook и при security — cbh-triage-validation.
+globs:
+alwaysApply: false
+---
+
+# Claude-BugHunter + отладка (Autoro)
+
+Установка: `npm run bughunter-skills:install` → [Claude-BugHunter](https://github.com/elementalsouls/Claude-BugHunter).
+
+## Порядок работы
+
+### Обычные баги (код, тесты, 502, сборка, UI)
+
+1. **systematic-debugging** — root cause до любого фикса.
+2. Собрать факты: логи, `npm run build`, curl origin, Docker/nginx (см. `infra/nginx-proxy/`).
+3. Минимальный фикс + проверка.
+
+### Подозрение на уязвимость / security review
+
+1. **systematic-debugging** (не пропускать).
+2. **cbh-triage-validation** или slash **`/triage`** — 7-Question Gate до отчёта.
+3. Класс бага → **cbh-hunt-*** (xss, sqli, idor, ssrf, auth-bypass, …) или **`/validate`** / **`/report`**.
+4. Полный проход → **cbh-bb-methodology**, **cbh-security-arsenal**.
+
+### Каталог и маршрутизация
+
+- **cbh-catalog** — список всех cbh-* skills.
+- **cbh-debug-playbook** — шпаргалка для этого репозитория.
+
+## Slash-команды в Cursor Agent
+
+`/triage`, `/validate`, `/report`, `/recon`, `/hunt`, `/chain`, `/surface`, `/intel`, `/pickup`, `/remember`, `/autopilot`, `/token-scan`, `/web3-audit`, `/memory-gc`
+
+Файлы: `.cursor/commands/*.md`
+
+## Ограничения
+
+- Только **авторизованные** цели (scope, staging, собственные сервисы).
+- Не запускать активный pentest против production без явного запроса пользователя.
+- Секреты не коммитить; PoC без лишних данных.

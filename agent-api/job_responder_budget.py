@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import List, Tuple
 
 # Soft wall-clock for generate: finish JSON before CF/proxy kills the connection.
-# Evidence (VPS 2026-08-27): openmodel urlopen default was 45s while FuturesTimeout was
-# 16–26s → zombie threads + only 2 uvicorn workers → nginx/CF HTTP 502 (HTML), not soft JSON.
-# Keep hard wall under ~25s so abandoned HTTP dies with the slice (see swoop_openmodel timeout).
-GENERATE_BUDGET_SEC = 24.0
+# Evidence (VPS 2026-08-27 debug session 920d6a):
+# - ping "Say OK": haiku ≈6.5s, gemini-3.5-flash ≈7.0s, deepseek → empty whitespace
+# - sequential fail-fast 8s+6s on full cover letters → constant soft llm_timeout
+# - fix: parallel race with ~16s shared slice (wall = max, not sum) + skip empty deepseek
+GENERATE_BUDGET_SEC = 30.0
 # Soft caps for unified compact profile (many Resume sources).
 COMPACT_PROFILE_CHARS = 1600
 COMPACT_PROFILE_CHARS_MANY = 1100
@@ -20,35 +21,32 @@ COMPACT_PROFILE_EARLY_SOURCES = 6
 COVER_TEMPLATE_CHARS = 900
 COVER_TEMPLATE_CHARS_RETRY = 400
 
-# Evidence (VPS 2026-08-27):
-# - gemini-3.5-flash cover letter ≈ 47s without HTTP cap (unusable under CF)
-# - openmodel claude-haiku often 4–5s, but under load can hang past 20s
-# - single hung key at 45s starved workers → 502; fail-fast slice + rotate instead
-# - soft llm_timeout: haiku timeout>10s + deepseek empty + cascade:max_providers (gemini never tried)
-#   because cascade needed rem≥20 while pre-work left ~19s → only 2 steps.
-# Cascade: haiku → deepseek → gemini flash, each with short HTTP timeout ≤ slice.
-# (Generate path order is haiku → gemini → deepseek so gemini runs before empty deepseek.)
-LLM_PRIMARY_TIMEOUT_SEC = 8.0
-LLM_FALLBACK_TIMEOUT_SEC = 6.0
-LLM_PROVIDER_CAP_SEC = 9.0
-LLM_MINI_RETRY_TIMEOUT_SEC = 7.0
-LLM_MINI_RETRY_MIN_REMAINING_SEC = 7.0
+# Per-attempt caps (sequential mini-retry / single-step). Race uses LLM_RACE_TIMEOUT_SEC.
+LLM_PRIMARY_TIMEOUT_SEC = 14.0
+LLM_FALLBACK_TIMEOUT_SEC = 12.0
+LLM_PROVIDER_CAP_SEC = 16.0
+# Parallel race wall (haiku + gemini + openrouter share this clock).
+LLM_RACE_TIMEOUT_SEC = 16.0
+LLM_MINI_RETRY_TIMEOUT_SEC = 12.0
+LLM_MINI_RETRY_MIN_REMAINING_SEC = 8.0
 # Soft-retry after mid-word truncation only when enough wall-clock remains.
 COVER_TRUNCATION_RETRY_MIN_SEC = 10.0
 # When pre-LLM work ate budget, shrink profile/prompt before first cascade.
-GENERATE_PRESSURE_SHRINK_SEC = 18.0
+GENERATE_PRESSURE_SHRINK_SEC = 20.0
 PROMPT_EXTRA_PRESSURE_CHARS = 1200
 # Legacy aliases (tests / older call sites).
 LLM_ATTEMPT_TIMEOUT_SEC = LLM_PRIMARY_TIMEOUT_SEC
 GEMINI_RAG_EARLY_SEC = 5.0
 # Auto File Search only when nearly full budget still free (explicit opt-in preferred).
-GEMINI_RAG_MIN_BUDGET_SEC = 20.0
-# Absolute asyncio.wait_for ceiling (seconds after start) - must beat CF soft cut.
-GENERATE_HARD_WALL_SEC = 27.0
+GEMINI_RAG_MIN_BUDGET_SEC = 22.0
+# Absolute asyncio.wait_for ceiling (seconds after start) - must beat soft budget.
+GENERATE_HARD_WALL_SEC = 34.0
 
 # Explicit fast OpenModel slug - admin default kimi-k3 is too slow for CF soft budget.
 JR_OPENMODEL_FAST_MODEL = "claude-haiku-4-5-20251001"
+# deepseek-v4-flash often returns empty whitespace on VPS — prefer OpenRouter mini.
 JR_OPENMODEL_FALLBACK_MODEL = "deepseek-v4-flash"
+JR_OPENROUTER_FAST_MODEL = "openai/gpt-4o-mini"
 
 
 def should_attempt_mini_profile_retry(*, has_text: bool, remaining_sec: float) -> bool:
@@ -67,13 +65,10 @@ def choose_profile_cap(source_count: int) -> Tuple[int, bool]:
 
 
 def cascade_max_providers(*, profile_compressed: bool, remaining_sec: float, is_retry: bool = False) -> int:
-    """How many cascade steps (haiku → deepseek → gemini) fit in remaining soft budget.
+    """How many providers to include in the parallel race (or sequential retry).
 
-    Each step uses a short HTTP timeout so a hung key/provider fails fast and rotates
-    instead of burning one urlopen until CF 502. Mini-profile retry stays single-step.
-
-    Thresholds are aggressive: after ~4–5s pre-LLM work, rem≈19 must still allow 3 steps
-    so gemini runs when openmodel hangs/empties (VPS soft llm_timeout root cause).
+    First attempt races N providers under one shared wall (LLM_RACE_TIMEOUT_SEC).
+    Mini-profile retry stays single-step.
     """
     _ = profile_compressed
     if is_retry:
@@ -84,6 +79,16 @@ def cascade_max_providers(*, profile_compressed: bool, remaining_sec: float, is_
     if rem >= 9.0:
         return 2
     return 1
+
+
+def race_timeout_for(*, remaining_sec: float, is_retry: bool = False) -> float:
+    """Shared wall-clock for parallel provider race (or sequential retry slice)."""
+    rem = max(0.0, float(remaining_sec) - 0.5)
+    if is_retry:
+        base = LLM_MINI_RETRY_TIMEOUT_SEC
+    else:
+        base = LLM_RACE_TIMEOUT_SEC
+    return max(0.0, min(float(base), rem, LLM_PROVIDER_CAP_SEC))
 
 
 def should_shrink_for_pressure(*, remaining_sec: float) -> bool:
@@ -98,7 +103,7 @@ def provider_timeout_for(
     is_retry: bool = False,
     attempt_index: int = 0,
 ) -> float:
-    """Per-attempt time slice. Primary fail-fast; fallbacks share remaining budget."""
+    """Per-attempt time slice (sequential path / mini-retry). Race uses race_timeout_for."""
     rem = max(0.0, float(remaining_sec) - 0.5)
     if is_retry:
         base = LLM_MINI_RETRY_TIMEOUT_SEC

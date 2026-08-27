@@ -1,0 +1,18 @@
+[Unit]
+Description=Sync Swoop LLM keys from DB to DeerFlow (.env, config) and refresh gateway/langgraph
+Documentation=file:///home/vladx/autoro-dashboard/projects/deer-flow/README.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=vladx
+Group=vladx
+Environment=DEER_FLOW_ROOT=/home/vladx/autoro-dashboard/projects/deer-flow
+WorkingDirectory=/home/vladx/autoro-dashboard/projects/deer-flow
+# Скрипт должен быть исполняемым: chmod +x run-swoop-sync.sh
+ExecStart=/home/vladx/autoro-dashboard/projects/deer-flow/run-swoop-sync.sh
+
+# Логи: journalctl -u deer-flow-swoop-sync.service -n 50
+StandardOutput=journal
+StandardError=journal

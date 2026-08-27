@@ -1,0 +1,54 @@
+{
+  "mcpServers": {
+    "tailwindcss": {
+      "command": "npx",
+      "args": ["-y", "tailwindcss-mcp-server"]
+    },
+    "nextjs-docs": {
+      "command": "npx",
+      "args": ["-y", "@taiyokimura/nextjs-docs-mcp@latest"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "--allowed-directories", "/Users/vlad_x/Desktop/n8n/autoro.tech/website"]
+    },
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "ВАШ_API_КЛЮЧ_ЗДЕСЬ"
+      }
+    },
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"]
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://supabase_admin:supabase_password_e97577f974376e8d@localhost:5433/postgres?sslmode=disable"],
+      "note": "⚠️ Требует SSH туннель: ssh -i ~/.ssh/id_ed25519_autoro -L 5433:localhost:5433 vladx@46.250.228.229"
+    },
+    "supabase": {
+      "command": "npx",
+      "args": ["-y", "@supabase/mcp-server"],
+      "env": {
+        "SUPABASE_URL": "https://api.autoro.tech",
+        "SUPABASE_SERVICE_ROLE_KEY": "ВАШ_SERVICE_ROLE_KEY_ЗДЕСЬ"
+      },
+      "note": "⚠️ БЕЗОПАСНОСТЬ: Используйте только в режиме разработки с read-only правами!"
+    },
+    "Tavily": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.tavily.com/mcp/?tavilyApiKey=<YOUR_TAVILY_API_KEY>"
+      ],
+      "note": "Ключ: https://app.tavily.com/home — либо OAuth: args без query, только https://mcp.tavily.com/mcp/ (см. docs.tavily.com/documentation/mcp)"
+    }
+  }
+}
+
+
+
+

@@ -1,0 +1,91 @@
+version: '3'
+services:
+  kong:
+    environment:
+      - VIRTUAL_HOST=api.autoro.tech
+      - VIRTUAL_PORT=8000
+      - LETSENCRYPT_HOST=api.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+    networks:
+      - proxy
+      - default
+      - anythingllm-n8n-bridge
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "swoop.autoro.tech:46.250.228.229"
+      - "api.autoro.tech:46.250.228.229"
+
+  auth:
+    environment:
+      # OAuth callback (token exchange + DB) может занимать >10s; иначе GoTrue 504 request_timeout
+      GOTRUE_API_MAX_REQUEST_DURATION: ${GOTRUE_API_MAX_REQUEST_DURATION:-60s}
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${GOTRUE_EXTERNAL_GOOGLE_ENABLED}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${GOTRUE_EXTERNAL_GOOGLE_SECRET}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI}
+    networks:
+      - default
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "swoop.autoro.tech:46.250.228.229"
+
+  rest:
+    networks:
+      - default
+      - anythingllm-n8n-bridge
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  autoro-blog-nextjs:
+    build: ./website
+    restart: always
+    container_name: autoro-blog-nextjs
+    environment:
+      - NEXT_PUBLIC_SUPABASE_URL=https://swoop.autoro.tech/api/auth
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - BLOG_API_URL=https://autoro.tech/api/blog
+    ports:
+      - "3000:3000"
+    networks:
+      - default
+      - proxy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "swoop.autoro.tech:46.250.228.229"
+      - "api.autoro.tech:46.250.228.229"
+      - "autoro.tech:46.250.228.229"
+
+  perplexica:
+    image: itzcrazykns1337/perplexica:latest
+    container_name: autoro-perplexica
+    restart: always
+    environment:
+      - VIRTUAL_HOST=perplexica.autoro.tech
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=perplexica.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+    networks:
+      - proxy
+      - default
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "swoop.autoro.tech:46.250.228.229"
+      - "api.autoro.tech:46.250.228.229"
+      - "autoro.tech:46.250.228.229"
+      - "perplexica.autoro.tech:46.250.228.229"
+
+networks:
+  proxy:
+    external: true
+  anythingllm-n8n-bridge:
+    external: true
+    name: vladx_anythingllm-n8n-bridge
