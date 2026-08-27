@@ -2,6 +2,12 @@
 
 Chrome MV3 extension: персонализированные отклики с базой резюме.
 
+## v0.9.13
+
+- **Relevance calibration**: RRF base gated by absolute BM25/dense quality (rank-consensus alone no longer → max). Caps: RRF 48, grid 28, domain 6, aux soft. Synonym/fuzzy tier credit discounted; semantic overlap floors RU/EN BM25 gaps. Top-band gates require real skill overlap.
+- **Prompt**: accent отраслевой опыт when Resume KB has domains_matched / industry facts (rule 3+8); still no invented claims.
+- After deploy: re-run «Оценить список» (extension `jrRelevanceCache` may keep old scores).
+
 ## v0.9.9
 
 - **Permanent KB optimize**: ingest нормализует skills/tools/domains/projects/metrics; dedupe; semantic domain clusters (tourism, ecommerce, SaaS, EdTech, fintech, …).

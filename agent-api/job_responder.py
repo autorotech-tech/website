@@ -52,6 +52,49 @@ from job_responder_optimize import (
     vacancy_domains_from_text,
 )
 from job_responder_hybrid import hybrid_relevance_base
+
+# Semantic-grid hit credit: synonym/fuzzy must not count as full exact overlap.
+_SEMANTIC_TIER_CREDIT: Dict[str, float] = {
+    "exact": 1.0,
+    "synonym": 0.65,
+    "fuzzy": 0.35,
+    "token": 0.4,
+    "blob": 0.45,
+}
+
+
+def _semantic_tier_credit(match: Dict[str, Any]) -> float:
+    return float(_SEMANTIC_TIER_CREDIT.get(str(match.get("tier") or ""), 0.35))
+
+
+def _calibrate_relevance_score(
+    raw: float,
+    *,
+    exact_hits: int,
+    overlap: float,
+    domain_pts: float,
+    grid_match_pts: float,
+) -> int:
+    """Compress optimistic stacks; soft signals alone cannot land in 90–100."""
+    score = int(max(0, min(100, round(raw))))
+    # Title / remote / vague domain stacks without real skill overlap
+    if grid_match_pts < 14 and domain_pts <= 2 and overlap < 0.15 and exact_hits < 1:
+        score = min(score, 55)
+    if score >= 90 and overlap < 0.45:
+        score = min(score, 78)
+    elif score >= 85 and overlap < 0.35:
+        score = min(score, 74)
+    elif score >= 75 and overlap < 0.2 and exact_hits < 1:
+        score = min(score, 65)
+    # Wrong/weak domain: keep top band gated
+    if score >= 82 and domain_pts <= 2 and exact_hits < 2 and overlap < 0.4:
+        score = min(score, 72)
+    # Soft upper compress (never auto-100 on soft stack)
+    if score > 92:
+        score = 92 + int((score - 92) * 0.25)
+    if score > 88 and exact_hits < 3 and overlap < 0.55:
+        score = min(score, 85)
+    return max(0, min(100, int(score)))
 from job_responder_budget import (
     COMPACT_PROFILE_CHARS,
     COMPACT_PROFILE_CHARS_RETRY,
@@ -2416,7 +2459,7 @@ def score_resume_vs_vacancy(
         grid = build_semantic_grid(profile)
     resume_exact = merged_skills | merged_tools | merged_roles | merged_domains
 
-    # --- Tools (0–28) — exact first, then semantic ---
+    # --- Tools (0–24 weighted) — exact first, then semantic (discounted) ---
     tool_hit_maps, tool_miss_raw = match_skills(
         sorted(vac_tools),
         grid,
@@ -2428,9 +2471,10 @@ def score_resume_vs_vacancy(
         for m in tool_hit_maps
     ]
     tool_miss = tool_miss_raw
+    tool_credit = sum(_semantic_tier_credit(m) for m in tool_hit_maps)
     if vac_tools:
-        ratio = len(tool_hit_maps) / max(len(vac_tools), 1)
-        pts = int(28 * min(1.0, ratio))
+        ratio = tool_credit / max(len(vac_tools), 1)
+        pts = int(24 * min(1.0, ratio))
         score += pts
         grid_match_pts += pts
         if tool_hit_maps:
@@ -2440,10 +2484,10 @@ def score_resume_vs_vacancy(
         if tool_miss:
             missing.append(f"Инструменты: {', '.join(tool_miss[:8])}")
     else:
-        score += 6
+        score += 2
         rationale.append("В вакансии мало явных tool-keywords - мягкий бонус")
 
-    # --- Skills (0–30), semantic grid: exact -> synonym -> fuzzy ---
+    # --- Skills (0–26 weighted), semantic grid: exact -> synonym -> fuzzy ---
     skill_pool = vac_skills - vac_tools
     skill_candidates = skill_pool if skill_pool else vac_skills
     skill_hit_maps, skill_miss = match_skills(
@@ -2454,10 +2498,11 @@ def score_resume_vs_vacancy(
     )
     skill_hits = [str(m.get("skill") or m.get("normalized")) for m in skill_hit_maps]
     semantic_lines = semantic_matched_lines(skill_hit_maps, limit=8)
+    skill_credit = sum(_semantic_tier_credit(m) for m in skill_hit_maps)
     if vac_skills or skill_pool:
         denom = max(len(skill_candidates), 1)
-        ratio = len(skill_hit_maps) / denom
-        pts = int(30 * min(1.0, ratio))
+        ratio = skill_credit / denom
+        pts = int(26 * min(1.0, ratio))
         score += pts
         grid_match_pts += pts
         if skill_hit_maps:
@@ -2467,8 +2512,8 @@ def score_resume_vs_vacancy(
             for line in semantic_lines:
                 matched.append(line)
             rationale.append(
-                f"Навыки +{pts}: {len(skill_hit_maps)}/{denom} "
-                f"(exact/synonym/fuzzy), grid clusters={int(grid.get('clusterCount') or 0)}"
+                f"Навыки +{pts}: credit={skill_credit:.1f}/{denom} "
+                f"(exact/synonym/fuzzy weighted), grid clusters={int(grid.get('clusterCount') or 0)}"
             )
         else:
             rationale.append("Прямых и семантических совпадений навыков мало")
@@ -2476,7 +2521,7 @@ def score_resume_vs_vacancy(
         if skill_miss:
             missing.append(f"Навыки: {', '.join(skill_miss[:8])}")
     else:
-        # soft title token overlap
+        # soft title token overlap (capped low — title-only must not look like a strong match)
         title_tokens = {
             t.lower()
             for t in _TOKEN_RE.findall(vacancy.title or "")
@@ -2484,7 +2529,7 @@ def score_resume_vs_vacancy(
         }
         soft = sorted(title_tokens & (merged_skills | merged_tools | merged_roles | merged_domains))
         if soft:
-            pts = min(18, 4 * len(soft))
+            pts = min(8, 2 * len(soft))
             score += pts
             grid_match_pts += pts
             matched.append(f"По заголовку: {', '.join(soft[:6])}")
@@ -2492,7 +2537,7 @@ def score_resume_vs_vacancy(
         else:
             rationale.append("Мало пересечений по навыкам/заголовку")
 
-    # --- Role / title (0–18) — exact + semantic ---
+    # --- Role / title (0–14) — exact + semantic; title-only weaker ---
     role_hit_maps, role_miss_raw = match_skills(
         sorted(vac_roles),
         grid,
@@ -2508,20 +2553,21 @@ def score_resume_vs_vacancy(
     ) or any(any(tok in rt for tok in title_l.split() if len(tok) > 3) for rt in resume_titles)
     role_pts = 0
     if role_hits:
-        role_pts += 10
+        role_credit = sum(_semantic_tier_credit(m) for m in role_hit_maps)
+        role_pts += min(8, int(3 + 5 * min(1.0, role_credit)))
         matched.append(f"Роли: {', '.join(role_hits[:4])}")
     if title_in_resume:
-        role_pts += 8
+        role_pts += 6 if role_hits else 3
         matched.append("Заголовок вакансии отражён в compact profile")
     elif vac_roles and not role_hits:
         miss_roles = role_miss_raw or sorted(vac_roles)
         missing.append(f"Роли: {', '.join(miss_roles[:4])}")
-    score += min(18, role_pts)
-    grid_match_pts += min(18, role_pts)
+    score += min(14, role_pts)
+    grid_match_pts += min(14, role_pts)
     if role_pts:
-        rationale.append(f"Роль/title +{min(18, role_pts)}")
+        rationale.append(f"Роль/title +{min(14, role_pts)}")
 
-    # --- Domains (0–8) — semantic ---
+    # --- Domains (0–6) — semantic, discounted tiers ---
     domain_hit_maps, domain_miss = match_skills(
         sorted(vac_domains),
         grid,
@@ -2531,7 +2577,13 @@ def score_resume_vs_vacancy(
     domain_hits = [str(m.get("skill") or m.get("normalized")) for m in domain_hit_maps]
     domain_pts = 0
     if domain_hits:
-        domain_pts = min(8, 4 * len(domain_hits))
+        d_exact = sum(1 for m in domain_hit_maps if m.get("tier") == "exact")
+        d_credit = sum(_semantic_tier_credit(m) for m in domain_hit_maps)
+        # Synonym-only domain (e.g. role→marketing) must not rival real domain overlap
+        if d_exact:
+            domain_pts = min(6, 2 + int(2 * d_credit))
+        else:
+            domain_pts = min(3, int(2 * d_credit))
         score += domain_pts
         matched.append(f"Домены: {', '.join(domain_hits[:4])}")
         rationale.append(f"Домены: {', '.join(domain_hits[:4])}")
@@ -2539,7 +2591,7 @@ def score_resume_vs_vacancy(
         missing.append(f"Домены: {', '.join(domain_miss[:4] or sorted(vac_domains)[:4])}")
 
     format_pts = 0
-    # --- Work format (0–10) ---
+    # --- Work format (0–10) — kept for explainability; aux contribution capped later ---
     if vac_format:
         if vac_format in resume_formats or (vac_format == "remote" and "remote" in merged_prefs):
             format_pts = 10
@@ -2582,7 +2634,7 @@ def score_resume_vs_vacancy(
     if exp_pts:
         rationale.append(f"Опыт/seniority +{min(12, exp_pts)}")
 
-    # Hybrid BM25 + dense RRF base (0–70) + semantic grid Tier-0 boost (0–20)
+    # Hybrid BM25 + dense RRF base (0–48, quality-gated) + capped Tier-0 boosts
     vac_query = " ".join(
         p
         for p in (
@@ -2598,15 +2650,46 @@ def score_resume_vs_vacancy(
         profile,
         resume_rows,
         strip_wrapper=strip_profile_wrapper,
+        max_pts=48.0,
     )
-    grid_boost = min(20, int(grid_match_pts * 20 / 76)) if grid_match_pts else 0
-    domain_boost = min(10, int(domain_pts * 10 / 8)) if domain_pts else 0
-    aux_boost = min(5, (5 if pref_hits else 0)) + min(5, format_pts // 2) + min(5, exp_pts // 3)
-    score = max(0, min(100, int(hybrid_base + grid_boost + domain_boost + aux_boost)))
+    exact_hits = sum(
+        1
+        for m in (skill_hit_maps + tool_hit_maps)
+        if m.get("tier") == "exact"
+    )
+    skill_denom = max(len(skill_candidates) if (vac_skills or skill_pool) else 0, 0)
+    tool_denom = len(vac_tools) if vac_tools else 0
+    overlap_denom = max(skill_denom + tool_denom, 1)
+    overlap = (skill_credit + tool_credit) / overlap_denom
+    # RU JD vs EN resume often yields BM25/dense ~0; semantic grid overlap is the quality floor.
+    # Keep the floor modest when overlap is thin / synonym-only (avoids LLM≠marketing inflation).
+    q_meta = float(hybrid_meta.get("quality") or 0.0)
+    rrf_frac = float(hybrid_meta.get("rrfFrac") or 0.0)
+    q_floor = min(0.72, 0.28 + overlap * 0.7)
+    if exact_hits < 1 and overlap < 0.4:
+        q_floor = min(q_floor, 0.2 + overlap * 0.45)
+    q_eff = max(q_meta, q_floor)
+    if q_eff > q_meta + 0.02:
+        hybrid_base = 48.0 * (rrf_frac**0.9) * (q_eff**1.08)
+        hybrid_meta = {**hybrid_meta, "qualityEff": round(q_eff, 4), "quality": q_meta}
+    # Grid boost: keep explainable skill/tool credit material (not crushed to ~4 pts)
+    grid_boost = min(28, int(grid_match_pts * 28 / 48)) if grid_match_pts else 0
+    domain_boost = min(6, int(domain_pts)) if domain_pts else 0
+    # Format / prefs / exp are soft signals — keep aux small so remote alone ≠ top band
+    aux_boost = min(3, (3 if pref_hits else 0)) + min(3, format_pts // 4) + min(4, exp_pts // 3)
+    raw_hybrid = float(hybrid_base) + grid_boost + domain_boost + aux_boost
+    score = _calibrate_relevance_score(
+        raw_hybrid,
+        exact_hits=exact_hits,
+        overlap=overlap,
+        domain_pts=float(domain_pts),
+        grid_match_pts=float(grid_match_pts),
+    )
     rationale.insert(
         0,
-        f"Hybrid RRF +{int(hybrid_base)} (chunks={hybrid_meta.get('chunkCount', 0)}), "
-        f"grid boost +{grid_boost}, domain +{domain_boost}",
+        f"Hybrid RRF +{int(hybrid_base)} q={hybrid_meta.get('qualityEff', hybrid_meta.get('quality', 0))} "
+        f"(chunks={hybrid_meta.get('chunkCount', 0)}), "
+        f"grid boost +{grid_boost}, domain +{domain_boost}, aux +{aux_boost}",
     )
 
     if not rationale:
@@ -2647,6 +2730,8 @@ def score_resume_vs_vacancy(
             "grid": grid_boost,
             "domain": domain_boost,
             "aux": aux_boost,
+            "overlap": round(overlap, 3),
+            "exactHits": exact_hits,
             "hybridMeta": hybrid_meta,
         },
         "compactProfile": {
@@ -2713,12 +2798,12 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 [RULES]
 1. Не выдумывай опыт, метрики, контакты, URL, ownership продуктов. Нет факта в profile -> пропусти пункт.
 2. Адаптируй cover_template под вакансию; стиль кандидата сохрани.
-3. В письме: 3-4 коротких факта с конкретными ссылками на опыт из Resume KB / compact profile (продукты, tools, метрики как в profile). Запрет общих фраз без факта ("опыт в отрасли", "механика применима", пустые аналогии без названий). Нет факта -> пропусти пункт.
+3. В письме: 3-4 коротких факта из Resume KB / compact profile (продукты, tools, метрики). Акцент на отраслевой/доменный опыт, когда он подтверждён в profile (domains_matched, industry_experience, matched_projects, конкретные продукты/метрики). Запрет пустых обобщений без факта ("механика применима", аналогии без названий). Нет факта -> пропусти пункт.
 4. Блок ## Контакты: ТОЛЬКО email/Telegram/телефон. Блок ## Ссылки: ВСЕ релевантные URL с подписями из template/contacts/profile/правок (резюме, youtube, LinkedIn, демо…). Без опыта, навыков, smoke/test URL. Не выдумывай URL. YouTube @handle ≠ Telegram.
 5. Честность: только tools/уровни/метрики из profile. Запрет без источника: "senior"/"сеньор", "эксперт", "свободно", CEFR (C1/C2), "на уровне senior". Proficient ≠ C1. Зеркаль формулировки RAG, не усиливай. Лексика как в profile.
 6. HH: ASCII ", дефис - (не —), -> (не →); без «ёлочек».
 7. no-ai-slop: без воды, клише и AI-обобщений (delve/leverage/utilize/cutting-edge; "выразить заинтересованность"; "в современном мире"; "широкий опыт"; "механика переноса" без факта). Только факты и названия как в profile. Русский, если не просили иначе.
-8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про него с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
+8. Отрасль/домен: если в вакансии есть отрасль (туризм, e-commerce, SaaS, EdTech, fintech и т.п.) и в profile есть domains_matched / industry_experience / matched_projects / domains с этой отраслью - обязательно 1 пункт про отраслевой опыт с реальными фактами (название продукта/сайта, метрики как в profile). Не приукрашивай и не подменяй другой отраслью.
 9. Transferable: если JD skill нет в profile - пропусти ИЛИ макс. 1 пункт с именованным фактом из profile ("Смежный: [продукт/метрика из profile] -> [требование JD]"). Без абстрактных "переносимо через механику", без чужих KPI, без senior/CEFR. Нет факта -> skip.
 
 [OUT cover_letter]

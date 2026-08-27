@@ -2,6 +2,8 @@
 
 No extra dependencies; used by Job Responder /relevance hot path.
 Semantic grid remains a separate Tier-0 boost in score_resume_vs_vacancy.
+RRF base is gated by absolute BM25/dense quality so rank-consensus alone
+cannot inflate weak matches to the ceiling.
 """
 
 from __future__ import annotations
@@ -127,13 +129,38 @@ def reciprocal_rank_fusion(
     return fused
 
 
-def normalize_rrf_base(fused: Sequence[float], *, max_pts: float = 70.0) -> float:
+def normalize_rrf_base(
+    fused: Sequence[float],
+    *,
+    max_pts: float = 48.0,
+    rrf_k: int = 60,
+) -> float:
+    """Scale top RRF by theoretical dual-rank-1 ceiling (not identity)."""
     if not fused:
         return 0.0
     top = max(fused)
     if top <= 0:
         return 0.0
-    return max_pts * (top / top)
+    ceiling = 2.0 / (rrf_k + 1)
+    return max_pts * min(1.0, top / max(ceiling, 1e-9))
+
+
+def absolute_match_quality(
+    bm25_top: float,
+    dense_top: float,
+    *,
+    query_token_count: int,
+) -> float:
+    """0..1 gate so rank-consensus alone cannot yield a max hybrid base.
+
+    Dense is cosine-like (~0..1). BM25 is unbounded; normalize by query length.
+    Weak shared tokens stay well below 1.0.
+    """
+    q_len = max(int(query_token_count), 1)
+    dense_q = min(1.0, max(0.0, float(dense_top)) / 0.32)
+    bm25_q = min(1.0, max(0.0, float(bm25_top)) / max(6.0, q_len * 0.55))
+    quality = 0.5 * dense_q + 0.5 * bm25_q
+    return max(0.05, min(1.0, quality))
 
 
 def build_relevance_corpus(
@@ -193,12 +220,22 @@ def hybrid_relevance_base(
     *,
     strip_wrapper=None,
     rrf_k: int = 60,
-    max_pts: float = 70.0,
+    max_pts: float = 48.0,
 ) -> Tuple[float, Dict[str, Any]]:
-    """RRF(BM25, dense) scaled to 0..max_pts."""
+    """RRF(BM25, dense) scaled to 0..max_pts, gated by absolute match quality.
+
+    Rank consensus alone used to always hit max_pts (any corpus has a #1 in each
+    list). Quality gate keeps weak / title-overlap queries well below the ceiling.
+    """
     corpus = build_relevance_corpus(profile, resume_rows, strip_wrapper=strip_wrapper)
     if not corpus or not (query or "").strip():
-        return 0.0, {"chunkCount": len(corpus), "rrfTop": 0.0, "bm25Top": 0.0, "denseTop": 0.0}
+        return 0.0, {
+            "chunkCount": len(corpus),
+            "rrfTop": 0.0,
+            "bm25Top": 0.0,
+            "denseTop": 0.0,
+            "quality": 0.0,
+        }
 
     bm25 = bm25_scores(query, corpus)
     dense = dense_token_scores(query, corpus)
@@ -208,13 +245,25 @@ def hybrid_relevance_base(
     top_rrf = max(fused) if fused else 0.0
     # Scale: theoretical max RRF when doc is rank-0 in both lists
     rrf_ceiling = 2.0 / (rrf_k + 1)
-    base = max_pts * min(1.0, top_rrf / max(rrf_ceiling, 1e-9))
+    rrf_frac = min(1.0, top_rrf / max(rrf_ceiling, 1e-9))
+    bm25_top = max(bm25) if bm25 else 0.0
+    dense_top = max(dense) if dense else 0.0
+    quality = absolute_match_quality(
+        bm25_top,
+        dense_top,
+        query_token_count=len(tokenize_bm25(query)),
+    )
+    # Sub-linear RRF so dual-rank-1 consensus does not auto-max without quality.
+    base = float(max_pts) * (rrf_frac**0.9) * (quality**1.15)
 
     meta = {
         "chunkCount": len(corpus),
         "rrfTop": round(top_rrf, 6),
-        "bm25Top": round(max(bm25) if bm25 else 0.0, 4),
-        "denseTop": round(max(dense) if dense else 0.0, 4),
+        "bm25Top": round(bm25_top, 4),
+        "denseTop": round(dense_top, 4),
+        "quality": round(quality, 4),
+        "rrfFrac": round(rrf_frac, 4),
+        "maxPts": max_pts,
         "topChunkPreview": corpus[bm25_rank[0]][:120] if bm25_rank else "",
     }
     return base, meta

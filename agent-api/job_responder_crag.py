@@ -108,7 +108,8 @@ def build_crag_hints(grades: Sequence[Dict[str, Any]], *, domain_pin: Optional[D
         return ""
     lines = [
         "CRAG GRADE (facts only; Incorrect = skip OR 1 bullet with named profile fact "
-        "- no vague transferable fluff, no KPI):"
+        "- no vague transferable fluff, no invented KPI). "
+        "Accent industry/domain experience when domains_matched / pin facts exist:"
     ]
     by_label: Dict[str, List[str]] = {"Correct": [], "Ambiguous": [], "Incorrect": []}
     for g in grades:
@@ -124,6 +125,13 @@ def build_crag_hints(grades: Sequence[Dict[str, Any]], *, domain_pin: Optional[D
     for label in ("Correct", "Ambiguous", "Incorrect"):
         if by_label[label]:
             lines.append(f"- {label}: " + "; ".join(by_label[label][:12]))
+    matched = list((domain_pin or {}).get("domains_matched") or [])[:6]
+    if matched:
+        lines.append(
+            "- Industry accent (обязательно): отраслевой опыт по "
+            + ", ".join(str(d) for d in matched)
+            + " - только с фактами из pin/profile"
+        )
     pinned = list((domain_pin or {}).get("pinned_bullets") or [])[:3]
     if pinned:
         lines.append("- Domain pin (обязательный факт): " + " | ".join(pinned))
@@ -176,6 +184,7 @@ def faith_check_failures(
 def build_critique_user_prompt(draft: str, failures: Sequence[str], profile_compact: str) -> str:
     return (
         "List 1-3 concrete fixes (RU). Drop vague transferable fluff without named profile facts. "
+        "If domains_matched / industry facts exist in Profile - keep or add one industry bullet with real names/metrics. "
         "Issues:\n"
         + "\n".join(f"- {f}" for f in failures)
         + f"\n\nProfile (facts only):\n{(profile_compact or '')[:2200]}\n\nDraft:\n{draft[:3500]}"
@@ -191,6 +200,7 @@ def build_refine_user_prompt(
     parts = [
         "Fix the cover letter. Remove ungrounded claims and vague transferable fluff. "
         "Keep only bullets with named facts from Profile (tools/products/metrics). "
+        "Emphasize industry/domain experience when Profile has domains_matched / industry_experience / matched projects. "
         "Keep HH structure. Output full letter only.",
         f"Issues/fixes:\n{critique.strip()}",
     ]
