@@ -416,6 +416,18 @@ button:disabled {
   color: #166534;
 }
 
+.relevanceGaps {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+}
+
+.relevanceGaps .hint {
+  margin: 0.35rem 0 0.1rem;
+}
+
 .relevanceMissing {
   color: #9a3412;
 }

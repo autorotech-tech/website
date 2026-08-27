@@ -91,6 +91,48 @@ async function writeRelevanceCache(map) {
  * @param {Array<object>} rows
  * @param {'list'|'detail'} source
  */
+function normalizeRelevanceRow(row, source = 'list') {
+  const rationale = Array.isArray(row?.rationale)
+    ? row.rationale.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 10)
+    : source === 'list'
+      ? ['Оценка из списка вакансий (без LLM)']
+      : [];
+  const missingSkills = Array.isArray(row?.missingSkills)
+    ? row.missingSkills.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+    : [];
+  const missingTools = Array.isArray(row?.missingTools)
+    ? row.missingTools.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+    : [];
+  let missing = Array.isArray(row?.missing)
+    ? row.missing.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+    : [];
+  // Flatten skill/tool gaps into missing lines for older UI / cache readers
+  if (!missing.length && (missingSkills.length || missingTools.length)) {
+    if (missingSkills.length) missing.push(`Навыки: ${missingSkills.slice(0, 8).join(', ')}`);
+    if (missingTools.length) missing.push(`Инструменты: ${missingTools.slice(0, 8).join(', ')}`);
+  }
+  return {
+    score: Math.round(Number(row?.score) || 0),
+    matched: Array.isArray(row?.matched)
+      ? row.matched.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+      : [],
+    missing,
+    matchedSkills: Array.isArray(row?.matchedSkills)
+      ? row.matchedSkills.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+      : [],
+    matchedTools: Array.isArray(row?.matchedTools)
+      ? row.matchedTools.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+      : [],
+    missingSkills,
+    missingTools,
+    rationale,
+    generalistProfile: Boolean(row?.generalistProfile || row?.allow_transferable),
+    allow_transferable: Boolean(row?.allow_transferable || row?.generalistProfile),
+    title: String(row?.title || '').slice(0, 500),
+    url: String(row?.url || ''),
+  };
+}
+
 async function upsertRelevanceCache(rows, source = 'list') {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return;
@@ -103,18 +145,9 @@ async function upsertRelevanceCache(rows, source = 'list') {
       vacancyIdFromUrl(row.url) ||
       (row.url ? String(row.url).split('?')[0] : '');
     if (!id) continue;
-    const rationale = Array.isArray(row.rationale)
-      ? row.rationale
-      : source === 'list'
-        ? ['Оценка из списка вакансий (без LLM)']
-        : [];
+    const norm = normalizeRelevanceRow(row, source);
     cache[id] = {
-      score: Math.round(Number(row.score) || 0),
-      matched: Array.isArray(row.matched) ? row.matched.slice(0, 12) : [],
-      missing: Array.isArray(row.missing) ? row.missing.slice(0, 12) : [],
-      rationale,
-      title: String(row.title || '').slice(0, 500),
-      url: String(row.url || ''),
+      ...norm,
       scoredAt: now,
       source: source === 'detail' ? 'detail' : 'list',
     };
@@ -147,17 +180,31 @@ async function tryRestoreRelevanceFromCache(vacancy) {
   const hit = await lookupRelevanceCacheForVacancy(vacancy);
   if (!hit?.entry || hit.entry.score == null) return false;
   const fromList = hit.entry.source !== 'detail';
+  const e = hit.entry;
   renderRelevance({
-    score: hit.entry.score,
-    matched: hit.entry.matched || [],
-    missing: hit.entry.missing || [],
-    rationale: hit.entry.rationale || [],
+    score: e.score,
+    matched: e.matched || [],
+    missing: e.missing || [],
+    matchedSkills: e.matchedSkills || [],
+    matchedTools: e.matchedTools || [],
+    missingSkills: e.missingSkills || [],
+    missingTools: e.missingTools || [],
+    rationale: e.rationale || [],
+    generalistProfile: e.generalistProfile,
+    allow_transferable: e.allow_transferable,
     fromCache: true,
     cacheSource: fromList ? 'list' : 'detail',
   });
+  const gapN =
+    (e.missingSkills || []).length +
+    (e.missingTools || []).length +
+    (e.missing || []).length;
   const label = fromList ? 'Релевантность из списка' : 'Релевантность (кэш)';
   setVacancyPageStatus('ok', label);
-  setSuccess(`${label} · ${hit.entry.score} / 100 · без API`);
+  setSuccess(
+    `${label} · ${e.score} / 100 · без API` +
+      (gapN ? ` · пробелов: ${gapN}` : '')
+  );
   return true;
 }
 
@@ -1787,7 +1834,6 @@ function renderRelevance(data) {
     : 'Релевантность профиля ↔ вакансия';
   const bullets = (data.rationale || []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
   const matched = (data.matched || []).map((r) => `<li class="relevanceMatched">${escapeHtml(r)}</li>`).join('');
-  const missing = (data.missing || []).map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
   const matchedJoined = (data.matched || []).join('\n');
   const sem = (data.semanticMatches || data.matchedSemantic || [])
     .slice(0, 8)
@@ -1796,11 +1842,69 @@ function renderRelevance(data) {
       return `<li class="relevanceMatched">${escapeHtml(label)}</li>`;
     })
     .join('');
+  const missingSkills = (data.missingSkills || [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const missingTools = (data.missingTools || [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const missingLines = (data.missing || [])
+    .map((r) => String(r || '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  // Flat chips for gaps (prefer structured skills/tools)
+  const gapSkills = missingSkills.length
+    ? missingSkills
+    : missingLines
+        .filter((l) => /^навыки:/i.test(l))
+        .flatMap((l) =>
+          l
+            .replace(/^навыки:\s*/i, '')
+            .split(/[,;]/)
+            .map((x) => x.trim())
+            .filter(Boolean)
+        );
+  const gapTools = missingTools.length
+    ? missingTools
+    : missingLines
+        .filter((l) => /^инструменты:/i.test(l))
+        .flatMap((l) =>
+          l
+            .replace(/^инструменты:\s*/i, '')
+            .split(/[,;]/)
+            .map((x) => x.trim())
+            .filter(Boolean)
+        );
+  const otherGaps = missingLines.filter(
+    (l) => !/^навыки:/i.test(l) && !/^инструменты:/i.test(l)
+  );
+  const gapReasons = (data.rationale || [])
+    .map((r) => String(r || '').trim())
+    .filter((r) =>
+      /мало|не подтвержд|пробел|missing|не хвата|weak|title-only|смежн|нет прям|отсутств/i.test(r)
+    )
+    .slice(0, 6);
+  const gapSkillLis = gapSkills
+    .map((s) => `<li class="relevanceMissing">${escapeHtml(s)}</li>`)
+    .join('');
+  const gapToolLis = gapTools
+    .map((s) => `<li class="relevanceMissing">${escapeHtml(s)}</li>`)
+    .join('');
+  const otherGapLis = otherGaps
+    .map((s) => `<li class="relevanceMissing">${escapeHtml(s)}</li>`)
+    .join('');
+  const reasonLis = gapReasons.map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('');
+  const hasGaps = Boolean(gapSkillLis || gapToolLis || otherGapLis || reasonLis);
   const notes = data.effectivenessNotes || null;
   const generalist =
     data.generalistProfile || data.allow_transferable || data.scoreBreakdown?.transferable;
   const adaptBits = notes?.adaptability
     ? notes.adaptability.map((r) => `<li>${escapeHtml(r)}</li>`).join('')
+    : '';
+  const notesMissing = notes?.missing
+    ? notes.missing.map((r) => `<li class="relevanceMissing">${escapeHtml(r)}</li>`).join('')
     : '';
   const notesSummary = notes?.summary ? `<p class="hint tight">${escapeHtml(notes.summary)}</p>` : '';
   relevanceBox.hidden = false;
@@ -1815,7 +1919,18 @@ function renderRelevance(data) {
     ${bullets ? `<ul>${bullets}</ul>` : ''}
     ${matched ? `<div><b>Совпало</b><ul>${matched}</ul></div>` : ''}
     ${sem && !/смысл|семантика/i.test(matchedJoined) ? `<div><b>Совпало (смысл)</b><ul>${sem}</ul></div>` : ''}
-    ${missing ? `<div><b>Не хватает в профиле</b><ul>${missing}</ul></div>` : ''}
+    <div class="relevanceGaps">
+      <b>Не релевантно / не хватает в профиле</b>
+      ${
+        hasGaps || notesMissing
+          ? `${gapSkillLis ? `<div class="hint tight">Навыки</div><ul>${gapSkillLis}</ul>` : ''}
+             ${gapToolLis ? `<div class="hint tight">Инструменты</div><ul>${gapToolLis}</ul>` : ''}
+             ${otherGapLis ? `<ul>${otherGapLis}</ul>` : ''}
+             ${reasonLis ? `<div class="hint tight">Причины</div><ul>${reasonLis}</ul>` : ''}
+             ${notesMissing ? `<ul>${notesMissing}</ul>` : ''}`
+          : '<p class="hint tight">Явных пробелов по навыкам/инструментам JD не найдено (по тексту карточки).</p>'
+      }
+    </div>
     ${
       adaptBits || notesSummary
         ? `<div><b>Эффективность / адаптация</b>${notesSummary}${
@@ -2160,7 +2275,13 @@ async function runRelevanceScore() {
           score: data.score,
           matched: data.matched || [],
           missing: data.missing || [],
+          matchedSkills: data.matchedSkills || [],
+          matchedTools: data.matchedTools || [],
+          missingSkills: data.missingSkills || [],
+          missingTools: data.missingTools || [],
           rationale: data.rationale || [],
+          generalistProfile: data.generalistProfile,
+          allow_transferable: data.allow_transferable,
         },
       ],
       'detail'
@@ -2235,7 +2356,32 @@ async function runGenerate(mode) {
       // Fallback: keep questions visible even if JSON parse failed
       renderQaTable(vacancy.questions.map((q) => ({ question: q.text, answer: letter || '' })));
     }
-    if (data.relevance) renderRelevance(data.relevance);
+    if (data.relevance) {
+      renderRelevance(data.relevance);
+      const vid = vacancyIdFromUrl(vacancy.url);
+      if (data.relevance.score != null) {
+        await upsertRelevanceCache(
+          [
+            {
+              id: vid,
+              url: vacancy.url,
+              title: vacancy.title,
+              score: data.relevance.score,
+              matched: data.relevance.matched || [],
+              missing: data.relevance.missing || [],
+              matchedSkills: data.relevance.matchedSkills || [],
+              matchedTools: data.relevance.matchedTools || [],
+              missingSkills: data.relevance.missingSkills || [],
+              missingTools: data.relevance.missingTools || [],
+              rationale: data.relevance.rationale || [],
+              generalistProfile: data.relevance.generalistProfile,
+              allow_transferable: data.relevance.allow_transferable,
+            },
+          ],
+          'detail'
+        );
+      }
+    }
     const bits = [];
     bits.push(`источники: ${(data.sources || []).length}`);
     if (data.relevance?.score != null) bits.push(`score: ${data.relevance.score}`);

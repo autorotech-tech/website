@@ -5819,8 +5819,19 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                             "title": title,
                             "description": desc[:800],
                             "score": int(scored.get("score") or 0),
-                            "matched": list(scored.get("matched") or [])[:8],
-                            "missing": list(scored.get("missing") or [])[:8],
+                            "matched": list(scored.get("matched") or [])[:12],
+                            "missing": list(scored.get("missing") or [])[:12],
+                            "matchedSkills": list(scored.get("matchedSkills") or [])[:12],
+                            "matchedTools": list(scored.get("matchedTools") or [])[:12],
+                            "missingSkills": list(scored.get("missingSkills") or [])[:12],
+                            "missingTools": list(scored.get("missingTools") or [])[:12],
+                            "rationale": list(scored.get("rationale") or [])[:10],
+                            "generalistProfile": bool(
+                                scored.get("generalistProfile") or scored.get("allow_transferable")
+                            ),
+                            "allow_transferable": bool(
+                                scored.get("allow_transferable") or scored.get("generalistProfile")
+                            ),
                         }
                     )
 
