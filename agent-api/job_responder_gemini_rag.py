@@ -65,7 +65,11 @@ def parse_hash_from_tags(tags: Any) -> Optional[str]:
 
 
 def ensure_schema(pg_connect: Callable[[], Any]) -> None:
-    conn = pg_connect()
+    try:
+        conn = pg_connect()
+    except Exception as exc:
+        _LOG.warning("ensure_schema connect skipped: %s", exc)
+        return
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -92,7 +96,10 @@ def ensure_schema(pg_connect: Callable[[], Any]) -> None:
         conn.rollback()
         _LOG.warning("ensure_schema failed: %s", exc)
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _http_request(

@@ -577,7 +577,7 @@ def enrich_resume_profile(
     evidence.extend(extract_domain_evidence_bullets(blob, out["domains"], limit=10))
     # Also keep generic experience bullets
     exp = list(out.get("experience_bullets") or [])
-    out["experience_bullets"] = _uniq([*evidence, *[str(x) for x in exp]], 18)
+    out["experience_bullets"] = _uniq([*exp, *evidence], 18)
     out["domain_evidence"] = _uniq([str(x) for x in evidence], 12)
 
     return dedupe_profile_slots(out)

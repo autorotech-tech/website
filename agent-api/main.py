@@ -2796,103 +2796,22 @@ def get_tags_schema() -> dict:
     if _TAGS_SCHEMA_CACHE is not None:
         return _TAGS_SCHEMA_CACHE
     
-    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "schemas", "categories.json")
-    schema_path = os.path.abspath(schema_path)
-    
-    default_schema = {
-        "kinds": [
-            "bookmark",
-            "note",
-            "idea",
-            "plan",
-            "development",
-            "task",
-            "article",
-            "prompt",
-            "contact",
-            "link",
-            "job_resume",
-            "job_experience",
-            "job_skills",
-        ],
-        "kind_aliases": {
-            "bookmarks": "bookmark",
-            "notes": "note",
-            "ideas": "idea",
-            "plans": "plan",
-            "dev": "development",
-            "developments": "development",
-            "rfc": "development",
-            "snippet": "development",
-            "tasks": "task",
-            "reminder": "task",
-            "reminders": "task",
-            "articles": "article",
-            "prompts": "prompt",
-            "contacts": "contact",
-            "links": "link",
-            "url": "link",
-        },
-        "categories": ["general", "ai-ml", "dev-tools", "marketing", "business", "design", "prompt", "article", "note", "link", "task"],
-        "tag_aliases": {
-            "agents": "agent",
-            "tools": "tool",
-            "startups": "startup",
-            "libraries": "library",
-            "apis": "api",
-            "embeddings": "embedding",
-            "vectors": "vector",
-            "databases": "database",
-            "notes": "note",
-            "bookmarks": "bookmark",
-            "reminders": "reminder",
-            "ideas": "idea",
-            "plans": "plan",
-            "developments": "development",
-            "workflows": "workflow",
-            "pipelines": "pipeline",
-            "categories": "category",
-            "tags": "tag",
-            "models": "model",
-            "methods": "method",
-            "algorithms": "algorithm",
-            "llms": "llm",
-            "webhooks": "webhook",
-            "integrations": "integration",
-            "prompts": "prompt",
-            "searches": "search",
-            "results": "result",
-            "tokens": "token",
-            "keys": "key",
-            "users": "user",
-            "members": "member",
-            "roles": "role",
-            "workspaces": "workspace",
-            "servers": "server",
-            "extensions": "extension",
-            "browsers": "browser",
-            "configs": "config",
-            "strategies": "strategy",
-            "frameworks": "framework",
-            "packages": "package",
-            "scripts": "script",
-            "files": "file",
-            "folders": "folder",
-            "documents": "document",
-            "pages": "page",
-            "metrics": "metric"
-        }
-    }
-    
-    if os.path.exists(schema_path):
-        try:
-            with open(schema_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    _TAGS_SCHEMA_CACHE = loaded
-                    return loaded
-        except Exception as e:
-            logger.warning("Failed to load tag schema from %s: %s", schema_path, e)
+    schema_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "schemas", "categories.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "schemas", "categories.json"),
+        "/workspace/schemas/categories.json",
+    ]
+    for sp in schema_paths:
+        schema_path = os.path.abspath(sp)
+        if os.path.exists(schema_path):
+            try:
+                with open(schema_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        _TAGS_SCHEMA_CACHE = loaded
+                        return loaded
+            except Exception as e:
+                logger.warning("Failed to load tag schema from %s: %s", schema_path, e)
             
     _TAGS_SCHEMA_CACHE = default_schema
     return default_schema
@@ -2957,6 +2876,9 @@ def normalize_category(category: str) -> str:
     norm = normalize_single_tag(str(category), aliases)
     if norm in allowed:
         return norm
+    raw_clean = re.sub(r'[\s_]+', '-', str(category).strip().lower())
+    if raw_clean in allowed:
+        return raw_clean
     return "general"
 
 

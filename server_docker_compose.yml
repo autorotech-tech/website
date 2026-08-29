@@ -158,42 +158,6 @@ services:
     networks:
       - proxy
 
-  adesso-db:
-    image: mariadb:latest
-    container_name: adesso-db
-    environment:
-      MYSQL_ROOT_PASSWORD: <пароль>
-      MYSQL_DATABASE: adesso_db
-      MYSQL_USER: adessous
-      MYSQL_PASSWORD: <пароль>
-    volumes:
-      - adesso_db_data:/var/lib/mysql
-    networks:
-      - proxy
-    restart: always
-
-  adesso-wordpress:
-    image: wordpress:latest
-    container_name: adesso-wordpress
-    depends_on:
-      - adesso-db
-    ports:
-      - "8082:80"
-    restart: unless-stopped
-    environment:
-      WORDPRESS_DB_HOST: adesso-db
-      WORDPRESS_DB_USER: adessous
-      WORDPRESS_DB_PASSWORD: <пароль>
-      WORDPRESS_DB_NAME: adesso_db
-      VIRTUAL_HOST: adesso.us,www.adesso.us
-      LETSENCRYPT_HOST: adesso.us,www.adesso.us
-      LETSENCRYPT_EMAIL: gain.ea.roman@gmail.com
-    volumes:
-      - ./projects/adesso.us/wp-content:/var/www/html/wp-content
-      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
-    networks:
-      - proxy
-
   pquoc-site:
     image: nginx:alpine
     container_name: pquoc-site
@@ -285,8 +249,6 @@ volumes:
   n8n_n8n_pgdata:
     external: true
   compodus_db_data:
-    external: true
-  adesso_db_data:
     external: true
   anythingllm_data:
     external: false
