@@ -47,6 +47,39 @@ export type SerpApiAdminStatus = {
   updated_at?: string
 }
 
+export type ApifyAdminStatus = {
+  configured?: boolean
+  configured_user_id?: string | null
+  account_ok?: boolean
+  account?: {
+    userId?: string | null
+    username?: string | null
+    email?: string | null
+    plan?: string | null
+    maxMemoryMbytes?: number | null
+    maxConcurrentActorRuns?: number | null
+    currentActorMemoryMbytes?: number | null
+    currentConcurrentActorRuns?: number | null
+  } | null
+  account_error?: string | null
+  keys_count?: number
+  updated_at?: string
+}
+
+export type ScrapingBeeAdminStatus = {
+  configured?: boolean
+  usage_ok?: boolean
+  usage?: {
+    used_api_credit?: number | null
+    max_api_credit?: number | null
+    remaining_credits?: number | null
+    renewal_cost?: number | null
+  } | null
+  usage_error?: string | null
+  keys_count?: number
+  updated_at?: string
+}
+
 export type ApiKeyPoolMetaEntry = { enabled?: boolean }
 export type ApiKeyPoolMeta = Record<string, ApiKeyPoolMetaEntry[]>
 
@@ -111,6 +144,7 @@ export type ProviderKeysState = {
   bing_webmaster_keys: string[]
   bing_webmaster_site_url: string
   apify_keys: string[]
+  apify_user_id: string
   apify_default_actor: string
   brightdata_keys: string[]
   brightdata_zone: string
@@ -402,14 +436,22 @@ export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
     shortLabel: 'Apify',
     category: 'parsing',
     description:
-      'Пул ключей Apify для Google Maps, Booking, Trip.com (pquoc.com). Ротация по бюджету; проверка — GET /v2/users/me.',
+      'Пул ключей Apify для Google Maps, Booking, Trip.com (pquoc.com) и crawler news. Ротация по лимитам и памяти (1024MB); проверка — GET /v2/users/me.',
     keysField: 'apify_keys',
     healthKey: 'apify_keys',
     newKeyPlaceholder: 'apify_api_…',
     modelField: 'apify_default_actor',
     modelLabel: 'Actor по умолчанию',
     modelPlaceholder: 'compass/crawler-google-places',
-    modelHint: 'Slug actor для Best Places / hotels pipeline.',
+    modelHint: 'Slug actor для Best Places / hotels pipeline или news crawler.',
+    extraFields: [
+      {
+        field: 'apify_user_id',
+        label: 'User ID (опционально)',
+        placeholder: 'w64... или username',
+        hint: 'ID пользователя Apify из Account Settings (заполняется автоматически при verify).',
+      },
+    ],
   },
   {
     id: 'brightdata_keys',
@@ -581,6 +623,10 @@ type ProviderApiKeysPanelProps = {
   serpapiStatusLoading?: boolean
   serpapiStatusError?: string | null
   onRefreshSerpapiStatus?: () => void
+  apifyStatus?: ApifyAdminStatus | null
+  apifyStatusLoading?: boolean
+  apifyStatusError?: string | null
+  onRefreshApifyStatus?: () => void
   onSettingsChange: (patch: Partial<ProviderKeysState>) => void
   onMetaChange: (meta: ApiKeyPoolMeta) => void
   onCopy?: (text: string) => void
@@ -643,6 +689,10 @@ export function ProviderApiKeysPanel({
   serpapiStatusLoading = false,
   serpapiStatusError = null,
   onRefreshSerpapiStatus,
+  apifyStatus = null,
+  apifyStatusLoading = false,
+  apifyStatusError = null,
+  onRefreshApifyStatus,
   onSettingsChange,
   onMetaChange,
   onCopy,
@@ -974,6 +1024,97 @@ export function ProviderApiKeysPanel({
               ) : (
                 <p className="text-[10px] text-emerald-700">
                   Сохраните ключ и нажмите «Обновить account.json».
+                </p>
+              )}
+            </div>
+          )}
+
+          {config.id === 'apify_keys' && (
+            <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-amber-900">Apify Account & Limits</p>
+                  <p className="text-[10px] text-amber-700">
+                    <a
+                      href="https://console.apify.com/account#/integrations"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-amber-900"
+                    >
+                      console.apify.com/account
+                    </a>
+                    {' · '}
+                    <a
+                      href="https://console.apify.com/billing/subscription"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-amber-900"
+                    >
+                      limits & billing
+                    </a>
+                  </p>
+                </div>
+                {onRefreshApifyStatus ? (
+                  <button
+                    type="button"
+                    onClick={() => onRefreshApifyStatus()}
+                    disabled={apifyStatusLoading}
+                    className="text-[10px] px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-50 disabled:opacity-50"
+                  >
+                    {apifyStatusLoading ? 'Загрузка…' : 'Обновить статус Apify'}
+                  </button>
+                ) : null}
+              </div>
+              {apifyStatusError ? (
+                <p className="text-[10px] text-rose-700">{apifyStatusError}</p>
+              ) : apifyStatusLoading && !apifyStatus ? (
+                <p className="text-[10px] text-amber-700">Загружаем данные аккаунта Apify…</p>
+              ) : !apifyStatus?.configured && keys.length === 0 ? (
+                <p className="text-[10px] text-amber-700">Добавьте Apify API token и сохраните настройки.</p>
+              ) : apifyStatus?.account_ok && apifyStatus.account ? (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-amber-950">
+                  {apifyStatus.account.userId ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-amber-700">User ID</span>{' '}
+                      <span className="font-mono font-semibold">{apifyStatus.account.userId}</span>
+                    </span>
+                  ) : null}
+                  {apifyStatus.account.username ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-amber-700">Username</span>{' '}
+                      <span className="font-semibold">{apifyStatus.account.username}</span>
+                    </span>
+                  ) : null}
+                  {apifyStatus.account.plan ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-amber-700">Plan</span>{' '}
+                      <span className="font-semibold">{apifyStatus.account.plan}</span>
+                    </span>
+                  ) : null}
+                  {apifyStatus.account.maxMemoryMbytes != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-amber-700">Max Memory</span>{' '}
+                      <span className="font-semibold tabular-nums">
+                        {Math.round(apifyStatus.account.maxMemoryMbytes / 1024)} GB
+                      </span>
+                    </span>
+                  ) : null}
+                  {apifyStatus.account.maxConcurrentActorRuns != null ? (
+                    <span>
+                      <span className="text-[10px] uppercase tracking-wide text-amber-700">Max Runs</span>{' '}
+                      <span className="font-semibold tabular-nums">
+                        {apifyStatus.account.maxConcurrentActorRuns}
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : apifyStatus?.account_error ? (
+                <p className="text-[10px] text-amber-800">
+                  Apify API: {apifyStatus.account_error}. Проверьте токен в console.apify.com.
+                </p>
+              ) : (
+                <p className="text-[10px] text-amber-700">
+                  Сохраните ключ и нажмите «Обновить статус Apify».
                 </p>
               )}
             </div>

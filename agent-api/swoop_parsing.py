@@ -75,8 +75,11 @@ def fetch_apify_limits_and_usage(api_key: str) -> Tuple[bool, Dict[str, Any], st
         limits = data.get("limits") or {}
         plan = data.get("plan") or {}
         usage = data.get("usage") or {}
+        user_id = str(data.get("id") or data.get("userId") or "").strip()
         return True, {
+            "userId": user_id,
             "username": data.get("username"),
+            "email": data.get("email"),
             "plan": plan.get("name"),
             "maxMemoryMbytes": limits.get("maxActorMemoryMbytes") or limits.get("maxTotalActorMemoryMbytes"),
             "maxConcurrentActorRuns": limits.get("maxConcurrentActorRuns"),

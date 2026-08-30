@@ -2757,6 +2757,9 @@ def ensure_service_settings_schema() -> None:
                 "alter table public.service_settings add column if not exists apify_keys jsonb not null default '[]'::jsonb"
             )
             cur.execute(
+                "alter table public.service_settings add column if not exists apify_user_id text not null default ''"
+            )
+            cur.execute(
                 "alter table public.service_settings add column if not exists apify_default_actor text not null default 'compass/crawler-google-places'"
             )
             cur.execute(
@@ -3934,6 +3937,7 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "serpapi_keys": [],
         "serpapi_default_engine": "google",
         "apify_keys": [],
+        "apify_user_id": "",
         "apify_default_actor": "compass/crawler-google-places",
         "brightdata_keys": [],
         "brightdata_zone": "",
@@ -4021,6 +4025,9 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     serp_engine = row.get("serpapi_default_engine")
     if serp_engine is not None and str(serp_engine).strip():
         cfg["serpapi_default_engine"] = str(serp_engine).strip()
+    apify_uid = row.get("apify_user_id")
+    if apify_uid is not None:
+        cfg["apify_user_id"] = str(apify_uid).strip()
     apify_actor = row.get("apify_default_actor")
     if apify_actor is not None and str(apify_actor).strip():
         cfg["apify_default_actor"] = str(apify_actor).strip()
@@ -6573,9 +6580,14 @@ async def admin_apify_status(
 
     probe_key = keys[0]
     account_ok, account_payload, account_msg = _fetch_apify_limits_and_usage(probe_key)
+    configured_user_id = str(settings.get("apify_user_id") or "").strip()
+    if account_ok and isinstance(account_payload, dict):
+        if not account_payload.get("userId") and configured_user_id:
+            account_payload["userId"] = configured_user_id
     return {
         "status": "ok",
         "configured": True,
+        "configured_user_id": configured_user_id or None,
         "account_ok": account_ok,
         "account": account_payload if account_ok else None,
         "account_error": None if account_ok else account_msg,
