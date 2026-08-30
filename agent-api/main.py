@@ -49,6 +49,10 @@ from swoop_kimi import (
     kimi_api_base as _kimi_api_base,
     verify_kimi_key as _verify_kimi_key,
 )
+from swoop_seekai import (
+    seekai_api_base as _seekai_api_base,
+    verify_seekai_key as _verify_seekai_key,
+)
 from swoop_openmodel import (
     OPENMODEL_CHAT_TIMEOUT_SEC as _OPENMODEL_CHAT_TIMEOUT_SEC,
     fetch_openmodel_balance as _fetch_openmodel_balance,
@@ -2721,6 +2725,15 @@ def ensure_service_settings_schema() -> None:
                 "alter table public.service_settings add column if not exists kimi_default_model text not null default ''"
             )
             cur.execute(
+                "alter table public.service_settings add column if not exists seekai_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists seekai_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists seekai_default_model text not null default ''"
+            )
+            cur.execute(
                 "alter table public.service_settings add column if not exists openmodel_keys jsonb not null default '[]'::jsonb"
             )
             cur.execute(
@@ -3633,6 +3646,7 @@ def _infer_api_key_group_provider(name: str, explicit_provider: str = "") -> str
         "glm",
         "mimo",
         "kimi",
+        "seekai",
     ):
         if token in n:
             return token
@@ -3738,7 +3752,7 @@ def _select_api_key_group_keys(
 
 
 _LLM_ROUTING_PROVIDERS = frozenset(
-    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "mimo", "kimi", "openmodel", "api_key_groups", "env_openai"}
+    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "mimo", "kimi", "seekai", "openmodel", "api_key_groups", "env_openai"}
 )
 _LLM_TIER_NAMES: Tuple[str, ...] = ("code", "reasoning", "fast", "general", "vision")
 
@@ -3929,6 +3943,9 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "kimi_keys": [],
         "kimi_base_url": "",
         "kimi_default_model": "",
+        "seekai_keys": [],
+        "seekai_base_url": "",
+        "seekai_default_model": "",
         "openmodel_keys": [],
         "openmodel_base_url": "",
         "openmodel_default_model": "deepseek-v4-flash",
@@ -3978,6 +3995,7 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "lmarena_keys",
         "mimo_keys",
         "kimi_keys",
+        "seekai_keys",
         "openmodel_keys",
         "brave_keys",
         "tavily_keys",
@@ -4016,6 +4034,12 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     kimi_mod = row.get("kimi_default_model")
     if kimi_mod is not None:
         cfg["kimi_default_model"] = str(kimi_mod).strip()
+    seek_base = row.get("seekai_base_url")
+    if seek_base is not None:
+        cfg["seekai_base_url"] = str(seek_base).strip()
+    seek_mod = row.get("seekai_default_model")
+    if seek_mod is not None:
+        cfg["seekai_default_model"] = str(seek_mod).strip()
     om_base = row.get("openmodel_base_url")
     if om_base is not None:
         cfg["openmodel_base_url"] = str(om_base).strip()
@@ -4059,7 +4083,7 @@ def has_any_bookmark_llm_keys() -> bool:
     cfg = load_swoop_llm_key_settings()
     if cfg.get("gemini_api_key"):
         return True
-    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys", "mimo_keys", "kimi_keys", "openmodel_keys"):
+    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys", "mimo_keys", "kimi_keys", "seekai_keys", "openmodel_keys"):
         if cfg.get(k):
             return True
     if cfg.get("api_key_groups_keys"):
@@ -4835,6 +4859,7 @@ def openai_chat_json_object(
     lmarena_base = _lmarena_api_base(settings)
     mimo_base = _mimo_api_base(settings)
     kimi_base = _kimi_api_base(settings)
+    seekai_base = _seekai_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -4895,6 +4920,9 @@ def openai_chat_json_object(
     group_kimi_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
     )
+    group_seekai_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "seekai", tier, "", user_email_norm
+    )
     group_openmodel_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
     )
@@ -4906,6 +4934,7 @@ def openai_chat_json_object(
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
     mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
     kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    seekai_pool = _merge_unique_key_lists(list(settings.get("seekai_keys") or []), group_seekai_keys)
     openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
     chat_max_tokens = int(
         max_tokens_override if max_tokens_override is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200")
@@ -5089,6 +5118,21 @@ def openai_chat_json_object(
                 if out:
                     return ChatJsonObjectResult(
                         data=out, tier=tier, provider_used="kimi", model_resolved=model_use
+                    )
+
+        elif prov == "seekai":
+            model_use = resolve_model("seekai", mraw)
+            for key in _iter_keys_with_health("seekai_keys", seekai_pool):
+                out = ok_tuple(
+                    _post_openai_compatible_chat_json(
+                        seekai_base, key, model_use, system_prompt, user_prompt, max_tokens=chat_max_tokens
+                    ),
+                    "seekai_keys",
+                    key,
+                )
+                if out:
+                    return ChatJsonObjectResult(
+                        data=out, tier=tier, provider_used="seekai", model_resolved=model_use
                     )
 
         elif prov == "openmodel":
@@ -5350,6 +5394,7 @@ def openai_chat_completions_generic(
     lmarena_base = _lmarena_api_base(settings)
     mimo_base = _mimo_api_base(settings)
     kimi_base = _kimi_api_base(settings)
+    seekai_base = _seekai_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -5488,6 +5533,9 @@ def openai_chat_completions_generic(
     group_kimi_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
     )
+    group_seekai_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "seekai", tier, "", user_email_norm
+    )
     group_openmodel_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
     )
@@ -5499,6 +5547,7 @@ def openai_chat_completions_generic(
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
     mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
     kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    seekai_pool = _merge_unique_key_lists(list(settings.get("seekai_keys") or []), group_seekai_keys)
     openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
 
     for step in chain:
@@ -5642,6 +5691,19 @@ def openai_chat_completions_generic(
                     "kimi_keys",
                     key,
                     "kimi",
+                    model_use,
+                )
+                if got is not None:
+                    return got
+
+        elif prov == "seekai":
+            model_use = resolve_model("seekai", mraw)
+            for key in _iter_keys_with_health("seekai_keys", seekai_pool):
+                got = _finish_provider_attempt(
+                    _provider_chat_call(seekai_base, key, model_use),
+                    "seekai_keys",
+                    key,
+                    "seekai",
                     model_use,
                 )
                 if got is not None:
@@ -6389,6 +6451,7 @@ async def admin_key_health(
         "lmarena_keys": _provider_health_rows("lmarena_keys", list(settings.get("lmarena_keys") or [])),
         "mimo_keys": _provider_health_rows("mimo_keys", list(settings.get("mimo_keys") or [])),
         "kimi_keys": _provider_health_rows("kimi_keys", list(settings.get("kimi_keys") or [])),
+        "seekai_keys": _provider_health_rows("seekai_keys", list(settings.get("seekai_keys") or [])),
         "openmodel_keys": _provider_health_rows("openmodel_keys", list(settings.get("openmodel_keys") or [])),
         "brave_keys": _provider_health_rows("brave_keys", list(settings.get("brave_keys") or [])),
         "tavily_keys": _provider_health_rows("tavily_keys", list(settings.get("tavily_keys") or [])),
@@ -6748,6 +6811,9 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
     elif prov in ("kimi", "kimi_keys"):
         swoop = load_swoop_llm_key_settings()
         return _verify_kimi_key(swoop, clean_key, timeout=timeout)
+    elif prov in ("seekai", "seekai_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_seekai_key(swoop, clean_key, timeout=timeout)
     elif prov in ("openmodel", "openmodel_keys"):
         swoop = load_swoop_llm_key_settings()
         return _verify_openmodel_key(swoop, clean_key, timeout=timeout)
@@ -6854,6 +6920,7 @@ async def admin_verify_keys(
         "lmarena_keys": list(settings.get("lmarena_keys") or []),
         "mimo_keys": list(settings.get("mimo_keys") or []),
         "kimi_keys": list(settings.get("kimi_keys") or []),
+        "seekai_keys": list(settings.get("seekai_keys") or []),
         "openmodel_keys": list(settings.get("openmodel_keys") or []),
         "brave_keys": list(settings.get("brave_keys") or []),
         "tavily_keys": list(settings.get("tavily_keys") or []),
@@ -6975,6 +7042,9 @@ async def admin_environment_report(
         "openrouter_qwen_keys": len(list(swoop_settings.get("openrouter_qwen_keys") or [])),
         "groq_keys": len(list(swoop_settings.get("groq_keys") or [])),
         "gemini_slots": _count_gemini_slots(swoop_settings),
+        "kimi_keys": len(list(swoop_settings.get("kimi_keys") or [])),
+        "seekai_keys": len(list(swoop_settings.get("seekai_keys") or [])),
+        "openmodel_keys": len(list(swoop_settings.get("openmodel_keys") or [])),
         "brave_keys": len(list(swoop_settings.get("brave_keys") or [])),
         "tavily_keys": len(list(swoop_settings.get("tavily_keys") or [])),
         "serpapi_keys": len(list(swoop_settings.get("serpapi_keys") or [])),

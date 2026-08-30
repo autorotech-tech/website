@@ -47,6 +47,10 @@ interface ServiceSettings {
   kimi_keys: string[]
   kimi_base_url: string
   kimi_default_model: string
+  /** API keys для [SeekAI (seekai.cc / seekapi.ai)](https://seekai.cc). */
+  seekai_keys: string[]
+  seekai_base_url: string
+  seekai_default_model: string
   /** API keys для [OpenModel](https://console.openmodel.ai/) (om-…, multi-provider gateway). */
   openmodel_keys: string[]
   openmodel_base_url: string
@@ -228,6 +232,9 @@ export function AdminSettings() {
     kimi_keys: [],
     kimi_base_url: '',
     kimi_default_model: 'kimi-k2-turbo-preview',
+    seekai_keys: [],
+    seekai_base_url: '',
+    seekai_default_model: 'deepseek-chat',
     openmodel_keys: [],
     openmodel_base_url: '',
     openmodel_default_model: 'deepseek-v4-flash',
@@ -590,6 +597,9 @@ export function AdminSettings() {
           kimi_keys: ((data as Record<string, unknown>).kimi_keys as string[] || []).filter((k: string) => k && k.trim()),
           kimi_base_url: String((data as Record<string, unknown>).kimi_base_url || '').trim(),
           kimi_default_model: String((data as Record<string, unknown>).kimi_default_model || 'kimi-k2-turbo-preview').trim(),
+          seekai_keys: ((data as Record<string, unknown>).seekai_keys as string[] || []).filter((k: string) => k && k.trim()),
+          seekai_base_url: String((data as Record<string, unknown>).seekai_base_url || '').trim(),
+          seekai_default_model: String((data as Record<string, unknown>).seekai_default_model || 'deepseek-chat').trim(),
           openmodel_keys: ((data as Record<string, unknown>).openmodel_keys as string[] || []).filter((k: string) => k && k.trim()),
           openmodel_base_url: String((data as Record<string, unknown>).openmodel_base_url || '').trim(),
           openmodel_default_model: String((data as Record<string, unknown>).openmodel_default_model || 'deepseek-v4-flash').trim(),
@@ -1032,6 +1042,9 @@ export function AdminSettings() {
                 kimi_keys: settings.kimi_keys,
                 kimi_base_url: settings.kimi_base_url.trim(),
                 kimi_default_model: settings.kimi_default_model.trim(),
+                seekai_keys: settings.seekai_keys,
+                seekai_base_url: settings.seekai_base_url.trim(),
+                seekai_default_model: settings.seekai_default_model.trim(),
                 openmodel_keys: settings.openmodel_keys,
                 openmodel_base_url: settings.openmodel_base_url.trim(),
                 openmodel_default_model: settings.openmodel_default_model.trim(),

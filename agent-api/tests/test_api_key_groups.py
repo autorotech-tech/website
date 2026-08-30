@@ -92,3 +92,12 @@ def test_apify_and_scrapingbee_status_functions():
     assert verify_scrapingbee_key("")[0] is False
     assert fetch_apify_limits_and_usage("")[0] is False
     assert fetch_scrapingbee_usage("")[0] is False
+
+
+def test_seekai_provider_integration():
+    from swoop_seekai import seekai_api_base, resolve_seekai_model, verify_seekai_key
+    assert seekai_api_base({}) == "https://api.seekapi.ai/v1"
+    assert seekai_api_base({"seekai_base_url": "https://seekai.cc/v1"}) == "https://seekai.cc/v1"
+    assert resolve_seekai_model("", {}) == "deepseek-chat"
+    assert resolve_seekai_model("deepseek-reasoner", {}) == "deepseek-reasoner"
+    assert verify_seekai_key({}, "")[0] is False

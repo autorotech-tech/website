@@ -132,6 +132,10 @@ export type ProviderKeysState = {
   kimi_keys: string[]
   kimi_base_url: string
   kimi_default_model: string
+  /** API keys для [SeekAI (seekai.cc / seekapi.ai)](https://seekai.cc). */
+  seekai_keys: string[]
+  seekai_base_url: string
+  seekai_default_model: string
   openmodel_keys: string[]
   openmodel_base_url: string
   openmodel_default_model: string
@@ -171,6 +175,7 @@ const MODEL_PRESETS: Record<string, string[]> = {
   lmarena: ['default'],
   mimo: ['mimo-v2.5-pro', 'mimo-v2.5-flash'],
   kimi: ['kimi-k2-turbo-preview', 'kimi-k2-0711-preview', 'moonshot-v1-8k'],
+  seekai: ['deepseek-chat', 'deepseek-reasoner', 'claude-3-7-sonnet', 'gpt-4o', 'gemini-2.5-pro'],
   openmodel: ['deepseek-v4-flash', 'claude-sonnet-4-6', 'gpt-5.4', 'gemini-3.5-flash'],
   serpapi: ['google', 'bing', 'duckduckgo', 'google_maps', 'google_trends', 'youtube', 'google_short_videos'],
 }
@@ -327,6 +332,30 @@ export const PROVIDER_KEY_CONFIGS: ProviderKeyConfig[] = [
         label: 'API base URL',
         placeholder: 'https://api.moonshot.ai/v1',
         hint: 'Пусто — env BOOKMARKS_KIMI_API_BASE (по умолчанию https://api.moonshot.ai/v1).',
+      },
+    ],
+  },
+  {
+    id: 'seekai_keys',
+    label: 'SeekAI',
+    shortLabel: 'SeekAI',
+    category: 'llm',
+    description:
+      'SeekAI (seekai.cc / seekapi.ai) — OpenAI-compatible API gateway. Модель в запросе: seekai/<slug> или routing provider seekai.',
+    keysField: 'seekai_keys',
+    healthKey: 'seekai_keys',
+    newKeyPlaceholder: 'Ключ из seekai.cc / seekapi.ai console',
+    catalogKey: 'seekai',
+    modelField: 'seekai_default_model',
+    modelLabel: 'Модель по умолчанию',
+    modelPlaceholder: 'deepseek-chat',
+    modelHint: 'Bearer auth. Модели подтягиваются из GET /v1/models (deepseek-chat, deepseek-reasoner, claude-3-7-sonnet и др.).',
+    extraFields: [
+      {
+        field: 'seekai_base_url',
+        label: 'API base URL',
+        placeholder: 'https://api.seekapi.ai/v1',
+        hint: 'Пусто — env BOOKMARKS_SEEKAI_API_BASE (по умолчанию https://api.seekapi.ai/v1).',
       },
     ],
   },
