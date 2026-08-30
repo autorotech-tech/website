@@ -69,6 +69,8 @@ from swoop_serpapi import (
 )
 from swoop_groq import is_proxy_blocked as _is_proxy_blocked, verify_groq_key as _verify_groq_key
 from swoop_parsing import (
+    fetch_apify_limits_and_usage as _fetch_apify_limits_and_usage,
+    fetch_scrapingbee_usage as _fetch_scrapingbee_usage,
     verify_apify_key as _verify_apify_key,
     verify_brightdata_key as _verify_brightdata_key,
     verify_omkar_key as _verify_omkar_key,
@@ -6536,6 +6538,90 @@ async def admin_serpapi_status(
         "account_ok": account_ok,
         "account": account_payload if account_ok else None,
         "account_error": None if account_ok else account_msg,
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/v1/admin/apify/status")
+async def admin_apify_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """Apify account limits, usage, and active runs for scraping task management."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("apify_keys") or []) if str(k).strip()]
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "account": None,
+            "keys_count": 0,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    account_ok, account_payload, account_msg = _fetch_apify_limits_and_usage(probe_key)
+    return {
+        "status": "ok",
+        "configured": True,
+        "account_ok": account_ok,
+        "account": account_payload if account_ok else None,
+        "account_error": None if account_ok else account_msg,
+        "keys_count": len(keys),
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/v1/admin/scrapingbee/status")
+async def admin_scrapingbee_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """ScrapingBee credit balance and usage."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("scrapingbee_keys") or []) if str(k).strip()]
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "usage": None,
+            "keys_count": 0,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    usage_ok, usage_payload, usage_msg = _fetch_scrapingbee_usage(probe_key)
+    return {
+        "status": "ok",
+        "configured": True,
+        "usage_ok": usage_ok,
+        "usage": usage_payload if usage_ok else None,
+        "usage_error": None if usage_ok else usage_msg,
+        "keys_count": len(keys),
         "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
     }
 

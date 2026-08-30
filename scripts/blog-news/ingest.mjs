@@ -94,8 +94,10 @@ export async function ingestNews({ limit, sourceId } = {}) {
         sourceText = [cand.summary, scraped.text].filter(Boolean).join('\n\n').slice(0, 40000)
         stats.scraped += 1
       } catch (err) {
+        const errMsg = String(err.message || err)
+        console.warn(`[ingest] Scrape fallback/warning for ${url}: ${errMsg}`)
         if (sourceText.length < 120) {
-          stats.errors.push({ url, error: String(err.message || err) })
+          stats.errors.push({ url, error: errMsg })
           continue
         }
       }

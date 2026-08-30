@@ -855,11 +855,10 @@ def scrape_url(
         else:
             items = page.css(selector).getall()
         content = "\n\n---\n\n".join(items) if items else f"No elements matched selector: {selector}"
-        else:
-        if output_format == "html":
-            content = page_html
+    elif output_format == "html":
+        content = page_html
     else:
-            texts = page.css("body ::text").getall()
+        texts = page.css("body ::text").getall()
         content = "\n".join(t.strip() for t in texts if t.strip())
 
     return (content or "No content extracted.")[:MAX_CONTENT_PER_PAGE], page
@@ -1576,7 +1575,7 @@ def main_loop():
         try:
             job = fetch_one_queued_job()
             if job:
-            job_id = str(job["id"])
+                job_id = str(job["id"])
                 job_type = job.get("job_type", "single")
                 log(f"processing job {job_id} type={job_type} url={job.get('url','')}")
                 try:
@@ -1590,12 +1589,12 @@ def main_loop():
                     data, content_type, ext = build_result_file(job, content, output_format)
                     object_path = f"{RESULT_PREFIX}/{job_id}.{ext}"
                     supabase_storage_upload(RESULT_BUCKET, object_path, data, content_type)
-                update_job_success(job_id, object_path, preview)
-                log(f"job {job_id} done -> {object_path}")
+                    update_job_success(job_id, object_path, preview)
+                    log(f"job {job_id} done -> {object_path}")
                 except Exception as e:
-                log(f"job {job_id} failed: {e}")
-                update_job_error(job_id, str(e))
-                continue
+                    log(f"job {job_id} failed: {e}")
+                    update_job_error(job_id, str(e))
+                    continue
 
             scenario_run = fetch_one_queued_scenario_run()
             if scenario_run:

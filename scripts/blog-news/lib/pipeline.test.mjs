@@ -64,3 +64,11 @@ test('slop and markdown', () => {
 test('title similarity', () => {
   assert.ok(titleSimilarity('Google Ads API v18 release notes', 'Google Ads API v18 release notes!') > 0.9)
 })
+
+test('scraping fallback functions exist and export correctly', async () => {
+  const { scrapeArticle, jinaFallback, scrapingBeeFallback, fetchPlain } = await import('./swoop-scrape.mjs')
+  assert.equal(typeof scrapeArticle, 'function')
+  assert.equal(typeof jinaFallback, 'function')
+  assert.equal(typeof scrapingBeeFallback, 'function')
+  assert.equal(typeof fetchPlain, 'function')
+})

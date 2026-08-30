@@ -70,3 +70,25 @@ def test_gemini_chat_key_pool_filters_non_aiza_keys():
     }
     pool = main._gemini_chat_key_pool(settings, group_gemini_keys=["AIzaSyGROUP", "glm_bad"])
     assert pool == ["AIzaSyGOOD", "AIzaSyGROUP"]
+
+
+def test_key_health_cooldown_and_retryable_markers():
+    # 402 Insufficient Credits and memory limit errors must be retryable with proper cooldown
+    assert main._is_retryable_key_error(402, "Insufficient credits") is True
+    assert main._is_retryable_key_error(402, "actor-memory-limit-exceeded") is True
+    assert main._is_retryable_key_error(429, "Rate limit exceeded") is True
+    assert main._is_retryable_key_error(401, "Invalid API key") is False
+    assert main._is_retryable_key_error(403, "Forbidden") is False
+
+    # Check cooldown calculation
+    assert main._key_cooldown_sec(402, "actor-memory-limit-exceeded") == main._KEY_FAILURE_COOLDOWN_RATE_LIMIT_SEC
+    assert main._key_cooldown_sec(401, "Invalid API key") == main._KEY_FAILURE_COOLDOWN_AUTH_SEC
+
+
+def test_apify_and_scrapingbee_status_functions():
+    from swoop_parsing import verify_apify_key, verify_scrapingbee_key, fetch_apify_limits_and_usage, fetch_scrapingbee_usage
+    # Test with empty keys
+    assert verify_apify_key("")[0] is False
+    assert verify_scrapingbee_key("")[0] is False
+    assert fetch_apify_limits_and_usage("")[0] is False
+    assert fetch_scrapingbee_usage("")[0] is False
