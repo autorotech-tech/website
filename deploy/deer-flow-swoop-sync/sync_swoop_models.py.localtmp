@@ -1,0 +1,305 @@
+import json
+import subprocess
+from pathlib import Path
+
+q = (
+    "select gemini_keys, groq_keys, glm_keys, openai_keys, openrouter_keys, "
+    "coalesce(openrouter_qwen_keys, '[]'::jsonb), "
+    "brave_keys, tavily_keys, "
+    "coalesce(api_key_groups, '[]'::jsonb) "
+    "from public.service_settings where id=1;"
+)
+raw = subprocess.check_output(
+    [
+        "docker",
+        "exec",
+        "supabase-db",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-t",
+        "-A",
+        "-c",
+        q,
+    ],
+    text=True,
+).strip()
+parts = raw.split("|")
+cols = ["GEMINI", "GROQ", "GLM", "OPENAI", "OPENROUTER", "OPENROUTER_QWEN", "BRAVE", "TAVILY", "GROUPS"]
+while len(parts) < len(cols):
+    parts.append("")
+vals = {}
+for i, c in enumerate(cols):
+    cell = parts[i] if i < len(parts) else ""
+    if not cell:
+        vals[c] = []
+        continue
+    try:
+        vals[c] = json.loads(cell)
+    except Exception:
+        vals[c] = []
+if not isinstance(vals.get("GROUPS"), list):
+    vals["GROUPS"] = []
+
+# 1) sync into .env
+env_path = Path(".env")
+lines = env_path.read_text(errors="ignore").splitlines()
+kv = {
+    "SWOOP_GEMINI_KEYS": json.dumps(vals["GEMINI"]),
+    "SWOOP_GROQ_KEYS": json.dumps(vals["GROQ"]),
+    "SWOOP_GLM_KEYS": json.dumps(vals["GLM"]),
+    "SWOOP_OPENAI_KEYS": json.dumps(vals["OPENAI"]),
+    "SWOOP_OPENROUTER_KEYS": json.dumps(vals["OPENROUTER"]),
+    "SWOOP_OPENROUTER_QWEN_KEYS": json.dumps(vals["OPENROUTER_QWEN"]),
+    "SWOOP_BRAVE_KEYS": json.dumps(vals["BRAVE"]),
+    "SWOOP_TAVILY_KEYS": json.dumps(vals["TAVILY"]),
+}
+# Совместимость: первый Tavily-ключ дублируем в TAVILY_API_KEY (если есть)
+tavily_first = next((str(x).strip() for x in vals["TAVILY"] if str(x).strip()), "")
+if tavily_first:
+    kv["TAVILY_API_KEY"] = tavily_first
+
+def _group_env_suffix(gid: str) -> str:
+    s = "".join(ch if ch.isalnum() else "_" for ch in gid.strip().upper())
+    return s or "GROUP"
+
+
+for item in vals["GROUPS"]:
+    if not isinstance(item, dict):
+        continue
+    gid = str(item.get("id") or "").strip()
+    keys = item.get("keys") if isinstance(item.get("keys"), list) else []
+    key_list = [str(k).strip() for k in keys if str(k).strip()]
+    if not gid or not key_list:
+        continue
+    env_k = f"SWOOP_API_GROUP_{_group_env_suffix(gid)}_KEYS"
+    kv[env_k] = json.dumps(key_list)
+
+seen = set()
+out_lines = []
+for line in lines:
+    if "=" in line:
+        k = line.split("=", 1)[0]
+        if k in kv:
+            out_lines.append(f"{k}={kv[k]}")
+            seen.add(k)
+            continue
+    out_lines.append(line)
+for k, v in kv.items():
+    if k not in seen:
+        out_lines.append(f"{k}={v}")
+env_path.write_text("\n".join(out_lines) + "\n")
+print(
+    "OK: synced SWOOP_*_KEYS, SWOOP_API_GROUP_*_KEYS (+ TAVILY_API_KEY if keys) into .env"
+)
+
+# 2) regenerate models section in config.yaml based on available keys
+config_path = Path("config.yaml")
+cfg = config_path.read_text(errors="ignore").splitlines()
+
+start = None
+for i, l in enumerate(cfg):
+    if (not l.startswith(" ")) and (l.strip() == "models:"):
+        start = i
+        break
+if start is None:
+    raise SystemExit("models section not found")
+
+end = None
+# Back-compat: older configs used a big delimiter comment after the models list.
+for j in range(start + 1, len(cfg)):
+    if cfg[j].startswith("# ============================================================================"):
+        end = j
+        break
+
+# Preferred: `config.yaml` often places the next top-level key (e.g. `tool_groups:`)
+# immediately after the models list without any delimiter comments.
+if end is None:
+    for j in range(start + 1, len(cfg)):
+        line = cfg[j]
+        if not line.strip():
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        end = j
+        break
+
+if end is None:
+    raise SystemExit("models section end not found")
+
+models = []
+
+
+def add_model(**m):
+    models.append(m)
+
+
+# Gemini direct
+if vals["GEMINI"]:
+    add_model(
+        name="gemini-2.5-flash",
+        display_name="Gemini 2.5 Flash (Direct)",
+        use="deerflow.models.rotating_gemini:RotatingChatGoogleGenerativeAI",
+        model="gemini-2.5-flash",
+        api_keys="$SWOOP_GEMINI_KEYS",
+        max_output_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    add_model(
+        name="gemini-2.5-pro",
+        display_name="Gemini 2.5 Pro (Direct)",
+        use="deerflow.models.rotating_gemini:RotatingChatGoogleGenerativeAI",
+        model="gemini-2.5-pro",
+        api_keys="$SWOOP_GEMINI_KEYS",
+        max_output_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+
+# OpenRouter
+if vals["OPENROUTER"]:
+    base = "https://openrouter.ai/api/v1"
+    add_model(
+        name="openrouter-gemini-2.5-flash",
+        display_name="Gemini 2.5 Flash (OpenRouter)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="google/gemini-2.5-flash-preview",
+        api_keys="$SWOOP_OPENROUTER_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    add_model(
+        name="openrouter-gpt-4o-mini",
+        display_name="GPT-4o mini (OpenRouter)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="openai/gpt-4o-mini",
+        api_keys="$SWOOP_OPENROUTER_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    add_model(
+        name="openrouter-gpt-4o",
+        display_name="GPT-4o (OpenRouter)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="openai/gpt-4o",
+        api_keys="$SWOOP_OPENROUTER_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    add_model(
+        name="openrouter-claude-3.5-haiku",
+        display_name="Claude 3.5 Haiku (OpenRouter)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="anthropic/claude-3.5-haiku",
+        api_keys="$SWOOP_OPENROUTER_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+
+# OpenRouter Qwen (free)
+# Prefer dedicated Qwen key pool; if empty, fall back to the general OpenRouter pool (same behavior as Swoop UI hint).
+if vals["OPENROUTER_QWEN"] or vals["OPENROUTER"]:
+    base = "https://openrouter.ai/api/v1"
+    qwen_keys = "$SWOOP_OPENROUTER_QWEN_KEYS" if vals["OPENROUTER_QWEN"] else "$SWOOP_OPENROUTER_KEYS"
+    qwen_label = (
+        "Qwen 3.6 Plus Preview (Free, OpenRouter — dedicated Qwen keys)"
+        if vals["OPENROUTER_QWEN"]
+        else "Qwen 3.6 Plus Preview (Free, OpenRouter — fallback to general OpenRouter keys)"
+    )
+    add_model(
+        name="openrouter-qwen3.6-plus-preview-free",
+        display_name=qwen_label,
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="qwen/qwen3.6-plus-preview:free",
+        api_keys=qwen_keys,
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+
+# Groq
+if vals["GROQ"]:
+    base = "https://api.groq.com/openai/v1"
+    add_model(
+        name="groq-llama-3.3-70b",
+        display_name="Llama 3.3 70B (Groq)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="llama-3.3-70b-versatile",
+        api_keys="$SWOOP_GROQ_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+    add_model(
+        name="groq-llama-3.1-8b",
+        display_name="Llama 3.1 8B (Groq)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="llama-3.1-8b-instant",
+        api_keys="$SWOOP_GROQ_KEYS",
+        base_url=base,
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+
+# OpenAI direct
+if vals["OPENAI"]:
+    add_model(
+        name="openai-gpt-4o-mini",
+        display_name="GPT-4o mini (OpenAI)",
+        use="deerflow.models.rotating_openai:RotatingChatOpenAI",
+        model="gpt-4o-mini",
+        api_keys="$SWOOP_OPENAI_KEYS",
+        max_tokens=8192,
+        temperature=0.2,
+        supports_thinking=True,
+        supports_reasoning_effort=True,
+    )
+
+out_yaml = ["models:"]
+for m in models:
+    out_yaml.append("  - name: %s" % m["name"])
+    out_yaml.append("    display_name: %s" % m["display_name"])
+    out_yaml.append("    use: %s" % m["use"])
+    out_yaml.append("    model: %s" % m["model"])
+    out_yaml.append("    api_keys: %s" % m["api_keys"])
+    if "base_url" in m:
+        out_yaml.append("    base_url: %s" % m["base_url"])
+    if "max_tokens" in m:
+        out_yaml.append("    max_tokens: %s" % m["max_tokens"])
+    if "max_output_tokens" in m:
+        out_yaml.append("    max_output_tokens: %s" % m["max_output_tokens"])
+    out_yaml.append("    temperature: %s" % m["temperature"])
+    if "supports_thinking" in m:
+        out_yaml.append("    supports_thinking: %s" % ("true" if m["supports_thinking"] else "false"))
+    if "supports_reasoning_effort" in m:
+        out_yaml.append("    supports_reasoning_effort: %s" % ("true" if m["supports_reasoning_effort"] else "false"))
+    out_yaml.append("")
+
+new_cfg = cfg[:start] + out_yaml + cfg[end:]
+config_path.write_text("\n".join(new_cfg) + "\n")
+print(f"OK: regenerated models in config.yaml (count={len(models)})")

@@ -1,0 +1,200 @@
+{
+  "updatedAt": "2026-08-27",
+  "sources": [
+    {
+      "id": "openai-news",
+      "name": "OpenAI News",
+      "type": "rss",
+      "url": "https://openai.com/news/rss.xml",
+      "category": "models",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "anthropic-news",
+      "name": "Anthropic News",
+      "type": "rss",
+      "url": "https://raw.githubusercontent.com/Olshansk/rss-feeds/master/feeds/anthropic.xml",
+      "category": "models",
+      "enabled": false,
+      "lang": "en",
+      "note": "Official Anthropic RSS is unstable; prefer listing if disabled."
+    },
+    {
+      "id": "anthropic-listing",
+      "name": "Anthropic News listing",
+      "type": "listing",
+      "url": "https://www.anthropic.com/news",
+      "linkPattern": "/news/",
+      "category": "models",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "google-ai-blog",
+      "name": "Google AI / The Keyword AI",
+      "type": "rss",
+      "url": "https://blog.google/technology/ai/rss/",
+      "category": "models",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "huggingface-blog",
+      "name": "Hugging Face Blog",
+      "type": "rss",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "category": "models",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "verge-ai",
+      "name": "The Verge AI",
+      "type": "rss",
+      "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+      "category": "ai_news",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "google-ads-developers",
+      "name": "Google Ads Developers Blog",
+      "type": "rss",
+      "url": "https://ads-developers.googleblog.com/feeds/posts/default",
+      "category": "google_ads",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "google-ads-api-notes",
+      "name": "Google Ads API release notes",
+      "type": "listing",
+      "url": "https://developers.google.com/google-ads/api/docs/release-notes",
+      "linkPattern": "release-notes",
+      "category": "manuals",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "meta-newsroom",
+      "name": "Meta Newsroom",
+      "type": "rss",
+      "url": "https://about.fb.com/news/feed/",
+      "category": "meta_ads",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "meta-business",
+      "name": "Meta for Business",
+      "type": "listing",
+      "url": "https://www.facebook.com/business/news",
+      "linkPattern": "/business/",
+      "category": "meta_ads",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "meta-marketing-api-changelog",
+      "name": "Meta Marketing API changelog",
+      "type": "listing",
+      "url": "https://developers.facebook.com/docs/graph-api/changelog",
+      "linkPattern": "changelog",
+      "category": "manuals",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "sej",
+      "name": "Search Engine Journal",
+      "type": "rss",
+      "url": "https://www.searchenginejournal.com/feed/",
+      "category": "digital_marketing",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "sel",
+      "name": "Search Engine Land",
+      "type": "rss",
+      "url": "https://searchengineland.com/feed",
+      "category": "digital_marketing",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "martech",
+      "name": "MarTech",
+      "type": "rss",
+      "url": "https://martech.org/feed/",
+      "category": "ai_marketing",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "hubspot-marketing",
+      "name": "HubSpot Marketing Blog",
+      "type": "rss",
+      "url": "https://blog.hubspot.com/marketing/rss.xml",
+      "category": "digital_marketing",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "n8n-blog",
+      "name": "n8n Blog",
+      "type": "rss",
+      "url": "https://blog.n8n.io/rss/",
+      "category": "automation",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "reddit-ppc",
+      "name": "Reddit r/PPC",
+      "type": "reddit_json",
+      "url": "https://www.reddit.com/r/PPC/.json?limit=20",
+      "category": "reddit_social",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "reddit-googleads",
+      "name": "Reddit r/GoogleAds",
+      "type": "reddit_json",
+      "url": "https://www.reddit.com/r/GoogleAds/.json?limit=20",
+      "category": "google_ads",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "reddit-marketing",
+      "name": "Reddit r/marketing",
+      "type": "reddit_json",
+      "url": "https://www.reddit.com/r/marketing/.json?limit=15",
+      "category": "insights",
+      "enabled": true,
+      "lang": "en"
+    },
+    {
+      "id": "coindesk",
+      "name": "CoinDesk",
+      "type": "rss",
+      "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "category": "crypto",
+      "enabled": true,
+      "lang": "en",
+      "note": "Strict relevance: business/ads/regulation only."
+    },
+    {
+      "id": "theblock",
+      "name": "The Block",
+      "type": "rss",
+      "url": "https://www.theblock.co/rss.xml",
+      "category": "crypto",
+      "enabled": true,
+      "lang": "en"
+    }
+  ]
+}

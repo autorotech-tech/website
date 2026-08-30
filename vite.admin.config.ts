@@ -37,6 +37,11 @@ export default defineConfig({
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api\/deep-search/, '')
             },
+            '/api/blog': {
+                target: 'http://localhost:3002',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/api\/blog/, '/api')
+            },
             '/supabase': {
                 target: 'https://swoop.autoro.tech',
                 changeOrigin: true,

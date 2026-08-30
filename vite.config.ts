@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
         },
         // Blog Next.js API (local testing)
         '/api/blog': {
-          target: 'http://localhost:3000',
+          target: 'http://localhost:3002',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api\/blog/, '/api')
         },

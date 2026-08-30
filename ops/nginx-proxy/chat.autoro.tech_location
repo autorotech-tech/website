@@ -1,0 +1,10 @@
+# nginx-proxy vhost.d — chat.autoro.tech_location
+# Mount on VPS: /home/vladx/nginx-proxy/vhost.d/chat.autoro.tech_location
+# chat-gateway exposes /health (200); / returns 404 — rewrite for uptime checks + CF probe on /
+
+rewrite ^/$ /health break;
+proxy_connect_timeout 10s;
+proxy_send_timeout 120s;
+proxy_read_timeout 120s;
+proxy_http_version 1.1;
+proxy_set_header Connection "";

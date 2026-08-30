@@ -1,0 +1,6 @@
+[Unit]
+Description=Swoop OpenRouter catalog refresh (agent-api)
+
+[Service]
+Type=oneshot
+ExecStart=/home/vladx/bin/run-openrouter-refresh.sh

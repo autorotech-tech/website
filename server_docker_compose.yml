@@ -1,0 +1,264 @@
+version: '3'
+
+services:
+
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-proxy/certs:/etc/nginx/certs
+      - ./nginx-proxy/vhost.d:/etc/nginx/vhost.d
+      - ./nginx-proxy/html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./custom_max_size.conf:/etc/nginx/conf.d/custom_max_size.conf:ro
+    environment:
+      - NGINX_PROXY_CONTAINER=nginx-proxy
+      # Добавь эти строки для webhook:
+      - VIRTUAL_PORT=5678
+      - VIRTUAL_HOST=tech.autoro.tech
+    restart: unless-stopped
+    networks:
+      - proxy
+
+  acme-companion:
+    image: nginxproxy/acme-companion
+    container_name: acme-companion
+    volumes:
+      - ./nginx-proxy/certs:/etc/nginx/certs
+      - ./nginx-proxy/vhost.d:/etc/nginx/vhost.d
+      - ./nginx-proxy/html:/usr/share/nginx/html
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log/nginx/access.log:/var/log/nginx/access.log
+      - /var/log/nginx/error.log:/var/log/nginx/error.log
+    environment:
+      - NGINX_PROXY_CONTAINER=nginx-proxy
+    restart: unless-stopped
+    networks:
+      - proxy
+
+  chat-proxy:
+    build: ./projects/chat-proxy
+    environment:
+      - NODE_ENV=production
+      - N8N_URL=http://n8n:5678/webhook/chat/intake
+      - CORS_ORIGIN=https://autoro.tech
+      - SHARED_SECRET=
+    restart: unless-stopped
+    #    ports:
+    #      - "3000:3000"   # временно, для проверки напрямую
+    networks:
+      - proxy
+
+  chat-proxy-pquoc:
+    build: ./projects/chat-proxy
+    environment:
+      - NODE_ENV=production
+      - N8N_URL=http://n8n:5678/webhook/pquoc/chat/site # URL вашего RAG-потока
+      - CORS_ORIGIN=https://pquoc.com
+      - SHARED_SECRET=${SHARED_SECRET:-}
+    restart: unless-stopped
+    networks:
+      - proxy
+
+  compod-db:
+    image: mariadb:latest
+    container_name: compod-db
+    environment:
+      MYSQL_ROOT_PASSWORD: iddqdidkfa
+      MYSQL_DATABASE: compod_db
+      MYSQL_USER: compodus
+      MYSQL_PASSWORD: iddqdidkfa
+    volumes:
+      #- ./site1/mysql-data:/var/lib/mysql
+      - compodus_db_data:/var/lib/mysql
+      #db_data:
+      #external: true
+    networks:
+      - proxy
+    restart: always
+
+  compod-wordpress:
+    image: wordpress:latest
+    user: "1000:1000"
+    container_name: compod-wordpress
+    depends_on:
+      - compod-db
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: compod-db
+      WORDPRESS_DB_USER: compodus
+      WORDPRESS_DB_PASSWORD: iddqdidkfa
+      WORDPRESS_DB_NAME: compod_db
+      VIRTUAL_HOST: compod.us,www.compod.us
+      LETSENCRYPT_HOST: compod.us,www.compod.us
+      LETSENCRYPT_EMAIL: garciaarmstead@gmail.com
+    volumes:
+      - ./projects/compod.us/wp-content:/var/www/html/wp-content
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+    networks:
+      - proxy
+
+  autoro-site:
+    image: nginx:alpine
+    container_name: autoro-site
+    volumes:
+      - ./projects/autoro.tech/html:/usr/share/nginx/html:ro
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+    expose:
+      - "80"
+    environment:
+      - VIRTUAL_HOST=autoro.tech,www.autoro.tech
+      - LETSENCRYPT_HOST=autoro.tech,www.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+    restart: unless-stopped
+    networks:
+      - proxy
+  autoro-blog-db:
+    image: mariadb:latest
+    container_name: autoro-blog-db
+    environment:
+      MYSQL_ROOT_PASSWORD: autoro_BLOG_root_n8n
+      MYSQL_DATABASE: autoro_blog
+      MYSQL_USER: autoro_BLOG_user
+      MYSQL_PASSWORD: Autoro_BLOG_pass_n8n
+    volumes:
+      - autoro_blog_db_data:/var/lib/mysql
+    networks:
+      - proxy
+    restart: always
+
+  autoro-blog:
+    image: wordpress:latest
+    container_name: autoro-blog
+    user: "1000:1000"
+    depends_on:
+      - autoro-blog-db
+    expose:
+      - "80"
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: autoro-blog-db
+      WORDPRESS_DB_USER: autoro_BLOG_user
+      WORDPRESS_DB_PASSWORD: Autoro_BLOG_pass_n8n
+      WORDPRESS_DB_NAME: autoro_blog
+      VIRTUAL_HOST: solutions.autoro.tech
+      LETSENCRYPT_HOST: solutions.autoro.tech
+      LETSENCRYPT_EMAIL: tech@autoro.tech
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME','https://solutions.autoro.tech');
+        define('WP_SITEURL','https://solutions.autoro.tech');
+    volumes:
+      - /home/vladx/projects/autoro.tech/wordpress:/var/www/html
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+    networks:
+      - proxy
+
+  pquoc-site:
+    image: nginx:alpine
+    container_name: pquoc-site
+    volumes:
+      - ./projects/pquoc.com/html:/usr/share/nginx/html:ro
+      - ./projects/pquoc.com/nginx-conf/default.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "80"
+    environment:
+      - VIRTUAL_HOST=pquoc.com,www.pquoc.com
+      - LETSENCRYPT_HOST=pquoc.com,www.pquoc.com
+      - LETSENCRYPT_EMAIL=garciaarmstead@gmail.com
+    restart: unless-stopped
+    networks:
+      - proxy
+
+  n8n:
+    image: n8nio/n8n:next
+    container_name: n8n
+    ports:
+      - "1234:5678"
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=n8n-db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=n8npwd
+      - DB_POSTGRESDB_DATABASE=n8n
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=iddQd777idkfa
+      - N8N_RUNNERS_ENABLED=false
+      - N8N_HOST=tech.autoro.tech
+      - VIRTUAL_PORT=5678
+      - N8N_PORT=5678
+      - WEBHOOK_TUNNEL_URL=http://46.250.228.229:5678
+      - WEBHOOK_URL=https://tech.autoro.tech
+      - N8N_PROTOCOL=https
+      - N8N_PROXY_HOPS=2
+      - VIRTUAL_HOST=tech.autoro.tech
+      - LETSENCRYPT_HOST=tech.autoro.tech
+      - LETSENCRYPT_EMAIL=tech@autoro.tech
+      - NODE_ENV=production
+      - N8N_SECURE_COOKIE=false
+      - N8N_LICENSE_KEY=c835488e-3e7a-4b91-b435-688a87958999
+      - VUE_APP_URL_BASE_API=https://tech.autoro.tech
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - NODE_FUNCTION_ALLOW_BUILTIN=https,crypto
+      - N8N_VM_REQUIRE_MODULES=@langchain/core/documents,langchain/document_loaders/fs/pdf,langchain/text_splitter,blob-polyfill
+      - OLLAMA_URL=http://ollama:11434
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    volumes:
+      #      - ./postgres-data:/var/lib/postgresql/data
+      - /home/vladx/projects/n8n/n8n-data:/home/node/.n8n
+      - ./.env:/home/node/.env
+    depends_on:
+      - n8n-db
+    #    depends_on:
+    #      - postgres
+    restart: unless-stopped
+    networks:
+      - proxy
+      - anythingllm-n8n-bridge
+
+  n8n-db:
+    image: postgres:16-alpine
+    container_name: n8n-db
+    environment:
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=n8npwd
+      - POSTGRES_DB=n8n
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - n8n_n8n_pgdata:/var/lib/postgresql/data
+    networks:
+      - proxy
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true
+  anythingllm-n8n-bridge:
+    name: vladx_anythingllm-n8n-bridge
+    external: false
+
+volumes:
+  n8n_n8n_pgdata:
+    external: true
+  compodus_db_data:
+    external: true
+  anythingllm_data:
+    external: false
+  ollama_data:
+    external: false
+  chroma_data:
+    external: false
+  pquoc_blog_db_data:
+    external: true
+  autoro_blog_db_data:
+    external: true
+  open_webui_data:
+  whisper_cache:

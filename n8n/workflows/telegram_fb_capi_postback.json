@@ -1,0 +1,378 @@
+{
+  "name": "Telegram -> FB CAPI Postback",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-conversion",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook_telegram_conversion",
+      "name": "Webhook Telegram Conversion",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json || {};\nconst query = $json.query || {};\n\nconst clickId = body.click_id || body.start_payload || body.start || query.click_id || query.start || null;\nif (!clickId) {\n  throw new Error('click_id (или start payload) не найден во входном webhook payload');\n}\n\nconst eventName = body.event_name || body.event || 'Lead';\nconst eventId = body.fb_event_id || body.event_id || `${clickId}-${Date.now()}`;\n\nreturn [{\n  click_id: clickId,\n  event_name: eventName,\n  fb_event_id: eventId,\n  raw_payload: body\n}];"
+      },
+      "id": "code_extract_click",
+      "name": "Extract click_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        430,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://swoop.autoro.tech/api/internal/click/{{$json[\"click_id\"]}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Basic ' + Buffer.from(($env.INTERNAL_API_USER || 'n8n') + ':' + $env.INTERNAL_API_PASSWORD).toString('base64')}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "http_get_click",
+      "name": "Get Click Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge_context",
+      "name": "Merge Input + Click Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nconst ts = Math.floor(Date.now() / 1000);\n\n// Формат fbc: fb.1.<timestamp>.<fbclid>\nconst fbc = item.fbclid ? `fb.1.${ts}.${item.fbclid}` : undefined;\n\nreturn [{\n  ...item,\n  fbc,\n  event_time: ts\n}];"
+      },
+      "id": "code_prepare_meta",
+      "name": "Prepare Meta Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json[\"fb_pixel_id\"]}}/events",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{$json[\"fb_capi_token\"]}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": [\n    {\n      \"event_name\": $json.event_name,\n      \"event_time\": $json.event_time,\n      \"event_id\": $json.fb_event_id,\n      \"action_source\": \"system_generated\",\n      \"user_data\": {\n        \"client_ip_address\": $json.ip_address,\n        \"client_user_agent\": $json.user_agent,\n        \"fbc\": $json.fbc,\n        \"fbclid\": $json.fbclid\n      },\n      \"custom_data\": {\n        \"click_id\": $json.click_id,\n        \"utm_source\": $json.utm_source,\n        \"utm_medium\": $json.utm_medium,\n        \"utm_campaign\": $json.utm_campaign\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "http_meta_capi",
+      "name": "Send Meta CAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_meta_success",
+              "leftValue": "={{$json[\"events_received\"] || 0}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "larger"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_success",
+      "name": "Meta Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status_success",
+              "name": "status",
+              "value": "success",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_status_success",
+      "name": "Set Status Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1870,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status_failed",
+              "name": "status",
+              "value": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_status_failed",
+      "name": "Set Status Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1870,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://swoop.autoro.tech/api/internal/conversion",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Basic ' + Buffer.from(($env.INTERNAL_API_USER || 'n8n') + ':' + $env.INTERNAL_API_PASSWORD).toString('base64')}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"click_id\": $json.click_id,\n  \"event_name\": $json.event_name,\n  \"status\": $json.status,\n  \"fb_event_id\": $json.fb_event_id\n}",
+        "options": {}
+      },
+      "id": "http_save_conversion",
+      "name": "Save Conversion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"click_id\": $json.click_id,\n  \"event_name\": $json.event_name,\n  \"status\": $json.status,\n  \"fb_event_id\": $json.fb_event_id\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond_ok",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2360,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Telegram Conversion": {
+      "main": [
+        [
+          {
+            "node": "Extract click_id",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Input + Click Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract click_id": {
+      "main": [
+        [
+          {
+            "node": "Get Click Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Click Context": {
+      "main": [
+        [
+          {
+            "node": "Merge Input + Click Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Input + Click Context": {
+      "main": [
+        [
+          {
+            "node": "Prepare Meta Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Meta Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Meta CAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Meta CAPI": {
+      "main": [
+        [
+          {
+            "node": "Meta Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta Success?": {
+      "main": [
+        [
+          {
+            "node": "Set Status Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Status Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Success": {
+      "main": [
+        [
+          {
+            "node": "Save Conversion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Failed": {
+      "main": [
+        [
+          {
+            "node": "Save Conversion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Conversion": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "telegram-fb-capi-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

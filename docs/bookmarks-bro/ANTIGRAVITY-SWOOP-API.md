@@ -5,7 +5,7 @@
 > **Base URL (staging):** `https://swoop.autoro.tech`  
 > **Service:** `agent-api` (FastAPI, порт 8900 за nginx)
 
-Прочитайте сначала: [ANTIGRAVITY-HANDOFF.md](./ANTIGRAVITY-HANDOFF.md) → [ANTIGRAVITY-SWOOP-KEEPT.md](./ANTIGRAVITY-SWOOP-KEEPT.md).
+Прочитайте сначала: [ANTIGRAVITY-HANDOFF.md](./ANTIGRAVITY-HANDOFF.md) → [ANTIGRAVITY-SWOOP-KEEPT.md](./ANTIGRAVITY-SWOOP-KEEPT.md). Полный каталог Autoro-API (все ручки + ротация модели): [autoro-api.md](../autoro-api.md).
 
 Keept end-users **не** логинятся в Swoop. Antigravity как оператор/разработчик использует API от имени пользователя (JWT) или с ops-ключом (`X-API-Key`).
 

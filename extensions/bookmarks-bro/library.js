@@ -22,6 +22,18 @@ const selectAllEl = document.getElementById('selectAll');
 let offset = 0;
 let total = 0;
 
+function setButtonBusy(btn, busy, idleLabel, busyLabel) {
+  if (!btn) return;
+  btn.disabled = Boolean(busy);
+  if (busy) {
+    if (idleLabel) btn.dataset.idleLabel = idleLabel;
+    else if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    btn.innerHTML = `<span class="btn-spinner" aria-hidden="true"></span>${busyLabel || 'Loading…'}`;
+  } else {
+    btn.textContent = idleLabel || btn.dataset.idleLabel || btn.textContent;
+  }
+}
+
 function setToast(msg, isErr) {
   toast.textContent = msg || '';
   toast.className = isErr ? 'danger' : '';
@@ -212,7 +224,7 @@ async function loadPage() {
   if (tag) params.set('tag', tag);
   if (fs) params.set('fetchStatus', fs);
 
-  loadBtn.disabled = true;
+  setButtonBusy(loadBtn, true, 'Reload', 'Loading…');
   setToast('Loading…');
   try {
     const data = await fetchAgentJson(`${apiBase}/api/v1/bookmarks/library?${params}`, { headers });
@@ -225,7 +237,7 @@ async function loadPage() {
     tbody.innerHTML = '';
     pageInfo.textContent = '';
   } finally {
-    loadBtn.disabled = false;
+    setButtonBusy(loadBtn, false, 'Reload');
   }
 }
 
@@ -243,7 +255,7 @@ async function importSelected() {
     setToast('Select at least one bookmark.', true);
     return;
   }
-  importBtn.disabled = true;
+  setButtonBusy(importBtn, true, 'Import selected to browser', 'Importing…');
   setToast('Importing…');
   try {
     const parentId = await findOrCreateImportFolder();
@@ -259,7 +271,7 @@ async function importSelected() {
   } catch (e) {
     setToast(`Import: ${e.message || e}`, true);
   } finally {
-    importBtn.disabled = false;
+    setButtonBusy(importBtn, false, 'Import selected to browser');
   }
 }
 

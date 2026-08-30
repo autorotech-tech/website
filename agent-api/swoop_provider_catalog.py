@@ -467,6 +467,28 @@ def fetch_kimi_models(api_key: str, base_url: str) -> List[str]:
     return models[:MAX_MODELS_PER_PROVIDER]
 
 
+def fetch_seekai_models(api_key: str, base_url: str) -> List[str]:
+    key = (api_key or "").strip()
+    base = (base_url or "").strip().rstrip("/") or "https://api.seekapi.ai/v1"
+    if not key:
+        return []
+    code, body = _http_get_json(
+        f"{base}/models",
+        headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+    )
+    if code != 200 or not isinstance(body, dict):
+        return []
+    models: List[str] = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        mid = str(item.get("id") or "").strip()
+        if mid:
+            models.append(mid)
+    models.sort(reverse=True)
+    return models[:MAX_MODELS_PER_PROVIDER]
+
+
 def _catalog_vals_from_swoop_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "GEMINI": list(settings.get("gemini_keys") or []),
@@ -482,6 +504,8 @@ def _catalog_vals_from_swoop_settings(settings: Dict[str, Any]) -> Dict[str, Any
         "MIMO_BASE": str(settings.get("mimo_base_url") or "").strip(),
         "KIMI": list(settings.get("kimi_keys") or []),
         "KIMI_BASE": str(settings.get("kimi_base_url") or "").strip(),
+        "SEEKAI": list(settings.get("seekai_keys") or []),
+        "SEEKAI_BASE": str(settings.get("seekai_base_url") or "").strip(),
         "OPENMODEL": list(settings.get("openmodel_keys") or []),
         "OPENMODEL_BASE": str(settings.get("openmodel_base_url") or "").strip(),
     }
@@ -558,6 +582,13 @@ def collect_live_provider_models(vals: Dict[str, Any]) -> Dict[str, List[str]]:
         if live:
             out["kimi"] = live
             _catalog_msg("catalog: kimi %s models (e.g. %s)", len(live), live[0])
+
+    seekai_key = _first_key(vals.get("SEEKAI"))
+    if seekai_key:
+        live = fetch_seekai_models(seekai_key, str(vals.get("SEEKAI_BASE") or ""))
+        if live:
+            out["seekai"] = live
+            _catalog_msg("catalog: seekai %s models (e.g. %s)", len(live), live[0])
 
     om_key = _first_key(vals.get("OPENMODEL"))
     if om_key:
@@ -655,6 +686,8 @@ def _static_fallback(provider: str, settings: Dict[str, Any]) -> str:
         return str(settings.get("mimo_default_model") or "").strip() or "mimo-v2.5-pro"
     if prov == "kimi":
         return str(settings.get("kimi_default_model") or "").strip() or "kimi-k2-turbo-preview"
+    if prov == "seekai":
+        return str(settings.get("seekai_default_model") or "").strip() or "deepseek-chat"
     if prov == "openmodel":
         return str(settings.get("openmodel_default_model") or "").strip() or "deepseek-v4-flash"
     env_key, default = _PROVIDER_ENV_FALLBACK.get(prov, ("", ""))
@@ -766,6 +799,7 @@ def build_openai_models_list(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
         str(settings.get("lmarena_default_model") or "").strip(),
         str(settings.get("mimo_default_model") or "").strip(),
         str(settings.get("kimi_default_model") or "").strip(),
+        str(settings.get("seekai_default_model") or "").strip(),
         str(settings.get("openmodel_default_model") or "").strip(),
     ]
     for mid in pinned:

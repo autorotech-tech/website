@@ -1,0 +1,20 @@
+# Local vibe demo — not production.
+#
+#   cp .env.example .env    # optional local overrides (compose still loads .env.example)
+#   docker compose up --build
+#
+# API:  http://127.0.0.1:3105/health
+# UI:   http://127.0.0.1:3105/   (when demo/index.html exists)
+services:
+  lead-validation:
+    build: .
+    container_name: lead-validation
+    ports:
+      - "${PORT:-3105}:3105"
+    env_file:
+      - .env.example
+    environment:
+      PORT: "3105"
+      CHECK_MX: "${CHECK_MX:-false}"
+      DEFAULT_PHONE_REGION: "${DEFAULT_PHONE_REGION:-US}"
+    restart: unless-stopped

@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional, Sequence, Set, Tuple
 from urllib.error import HTTPError as UrlHTTPError
@@ -232,11 +232,14 @@ from job_responder_budget import (
     GENERATE_HARD_WALL_SEC,
     JR_OPENMODEL_FAST_MODEL,
     JR_OPENMODEL_FALLBACK_MODEL,
+    JR_OPENROUTER_FAST_MODEL,
     LLM_PROVIDER_CAP_SEC,
+    LLM_RACE_TIMEOUT_SEC,
     PROMPT_EXTRA_PRESSURE_CHARS,
     cascade_max_providers,
     choose_profile_cap,
     provider_timeout_for,
+    race_timeout_for,
     should_attempt_mini_profile_retry,
     should_shrink_for_pressure,
     summarize_provider_errors,
@@ -2091,6 +2094,28 @@ def call_with_timeout(fn, timeout_sec: float, *args, **kwargs):
     return result
 
 
+# region agent log
+_AGENT_DEBUG_LOG = "/Users/vlad_x/Desktop/n8n/autoro.tech/website/.cursor/debug-920d6a.log"
+
+
+def _agent_debug_log(hypothesis_id: str, location: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
+    """NDJSON debug sink (local path when present; no-op on VPS)."""
+    try:
+        payload = {
+            "sessionId": "920d6a",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+# endregion agent log
+
+
 def cap_rag_items(rows: List[Dict[str, Any]], *, max_n: int = SELECTED_SOURCES_MAX) -> Tuple[List[Dict[str, Any]], bool]:
     ranked = sorted(
         [dict(r) for r in rows],
@@ -3129,6 +3154,7 @@ ULTRA_SHORT_SYSTEM_PROMPT = """[ROLE] Ассистент откликов. Пи�
 **Формат:** {format|remote|employment}
 ---
 {Approximate Relevance of a Vacancy}
+(в письме только «Релевантность: N/100» - без matched/инструментов/подробностей)
 {greeting}
 
 {2 short pitch sentence + relevant skills based experience}
@@ -3167,6 +3193,10 @@ _RELEVANCE_PLACEHOLDER_RE = re.compile(
     r"\{\s*Approximate\s+Relevance\s+of\s+a\s+Vacancy\s*\}",
     re.IGNORECASE,
 )
+# Collapse model/backend verbose lines: "Релевантность: 60/100 | Инструменты: ..."
+_RELEVANCE_VERBOSE_LINE_RE = re.compile(
+    r"(?im)^[ \t]*Релевантность:\s*(\d{1,3})\s*/\s*100\b[^\n]*$"
+)
 
 
 def _norm_prompt_blob(text: str) -> str:
@@ -3191,33 +3221,30 @@ def resolve_prompt_extra(prompt_extra: Optional[str], custom_instructions: Optio
 
 
 def format_relevance_line(relevance: Optional[Dict[str, Any]]) -> str:
-    """Russian relevance line for OUT placeholder / user prompt."""
+    """Score-only line for OUT placeholder (no matched/missing details)."""
     if not isinstance(relevance, dict):
         return "Релевантность: н/д"
-    score_i: Optional[int] = None
     try:
-        if relevance.get("score") is not None:
-            score_i = int(round(float(relevance.get("score"))))
+        if relevance.get("score") is None:
+            return "Релевантность: н/д"
+        score_i = int(round(float(relevance.get("score"))))
     except (TypeError, ValueError):
-        score_i = None
-    bits: List[str] = []
-    if score_i is not None:
-        bits.append(f"Релевантность: {max(0, min(100, score_i))}/100")
-    matched = relevance.get("matched") or []
-    if isinstance(matched, list) and matched:
-        short = "; ".join(str(m).strip() for m in matched[:2] if str(m).strip())[:160]
-        if short:
-            bits.append(short)
-    return " | ".join(bits) if bits else "Релевантность: н/д"
+        return "Релевантность: н/д"
+    return f"Релевантность: {max(0, min(100, score_i))}/100"
 
 
 def apply_relevance_placeholder(text: str, relevance: Optional[Dict[str, Any]]) -> str:
-    """Replace OUT relevance placeholder; strip leftovers if unused."""
+    """Replace OUT relevance placeholder; force score-only lines (no details)."""
     raw = text or ""
     line = format_relevance_line(relevance)
     if _RELEVANCE_PLACEHOLDER_RE.search(raw):
         raw = _RELEVANCE_PLACEHOLDER_RE.sub(line, raw, count=1)
         raw = _RELEVANCE_PLACEHOLDER_RE.sub("", raw)
+    # Normalize any verbose "Релевантность: N/100 | ..." the model copied from hints
+    raw = _RELEVANCE_VERBOSE_LINE_RE.sub(
+        lambda m: f"Релевантность: {max(0, min(100, int(m.group(1))))}/100",
+        raw,
+    )
     raw = re.sub(r"\n{3,}", "\n\n", raw)
     return raw
 
@@ -3627,7 +3654,8 @@ def build_user_prompt(
         rel_line = format_relevance_line(relevance)
         parts.append(
             f"VACANCY_RELEVANCE: {rel_line}\n"
-            f"Replace any `{RELEVANCE_PLACEHOLDER_TOKEN}` in the letter with exactly: {rel_line}"
+            f"Replace any `{RELEVANCE_PLACEHOLDER_TOKEN}` with EXACTLY this score-only line "
+            f"(no matched skills, no tools, no details after the score):\n{rel_line}"
         )
     hints = (crag_hints or "").strip()
     if hints:
@@ -5987,6 +6015,14 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         except asyncio.TimeoutError:
             elapsed = round(time.monotonic() - started, 2)
             _LOG.warning("generate hard-wall timeout elapsed=%.2f", elapsed)
+            # region agent log
+            _agent_debug_log(
+                "C",
+                "job_responder.py:hard_wall",
+                "generate hard-wall timeout",
+                {"elapsedSec": elapsed, "budget": GENERATE_BUDGET_SEC, "hardWall": GENERATE_HARD_WALL_SEC},
+            )
+            # endregion agent log
             return {
                 "ok": False,
                 "error": "llm_timeout",
@@ -5998,6 +6034,12 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "timedOut": True,
                 "elapsedSec": elapsed,
                 "workspaceId": workspace_id_out,
+                "debugBudget": {
+                    "path": "hard_wall",
+                    "elapsedSec": elapsed,
+                    "budgetSec": GENERATE_BUDGET_SEC,
+                    "hardWallSec": GENERATE_HARD_WALL_SEC,
+                },
             }
         except HTTPException:
             raise
@@ -6069,6 +6111,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
 
         rag_items, truncated = cap_rag_items(list(rag_rows), max_n=SELECTED_SOURCES_MAX)
         merged = merge_profiles_from_rows(rag_items)
+        t_after_merge = time.monotonic()
         relevance = score_resume_vs_vacancy(payload.vacancy, rag_items, merged_profile=merged)
         # Heuristic notes only on generate hot path — never spend LLM budget on effectiveness.
         relevance = attach_effectiveness_notes(
@@ -6076,6 +6119,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             effectiveness_prompt=payload.effectivenessPrompt,
             use_llm=False,
         )
+        t_after_relevance = time.monotonic()
         mode = "question_answers" if payload.mode in ("qa", "question_answers") else "cover_letter"
         merged_questions = list(payload.vacancy.questions or [])
         if payload.questions:
@@ -6139,6 +6183,25 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         # Thin ATS contract (debug / recruiter reverse hook); not dumped into prompt.
         candidate_profile = merged_profile_to_candidate(merged)
         provider_errors: List[str] = []
+        cascade_trace: List[Dict[str, Any]] = []
+        t_pre_llm = time.monotonic()
+        pre_llm_sec = round(t_pre_llm - started, 2)
+        # region agent log
+        _agent_debug_log(
+            "B",
+            "job_responder.py:pre_llm",
+            "pre-LLM budget snapshot",
+            {
+                "preLlmSec": pre_llm_sec,
+                "remainingSec": round(deadline - t_pre_llm, 2),
+                "mergeSec": round(t_after_merge - started, 2),
+                "relevanceSec": round(t_after_relevance - t_after_merge, 2),
+                "sources": len(rag_items),
+                "profileCap": profile_cap,
+                "compressed": profile_compressed,
+            },
+        )
+        # endregion agent log
         # After pre-LLM work: if rem is tight, mini profile + trim custom ultra-short.
         if should_shrink_for_pressure(remaining_sec=deadline - time.monotonic()):
             profile_cap = COMPACT_PROFILE_CHARS_RETRY
@@ -6206,8 +6269,8 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
             # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
             default_tokens = 700 if mode == "question_answers" else 550
             max_tokens = int(tokens_override) if tokens_override else default_tokens
-            # Cascade: haiku → gemini → deepseek. VPS: deepseek often empty_content after
-            # haiku hang; gemini must run before cascade:max_providers cuts the list.
+            # Race: haiku + gemini + openrouter in parallel (shared wall). deepseek skipped —
+            # VPS probe returned empty whitespace; sequential 8s+6s caused soft llm_timeout.
             attempts = (
                 {
                     "tier_override": "fast",
@@ -6223,85 +6286,153 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 },
                 {
                     "tier_override": "fast",
-                    "route_provider_override": "openmodel",
-                    "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
+                    "route_provider_override": "openrouter",
+                    "route_model_override": JR_OPENROUTER_FAST_MODEL,
                     "route_strict": True,
                 },
             )
-            chat_result = None
-            last_err = ""
-            tried = 0
-            for kwargs in attempts:
-                if tried >= max(1, int(max_providers)):
-                    provider_errors.append("cascade:max_providers")
-                    break
-                remaining = deadline - time.monotonic()
-                if remaining < 4.0:
-                    last_err = "timeout"
-                    provider_errors.append("budget_exhausted")
-                    break
+            remaining = deadline - time.monotonic()
+            if remaining < 4.0:
+                provider_errors.append("budget_exhausted")
+                cascade_trace.append(
+                    {"outcome": "budget_exhausted", "remaining": round(remaining, 2), "isRetry": is_retry}
+                )
+                return None, "timeout", compact_text, has_template
+
+            n_race = max(1, min(int(max_providers), len(attempts)))
+            race_slice = attempts[:n_race]
+            t_cap = race_timeout_for(remaining_sec=remaining, is_retry=is_retry)
+            if t_cap < 4.0:
+                provider_errors.append("race:no_time")
+                cascade_trace.append(
+                    {
+                        "outcome": "no_time",
+                        "tCap": round(t_cap, 2),
+                        "remaining": round(remaining, 2),
+                        "isRetry": is_retry,
+                    }
+                )
+                return None, "timeout", compact_text, has_template
+
+            http_cap = max(5.0, min(t_cap - 0.5, LLM_PROVIDER_CAP_SEC))
+            t_race = time.monotonic()
+
+            def _one_provider(kwargs: Dict[str, Any]):
                 provider = str(kwargs.get("route_provider_override") or "?")
                 model_label = str(kwargs.get("route_model_override") or "default")[:40]
-                t_cap = provider_timeout_for(
-                    provider,
-                    remaining_sec=remaining,
-                    is_retry=is_retry,
-                    attempt_index=tried,
-                )
-                if t_cap < 4.0:
-                    last_err = "timeout"
-                    provider_errors.append(f"{provider}:no_time")
-                    break
-                tried += 1
-                http_cap = max(5.0, min(t_cap - 0.5, LLM_PROVIDER_CAP_SEC))
+                t0 = time.monotonic()
                 try:
-                    chat_result = call_with_timeout(
-                        openai_chat_completions_generic,
-                        t_cap,
+                    result = openai_chat_completions_generic(
                         messages=messages,
                         temperature=JR_GENERATE_TEMPERATURE,
                         max_tokens_override=max_tokens,
                         request_timeout_sec=http_cap,
                         **kwargs,
                     )
+                    content = str(getattr(result, "content", None) or "").strip()
+                    return {
+                        "provider": provider,
+                        "model": model_label,
+                        "result": result if content else None,
+                        "outcome": "ok" if content else "empty_content",
+                        "chars": len(content),
+                        "elapsed": round(time.monotonic() - t0, 2),
+                    }
+                except Exception as exc:
+                    return {
+                        "provider": provider,
+                        "model": model_label,
+                        "result": None,
+                        "outcome": f"error:{type(exc).__name__}",
+                        "chars": 0,
+                        "elapsed": round(time.monotonic() - t0, 2),
+                        "detail": str(exc)[:80],
+                    }
+
+            winner = None
+            last_err = ""
+            # Parallel race: first non-empty wins; wall ≈ max(provider), not sum.
+            with ThreadPoolExecutor(max_workers=max(1, n_race)) as pool:
+                futs = {pool.submit(_one_provider, kw): kw for kw in race_slice}
+                try:
+                    for fut in as_completed(futs, timeout=t_cap):
+                        row = fut.result()
+                        cascade_trace.append(
+                            {
+                                "provider": row.get("provider"),
+                                "model": row.get("model"),
+                                "outcome": row.get("outcome"),
+                                "tCap": round(t_cap, 2),
+                                "httpCap": round(http_cap, 2),
+                                "elapsed": row.get("elapsed"),
+                                "chars": row.get("chars"),
+                                "remaining": round(remaining, 2),
+                                "isRetry": is_retry,
+                                "mode": "race" if n_race > 1 else "single",
+                            }
+                        )
+                        pe = f"{row.get('provider')}/{row.get('model')}:{row.get('outcome')}"
+                        if row.get("outcome") == "ok" and row.get("result") is not None:
+                            winner = row["result"]
+                            provider_errors.append(f"{pe}:win")
+                            # Cancel remaining wait — urlopens may still finish in background.
+                            break
+                        provider_errors.append(pe)
+                        last_err = str(row.get("outcome") or "empty")
+                        if str(row.get("outcome") or "").startswith("error"):
+                            _LOG.warning(
+                                "generate LLM race fail provider=%s: %s",
+                                row.get("provider"),
+                                row.get("detail") or row.get("outcome"),
+                            )
                 except FuturesTimeout:
                     last_err = "timeout"
-                    provider_errors.append(f"{provider}/{model_label}:timeout>{t_cap:.0f}s")
+                    provider_errors.append(f"race:timeout>{t_cap:.0f}s")
+                    cascade_trace.append(
+                        {
+                            "outcome": "race_timeout",
+                            "tCap": round(t_cap, 2),
+                            "elapsed": round(time.monotonic() - t_race, 2),
+                            "remaining": round(remaining, 2),
+                            "isRetry": is_retry,
+                            "n": n_race,
+                        }
+                    )
                     _LOG.warning(
-                        "generate provider timeout provider=%s model=%s timeout=%.1f profile=%d remaining=%.1f",
-                        provider,
-                        model_label,
+                        "generate race timeout timeout=%.1f profile=%d remaining=%.1f n=%d",
                         t_cap,
                         profile_max,
                         remaining,
+                        n_race,
                     )
-                    chat_result = None
-                    # Fail-fast this attempt; rotate to next key/provider while budget remains.
-                    continue
-                except Exception as exc:
-                    last_err = f"{type(exc).__name__}: {exc}"
-                    provider_errors.append(
-                        f"{provider}/{model_label}:{type(exc).__name__}:{str(exc)[:80]}"
-                    )
-                    _LOG.warning("generate LLM attempt failed provider=%s: %s", provider, last_err)
-                    chat_result = None
-                    continue
-                if chat_result and str(getattr(chat_result, "content", None) or "").strip():
-                    return chat_result, "", compact_text, has_template
-                empty_detail = "empty"
-                if chat_result is not None:
-                    empty_detail = "empty_content"
-                last_err = last_err or empty_detail
-                provider_errors.append(f"{provider}/{model_label}:{empty_detail}")
-                chat_result = None
-            return chat_result, last_err, compact_text, has_template
 
-        # Rotate on hang/empty: haiku → gemini → deepseek (short HTTP caps; wall ≤ ~24–27s).
+            if winner is not None:
+                return winner, "", compact_text, has_template
+            if not last_err:
+                last_err = "timeout" if (time.monotonic() - t_race) >= (t_cap - 0.2) else "empty"
+            return None, last_err, compact_text, has_template
+
+        # Race haiku + gemini + openrouter (shared ~16s wall). Mini-retry is single-step.
+        rem_at_cascade = deadline - time.monotonic()
         first_max_providers = cascade_max_providers(
             profile_compressed=profile_compressed,
-            remaining_sec=deadline - time.monotonic(),
+            remaining_sec=rem_at_cascade,
             is_retry=False,
         )
+        # region agent log
+        _agent_debug_log(
+            "A",
+            "job_responder.py:cascade_start",
+            "cascade start",
+            {
+                "remainingSec": round(rem_at_cascade, 2),
+                "maxProviders": first_max_providers,
+                "profileCap": profile_cap,
+                "preLlmSec": pre_llm_sec,
+                "raceTimeout": LLM_RACE_TIMEOUT_SEC,
+            },
+        )
+        # endregion agent log
         chat_result, last_err, compact_text, has_template = _run_llm(
             profile_cap,
             cover_cap,
@@ -6609,6 +6740,28 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 len(compact_text or ""),
             )
             timed_out = "timeout" in str(last_err or "") or any("timeout" in e for e in provider_errors)
+            debug_budget = {
+                "path": "soft_empty",
+                "timedOut": timed_out,
+                "elapsedSec": round(elapsed, 2),
+                "preLlmSec": pre_llm_sec,
+                "remAtCascade": round(rem_at_cascade, 2),
+                "firstMaxProviders": first_max_providers,
+                "budgetSec": GENERATE_BUDGET_SEC,
+                "profileCap": profile_cap,
+                "sources": len(rag_items),
+                "providerErrors": provider_errors[-12:],
+                "cascade": cascade_trace[-12:],
+                "lastErr": str(last_err or "")[:120],
+            }
+            # region agent log
+            _agent_debug_log(
+                "A",
+                "job_responder.py:soft_empty",
+                "generate empty/timeout soft path",
+                debug_budget,
+            )
+            # endregion agent log
             if timed_out:
                 # User-facing: no provider/model names (kept in providerErrors for logs/UI debug).
                 msg = (
@@ -6627,6 +6780,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 "text": "",
                 "timedOut": timed_out,
                 "providerErrors": provider_errors,
+                "debugBudget": debug_budget,
                 "contextLimited": truncated,
                 "profileCompressed": profile_compressed or timed_out,
                 "compactProfileChars": len(compact_text or ""),

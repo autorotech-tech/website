@@ -1,0 +1,16 @@
+# Минимальный контекст для Vite-сборки фронта
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.node.json
+!vite.config.ts
+!tailwind.config.js
+!postcss.config.js
+!index.html
+!nginx.conf
+!Dockerfile
+!public
+!public/**
+!src
+!src/**

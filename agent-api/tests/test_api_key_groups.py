@@ -1,0 +1,103 @@
+import importlib.util
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("agent_api_main", ROOT / "main.py")
+main = importlib.util.module_from_spec(spec)
+sys.modules["agent_api_main"] = main
+spec.loader.exec_module(main)
+
+
+GROUPS = [
+    {
+        "name": "Gemini Fast (Flash)",
+        "keys": ["AIzaSyAAA", "AIzaSyBBB"],
+    },
+    {
+        "name": "Groq Fast (Llama 3)",
+        "provider": "groq",
+        "keys": ["gsk_one", "gsk_two"],
+    },
+    {
+        "name": "GLM Fast (Flash)",
+        "provider": "glm",
+        "keys": ["glm_key_1"],
+    },
+    {
+        # provider intentionally empty — inferred from name for pool merge / rotation
+        "name": "OpenRouter Fast",
+        "keys": ["sk-or-v1-test"],
+    },
+]
+
+
+def test_select_api_key_group_keys_gemini_infers_from_name():
+    # Untagged \"Gemini Fast\" must still join gemini pool (name inference).
+    keys = main._select_api_key_group_keys(GROUPS, desired_provider="gemini")
+    assert keys == ["AIzaSyAAA", "AIzaSyBBB"]
+
+
+def test_select_api_key_group_keys_gemini_with_tagged_group():
+    groups = [
+        {"name": "Gemini pool", "provider": "gemini", "keys": ["AIzaSyCCC"]},
+        *GROUPS,
+    ]
+    keys = main._select_api_key_group_keys(groups, desired_provider="gemini")
+    assert keys == ["AIzaSyCCC", "AIzaSyAAA", "AIzaSyBBB"]
+
+
+def test_select_api_key_group_keys_openrouter_infers_from_name():
+    keys = main._select_api_key_group_keys(GROUPS, desired_provider="openrouter")
+    assert keys == ["sk-or-v1-test"]
+
+
+def test_select_api_key_group_keys_anonymous_name_excluded_for_provider_filter():
+    groups = [{"name": "Misc shared", "keys": ["shared_key"]}]
+    assert main._select_api_key_group_keys(groups, desired_provider="openrouter") == []
+
+
+def test_select_api_key_group_keys_untagged_fallback_only_without_provider_filter():
+    keys = main._select_api_key_group_keys(GROUPS, desired_provider="")
+    assert "gsk_one" in keys
+    assert "AIzaSyAAA" in keys
+
+
+def test_gemini_chat_key_pool_filters_non_aiza_keys():
+    settings = {
+        "gemini_keys": ["AIzaSyGOOD", "gsk_bad"],
+        "gemini_api_key": "sk-or_bad",
+    }
+    pool = main._gemini_chat_key_pool(settings, group_gemini_keys=["AIzaSyGROUP", "glm_bad"])
+    assert pool == ["AIzaSyGOOD", "AIzaSyGROUP"]
+
+
+def test_key_health_cooldown_and_retryable_markers():
+    # 402 Insufficient Credits and memory limit errors must be retryable with proper cooldown
+    assert main._is_retryable_key_error(402, "Insufficient credits") is True
+    assert main._is_retryable_key_error(402, "actor-memory-limit-exceeded") is True
+    assert main._is_retryable_key_error(429, "Rate limit exceeded") is True
+    assert main._is_retryable_key_error(401, "Invalid API key") is False
+    assert main._is_retryable_key_error(403, "Forbidden") is False
+
+    # Check cooldown calculation
+    assert main._key_cooldown_sec(402, "actor-memory-limit-exceeded") == main._KEY_FAILURE_COOLDOWN_RATE_LIMIT_SEC
+    assert main._key_cooldown_sec(401, "Invalid API key") == main._KEY_FAILURE_COOLDOWN_AUTH_SEC
+
+
+def test_apify_and_scrapingbee_status_functions():
+    from swoop_parsing import verify_apify_key, verify_scrapingbee_key, fetch_apify_limits_and_usage, fetch_scrapingbee_usage
+    # Test with empty keys
+    assert verify_apify_key("")[0] is False
+    assert verify_scrapingbee_key("")[0] is False
+    assert fetch_apify_limits_and_usage("")[0] is False
+    assert fetch_scrapingbee_usage("")[0] is False
+
+
+def test_seekai_provider_integration():
+    from swoop_seekai import seekai_api_base, resolve_seekai_model, verify_seekai_key
+    assert seekai_api_base({}) == "https://api.seekapi.ai/v1"
+    assert seekai_api_base({"seekai_base_url": "https://seekai.cc/v1"}) == "https://seekai.cc/v1"
+    assert resolve_seekai_model("", {}) == "deepseek-chat"
+    assert resolve_seekai_model("deepseek-reasoner", {}) == "deepseek-reasoner"
+    assert verify_seekai_key({}, "")[0] is False

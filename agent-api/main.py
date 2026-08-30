@@ -49,6 +49,10 @@ from swoop_kimi import (
     kimi_api_base as _kimi_api_base,
     verify_kimi_key as _verify_kimi_key,
 )
+from swoop_seekai import (
+    seekai_api_base as _seekai_api_base,
+    verify_seekai_key as _verify_seekai_key,
+)
 from swoop_openmodel import (
     OPENMODEL_CHAT_TIMEOUT_SEC as _OPENMODEL_CHAT_TIMEOUT_SEC,
     fetch_openmodel_balance as _fetch_openmodel_balance,
@@ -69,6 +73,8 @@ from swoop_serpapi import (
 )
 from swoop_groq import is_proxy_blocked as _is_proxy_blocked, verify_groq_key as _verify_groq_key
 from swoop_parsing import (
+    fetch_apify_limits_and_usage as _fetch_apify_limits_and_usage,
+    fetch_scrapingbee_usage as _fetch_scrapingbee_usage,
     verify_apify_key as _verify_apify_key,
     verify_brightdata_key as _verify_brightdata_key,
     verify_omkar_key as _verify_omkar_key,
@@ -2719,6 +2725,15 @@ def ensure_service_settings_schema() -> None:
                 "alter table public.service_settings add column if not exists kimi_default_model text not null default ''"
             )
             cur.execute(
+                "alter table public.service_settings add column if not exists seekai_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists seekai_base_url text not null default ''"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists seekai_default_model text not null default ''"
+            )
+            cur.execute(
                 "alter table public.service_settings add column if not exists openmodel_keys jsonb not null default '[]'::jsonb"
             )
             cur.execute(
@@ -2753,6 +2768,9 @@ def ensure_service_settings_schema() -> None:
             )
             cur.execute(
                 "alter table public.service_settings add column if not exists apify_keys jsonb not null default '[]'::jsonb"
+            )
+            cur.execute(
+                "alter table public.service_settings add column if not exists apify_user_id text not null default ''"
             )
             cur.execute(
                 "alter table public.service_settings add column if not exists apify_default_actor text not null default 'compass/crawler-google-places'"
@@ -2796,103 +2814,22 @@ def get_tags_schema() -> dict:
     if _TAGS_SCHEMA_CACHE is not None:
         return _TAGS_SCHEMA_CACHE
     
-    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "schemas", "categories.json")
-    schema_path = os.path.abspath(schema_path)
-    
-    default_schema = {
-        "kinds": [
-            "bookmark",
-            "note",
-            "idea",
-            "plan",
-            "development",
-            "task",
-            "article",
-            "prompt",
-            "contact",
-            "link",
-            "job_resume",
-            "job_experience",
-            "job_skills",
-        ],
-        "kind_aliases": {
-            "bookmarks": "bookmark",
-            "notes": "note",
-            "ideas": "idea",
-            "plans": "plan",
-            "dev": "development",
-            "developments": "development",
-            "rfc": "development",
-            "snippet": "development",
-            "tasks": "task",
-            "reminder": "task",
-            "reminders": "task",
-            "articles": "article",
-            "prompts": "prompt",
-            "contacts": "contact",
-            "links": "link",
-            "url": "link",
-        },
-        "categories": ["general", "ai-ml", "dev-tools", "marketing", "business", "design", "prompt", "article", "note", "link", "task"],
-        "tag_aliases": {
-            "agents": "agent",
-            "tools": "tool",
-            "startups": "startup",
-            "libraries": "library",
-            "apis": "api",
-            "embeddings": "embedding",
-            "vectors": "vector",
-            "databases": "database",
-            "notes": "note",
-            "bookmarks": "bookmark",
-            "reminders": "reminder",
-            "ideas": "idea",
-            "plans": "plan",
-            "developments": "development",
-            "workflows": "workflow",
-            "pipelines": "pipeline",
-            "categories": "category",
-            "tags": "tag",
-            "models": "model",
-            "methods": "method",
-            "algorithms": "algorithm",
-            "llms": "llm",
-            "webhooks": "webhook",
-            "integrations": "integration",
-            "prompts": "prompt",
-            "searches": "search",
-            "results": "result",
-            "tokens": "token",
-            "keys": "key",
-            "users": "user",
-            "members": "member",
-            "roles": "role",
-            "workspaces": "workspace",
-            "servers": "server",
-            "extensions": "extension",
-            "browsers": "browser",
-            "configs": "config",
-            "strategies": "strategy",
-            "frameworks": "framework",
-            "packages": "package",
-            "scripts": "script",
-            "files": "file",
-            "folders": "folder",
-            "documents": "document",
-            "pages": "page",
-            "metrics": "metric"
-        }
-    }
-    
-    if os.path.exists(schema_path):
-        try:
-            with open(schema_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    _TAGS_SCHEMA_CACHE = loaded
-                    return loaded
-        except Exception as e:
-            logger.warning("Failed to load tag schema from %s: %s", schema_path, e)
+    schema_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "schemas", "categories.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "schemas", "categories.json"),
+        "/workspace/schemas/categories.json",
+    ]
+    for sp in schema_paths:
+        schema_path = os.path.abspath(sp)
+        if os.path.exists(schema_path):
+            try:
+                with open(schema_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        _TAGS_SCHEMA_CACHE = loaded
+                        return loaded
+            except Exception as e:
+                logger.warning("Failed to load tag schema from %s: %s", schema_path, e)
             
     _TAGS_SCHEMA_CACHE = default_schema
     return default_schema
@@ -2957,6 +2894,9 @@ def normalize_category(category: str) -> str:
     norm = normalize_single_tag(str(category), aliases)
     if norm in allowed:
         return norm
+    raw_clean = re.sub(r'[\s_]+', '-', str(category).strip().lower())
+    if raw_clean in allowed:
+        return raw_clean
     return "general"
 
 
@@ -3706,6 +3646,7 @@ def _infer_api_key_group_provider(name: str, explicit_provider: str = "") -> str
         "glm",
         "mimo",
         "kimi",
+        "seekai",
     ):
         if token in n:
             return token
@@ -3811,7 +3752,7 @@ def _select_api_key_group_keys(
 
 
 _LLM_ROUTING_PROVIDERS = frozenset(
-    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "mimo", "kimi", "openmodel", "api_key_groups", "env_openai"}
+    {"openrouter", "groq", "glm", "openai", "gemini", "lmarena", "mimo", "kimi", "seekai", "openmodel", "api_key_groups", "env_openai"}
 )
 _LLM_TIER_NAMES: Tuple[str, ...] = ("code", "reasoning", "fast", "general", "vision")
 
@@ -4002,6 +3943,9 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "kimi_keys": [],
         "kimi_base_url": "",
         "kimi_default_model": "",
+        "seekai_keys": [],
+        "seekai_base_url": "",
+        "seekai_default_model": "",
         "openmodel_keys": [],
         "openmodel_base_url": "",
         "openmodel_default_model": "deepseek-v4-flash",
@@ -4010,6 +3954,7 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "serpapi_keys": [],
         "serpapi_default_engine": "google",
         "apify_keys": [],
+        "apify_user_id": "",
         "apify_default_actor": "compass/crawler-google-places",
         "brightdata_keys": [],
         "brightdata_zone": "",
@@ -4050,6 +3995,7 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
         "lmarena_keys",
         "mimo_keys",
         "kimi_keys",
+        "seekai_keys",
         "openmodel_keys",
         "brave_keys",
         "tavily_keys",
@@ -4088,6 +4034,12 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     kimi_mod = row.get("kimi_default_model")
     if kimi_mod is not None:
         cfg["kimi_default_model"] = str(kimi_mod).strip()
+    seek_base = row.get("seekai_base_url")
+    if seek_base is not None:
+        cfg["seekai_base_url"] = str(seek_base).strip()
+    seek_mod = row.get("seekai_default_model")
+    if seek_mod is not None:
+        cfg["seekai_default_model"] = str(seek_mod).strip()
     om_base = row.get("openmodel_base_url")
     if om_base is not None:
         cfg["openmodel_base_url"] = str(om_base).strip()
@@ -4097,6 +4049,9 @@ def load_swoop_llm_key_settings() -> Dict[str, Any]:
     serp_engine = row.get("serpapi_default_engine")
     if serp_engine is not None and str(serp_engine).strip():
         cfg["serpapi_default_engine"] = str(serp_engine).strip()
+    apify_uid = row.get("apify_user_id")
+    if apify_uid is not None:
+        cfg["apify_user_id"] = str(apify_uid).strip()
     apify_actor = row.get("apify_default_actor")
     if apify_actor is not None and str(apify_actor).strip():
         cfg["apify_default_actor"] = str(apify_actor).strip()
@@ -4128,7 +4083,7 @@ def has_any_bookmark_llm_keys() -> bool:
     cfg = load_swoop_llm_key_settings()
     if cfg.get("gemini_api_key"):
         return True
-    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys", "mimo_keys", "kimi_keys", "openmodel_keys"):
+    for k in ("glm_keys", "openai_keys", "openrouter_keys", "openrouter_qwen_keys", "groq_keys", "gemini_keys", "lmarena_keys", "mimo_keys", "kimi_keys", "seekai_keys", "openmodel_keys"):
         if cfg.get(k):
             return True
     if cfg.get("api_key_groups_keys"):
@@ -4904,6 +4859,7 @@ def openai_chat_json_object(
     lmarena_base = _lmarena_api_base(settings)
     mimo_base = _mimo_api_base(settings)
     kimi_base = _kimi_api_base(settings)
+    seekai_base = _seekai_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -4964,6 +4920,9 @@ def openai_chat_json_object(
     group_kimi_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
     )
+    group_seekai_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "seekai", tier, "", user_email_norm
+    )
     group_openmodel_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
     )
@@ -4975,6 +4934,7 @@ def openai_chat_json_object(
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
     mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
     kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    seekai_pool = _merge_unique_key_lists(list(settings.get("seekai_keys") or []), group_seekai_keys)
     openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
     chat_max_tokens = int(
         max_tokens_override if max_tokens_override is not None else (os.environ.get("BOOKMARKS_CHAT_MAX_TOKENS") or "1200")
@@ -5158,6 +5118,21 @@ def openai_chat_json_object(
                 if out:
                     return ChatJsonObjectResult(
                         data=out, tier=tier, provider_used="kimi", model_resolved=model_use
+                    )
+
+        elif prov == "seekai":
+            model_use = resolve_model("seekai", mraw)
+            for key in _iter_keys_with_health("seekai_keys", seekai_pool):
+                out = ok_tuple(
+                    _post_openai_compatible_chat_json(
+                        seekai_base, key, model_use, system_prompt, user_prompt, max_tokens=chat_max_tokens
+                    ),
+                    "seekai_keys",
+                    key,
+                )
+                if out:
+                    return ChatJsonObjectResult(
+                        data=out, tier=tier, provider_used="seekai", model_resolved=model_use
                     )
 
         elif prov == "openmodel":
@@ -5419,6 +5394,7 @@ def openai_chat_completions_generic(
     lmarena_base = _lmarena_api_base(settings)
     mimo_base = _mimo_api_base(settings)
     kimi_base = _kimi_api_base(settings)
+    seekai_base = _seekai_api_base(settings)
     or_headers = {
         "HTTP-Referer": os.environ.get("BOOKMARKS_OPENROUTER_REFERER", "https://swoop.autoro.tech"),
         "X-Title": os.environ.get("BOOKMARKS_OPENROUTER_TITLE", "Autoro Bookmarks Bro"),
@@ -5557,6 +5533,9 @@ def openai_chat_completions_generic(
     group_kimi_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "kimi", tier, "", user_email_norm
     )
+    group_seekai_keys = _select_api_key_group_keys(
+        settings.get("api_key_groups_raw"), "seekai", tier, "", user_email_norm
+    )
     group_openmodel_keys = _select_api_key_group_keys(
         settings.get("api_key_groups_raw"), "openmodel", tier, "", user_email_norm
     )
@@ -5568,6 +5547,7 @@ def openai_chat_completions_generic(
     lmarena_pool = _merge_unique_key_lists(list(settings.get("lmarena_keys") or []), group_lmarena_keys)
     mimo_pool = _merge_unique_key_lists(list(settings.get("mimo_keys") or []), group_mimo_keys)
     kimi_pool = _merge_unique_key_lists(list(settings.get("kimi_keys") or []), group_kimi_keys)
+    seekai_pool = _merge_unique_key_lists(list(settings.get("seekai_keys") or []), group_seekai_keys)
     openmodel_pool = _merge_unique_key_lists(list(settings.get("openmodel_keys") or []), group_openmodel_keys)
 
     for step in chain:
@@ -5716,6 +5696,19 @@ def openai_chat_completions_generic(
                 if got is not None:
                     return got
 
+        elif prov == "seekai":
+            model_use = resolve_model("seekai", mraw)
+            for key in _iter_keys_with_health("seekai_keys", seekai_pool):
+                got = _finish_provider_attempt(
+                    _provider_chat_call(seekai_base, key, model_use),
+                    "seekai_keys",
+                    key,
+                    "seekai",
+                    model_use,
+                )
+                if got is not None:
+                    return got
+
         elif prov == "openmodel":
             model_use = resolve_model("openmodel", mraw)
 
@@ -5726,7 +5719,14 @@ def openai_chat_completions_generic(
             om_keys = om_keys[:max_keys]
             if not om_keys:
                 continue
-            per_key = max(5, wall // len(om_keys)) if len(om_keys) > 1 else max(5, min(wall, int(_OPENMODEL_CHAT_TIMEOUT_SEC)))
+            # When JR/race passes request_timeout_sec, honor full wall for a single key.
+            # Previously min(wall, OPENMODEL_CHAT_TIMEOUT_SEC=9) capped cover letters → soft timeout.
+            if len(om_keys) > 1:
+                per_key = max(5, wall // len(om_keys))
+            elif request_timeout_sec is not None:
+                per_key = max(5, wall)
+            else:
+                per_key = max(5, min(wall, int(_OPENMODEL_CHAT_TIMEOUT_SEC)))
 
             def _openmodel_chat_attempt(api_key: str):
                 if hermes_proxy:
@@ -6451,6 +6451,7 @@ async def admin_key_health(
         "lmarena_keys": _provider_health_rows("lmarena_keys", list(settings.get("lmarena_keys") or [])),
         "mimo_keys": _provider_health_rows("mimo_keys", list(settings.get("mimo_keys") or [])),
         "kimi_keys": _provider_health_rows("kimi_keys", list(settings.get("kimi_keys") or [])),
+        "seekai_keys": _provider_health_rows("seekai_keys", list(settings.get("seekai_keys") or [])),
         "openmodel_keys": _provider_health_rows("openmodel_keys", list(settings.get("openmodel_keys") or [])),
         "brave_keys": _provider_health_rows("brave_keys", list(settings.get("brave_keys") or [])),
         "tavily_keys": _provider_health_rows("tavily_keys", list(settings.get("tavily_keys") or [])),
@@ -6611,6 +6612,95 @@ async def admin_serpapi_status(
     }
 
 
+@app.get("/api/v1/admin/apify/status")
+async def admin_apify_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """Apify account limits, usage, and active runs for scraping task management."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("apify_keys") or []) if str(k).strip()]
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "account": None,
+            "keys_count": 0,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    account_ok, account_payload, account_msg = _fetch_apify_limits_and_usage(probe_key)
+    configured_user_id = str(settings.get("apify_user_id") or "").strip()
+    if account_ok and isinstance(account_payload, dict):
+        if not account_payload.get("userId") and configured_user_id:
+            account_payload["userId"] = configured_user_id
+    return {
+        "status": "ok",
+        "configured": True,
+        "configured_user_id": configured_user_id or None,
+        "account_ok": account_ok,
+        "account": account_payload if account_ok else None,
+        "account_error": None if account_ok else account_msg,
+        "keys_count": len(keys),
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/api/v1/admin/scrapingbee/status")
+async def admin_scrapingbee_status(
+    request: Request,
+    x_api_key: str = Header("", alias="X-API-Key"),
+):
+    """ScrapingBee credit balance and usage."""
+    client_ip = get_request_ip(request)
+    cfg = load_agent_settings()
+    expected = str(cfg.get("agent_api_key") or "").strip()
+    if not cfg.get("agent_enabled"):
+        raise HTTPException(status_code=503, detail="Agent API is currently disabled")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Agent API key is not configured")
+    if (x_api_key or "").strip() != expected:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if not check_rate_limit(client_ip, int(cfg.get("agent_rate_limit") or 30)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    settings = load_swoop_llm_key_settings()
+    keys = [str(k).strip() for k in (settings.get("scrapingbee_keys") or []) if str(k).strip()]
+    if not keys:
+        return {
+            "status": "ok",
+            "configured": False,
+            "usage": None,
+            "keys_count": 0,
+            "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+    probe_key = keys[0]
+    usage_ok, usage_payload, usage_msg = _fetch_scrapingbee_usage(probe_key)
+    return {
+        "status": "ok",
+        "configured": True,
+        "usage_ok": usage_ok,
+        "usage": usage_payload if usage_ok else None,
+        "usage_error": None if usage_ok else usage_msg,
+        "keys_count": len(keys),
+        "updated_at": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+
+
 @app.get("/api/v1/openrouter/catalog")
 async def openrouter_catalog(
     request: Request,
@@ -6721,6 +6811,9 @@ def _verify_single_api_key(provider: str, key: str) -> Tuple[bool, int, str]:
     elif prov in ("kimi", "kimi_keys"):
         swoop = load_swoop_llm_key_settings()
         return _verify_kimi_key(swoop, clean_key, timeout=timeout)
+    elif prov in ("seekai", "seekai_keys"):
+        swoop = load_swoop_llm_key_settings()
+        return _verify_seekai_key(swoop, clean_key, timeout=timeout)
     elif prov in ("openmodel", "openmodel_keys"):
         swoop = load_swoop_llm_key_settings()
         return _verify_openmodel_key(swoop, clean_key, timeout=timeout)
@@ -6827,6 +6920,7 @@ async def admin_verify_keys(
         "lmarena_keys": list(settings.get("lmarena_keys") or []),
         "mimo_keys": list(settings.get("mimo_keys") or []),
         "kimi_keys": list(settings.get("kimi_keys") or []),
+        "seekai_keys": list(settings.get("seekai_keys") or []),
         "openmodel_keys": list(settings.get("openmodel_keys") or []),
         "brave_keys": list(settings.get("brave_keys") or []),
         "tavily_keys": list(settings.get("tavily_keys") or []),
@@ -6948,6 +7042,9 @@ async def admin_environment_report(
         "openrouter_qwen_keys": len(list(swoop_settings.get("openrouter_qwen_keys") or [])),
         "groq_keys": len(list(swoop_settings.get("groq_keys") or [])),
         "gemini_slots": _count_gemini_slots(swoop_settings),
+        "kimi_keys": len(list(swoop_settings.get("kimi_keys") or [])),
+        "seekai_keys": len(list(swoop_settings.get("seekai_keys") or [])),
+        "openmodel_keys": len(list(swoop_settings.get("openmodel_keys") or [])),
         "brave_keys": len(list(swoop_settings.get("brave_keys") or [])),
         "tavily_keys": len(list(swoop_settings.get("tavily_keys") or [])),
         "serpapi_keys": len(list(swoop_settings.get("serpapi_keys") or [])),

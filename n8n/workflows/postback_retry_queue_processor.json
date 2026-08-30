@@ -1,0 +1,544 @@
+{
+  "name": "Postback Retry Queue Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "id": "cron_retry",
+      "name": "Cron (Every Minute)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        180,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/postback_retry_queue?status=eq.pending&order=created_at.asc&limit=20",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_get_pending_queue",
+      "name": "Get Pending Retry Queue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  if (Array.isArray(j)) {\n    for (const r of j) rows.push(r);\n  } else {\n    rows.push(j);\n  }\n}\n\nreturn rows\n  .filter((r) => r && typeof r === 'object' && r.id)\n  .map((r) => ({\n    ...r,\n    retry_id: r.id,\n  }));"
+      },
+      "id": "code_normalize_rows",
+      "name": "Normalize Queue Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        670,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/postback_retry_queue?id=eq.{{$json.retry_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"status\":\"processing\"}",
+        "options": {}
+      },
+      "id": "http_mark_processing",
+      "name": "Mark Queue Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        920,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://swoop.autoro.tech/api/internal/click/{{$json.click_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Basic ' + Buffer.from(($env.INTERNAL_API_USER || 'n8n') + ':' + $env.INTERNAL_API_PASSWORD).toString('base64')}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_get_click_context",
+      "name": "Get Click Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge_queue_click",
+      "name": "Merge Queue + Click",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1390,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ts = Math.floor(Date.now() / 1000);\nconst fbc = $json.fbclid ? `fb.1.${ts}.${$json.fbclid}` : undefined;\n\nreturn [{\n  ...$json,\n  event_name: $json.event_name || 'Lead',\n  fb_event_id: $json.fb_event_id || `${$json.click_id}-${Date.now()}`,\n  event_time: ts,\n  fbc,\n}];"
+      },
+      "id": "code_prepare_payload",
+      "name": "Prepare Meta Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json.fb_pixel_id}}/events",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_token",
+              "value": "={{$json.fb_capi_token}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"data\": [\n    {\n      \"event_name\": $json.event_name,\n      \"event_time\": $json.event_time,\n      \"event_id\": $json.fb_event_id,\n      \"action_source\": \"system_generated\",\n      \"user_data\": {\n        \"client_ip_address\": $json.ip_address,\n        \"client_user_agent\": $json.user_agent,\n        \"fbc\": $json.fbc,\n        \"fbclid\": $json.fbclid\n      },\n      \"custom_data\": {\n        \"click_id\": $json.click_id,\n        \"utm_source\": $json.utm_source,\n        \"utm_medium\": $json.utm_medium,\n        \"utm_campaign\": $json.utm_campaign\n      }\n    }\n  ]\n}",
+        "options": {
+          "ignoreResponseCode": true
+        }
+      },
+      "id": "http_send_meta",
+      "name": "Send Meta CAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1850,
+        420
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge_payload_result",
+      "name": "Merge Payload + Meta Result",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2080,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const eventsReceived = Number($json.events_received || 0);\nconst success = eventsReceived > 0;\nconst errorMessage = success\n  ? null\n  : String(\n      ($json.error && ($json.error.message || JSON.stringify($json.error))) ||\n      $json.message ||\n      JSON.stringify($json).slice(0, 500)\n    ).slice(0, 500);\n\nreturn [{\n  ...$json,\n  status: success ? 'success' : 'failed',\n  postback_error_message: errorMessage,\n}];"
+      },
+      "id": "code_mark_result",
+      "name": "Mark Retry Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2300,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if_retry_success",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_success",
+      "name": "Retry Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2520,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://swoop.autoro.tech/api/internal/conversion",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Basic ' + Buffer.from(($env.INTERNAL_API_USER || 'n8n') + ':' + $env.INTERNAL_API_PASSWORD).toString('base64')}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"click_id\": $json.click_id,\n  \"event_name\": $json.event_name,\n  \"status\": \"success\",\n  \"fb_event_id\": $json.fb_event_id\n}",
+        "options": {}
+      },
+      "id": "http_save_success_conversion",
+      "name": "Save Success Conversion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2750,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/postback_retry_queue?id=eq.{{$json.retry_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"status\":\"success\",\"error_message\":null,\"processed_at\":\"{{$now.toISO()}}\"}",
+        "options": {}
+      },
+      "id": "http_mark_queue_success",
+      "name": "Mark Queue Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://swoop.autoro.tech/api/internal/conversion",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Basic ' + Buffer.from(($env.INTERNAL_API_USER || 'n8n') + ':' + $env.INTERNAL_API_PASSWORD).toString('base64')}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"click_id\": $json.click_id,\n  \"event_name\": $json.event_name,\n  \"status\": \"failed\",\n  \"fb_event_id\": $json.fb_event_id\n}",
+        "options": {}
+      },
+      "id": "http_save_failed_conversion",
+      "name": "Save Failed Conversion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2750,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.SUPABASE_URL}}/rest/v1/postback_retry_queue?id=eq.{{$json.retry_id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"status\":\"failed\",\"error_message\":\"{{$json.postback_error_message}}\",\"processed_at\":\"{{$now.toISO()}}\"}",
+        "options": {}
+      },
+      "id": "http_mark_queue_failed",
+      "name": "Mark Queue Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2980,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Cron (Every Minute)": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Retry Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Retry Queue": {
+      "main": [
+        [
+          {
+            "node": "Normalize Queue Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Queue Rows": {
+      "main": [
+        [
+          {
+            "node": "Mark Queue Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Queue Processing": {
+      "main": [
+        [
+          {
+            "node": "Merge Queue + Click",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Click Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Click Context": {
+      "main": [
+        [
+          {
+            "node": "Merge Queue + Click",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Queue + Click": {
+      "main": [
+        [
+          {
+            "node": "Prepare Meta Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Meta Payload": {
+      "main": [
+        [
+          {
+            "node": "Merge Payload + Meta Result",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Meta CAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Meta CAPI": {
+      "main": [
+        [
+          {
+            "node": "Merge Payload + Meta Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Payload + Meta Result": {
+      "main": [
+        [
+          {
+            "node": "Mark Retry Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Retry Result": {
+      "main": [
+        [
+          {
+            "node": "Retry Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Success?": {
+      "main": [
+        [
+          {
+            "node": "Mark Queue Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Queue Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Queue Success": {
+      "main": [
+        [
+          {
+            "node": "Save Success Conversion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Queue Failed": {
+      "main": [
+        [
+          {
+            "node": "Save Failed Conversion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "postback-retry-queue-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

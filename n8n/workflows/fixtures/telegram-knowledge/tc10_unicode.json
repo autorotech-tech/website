@@ -1,0 +1,10 @@
+{
+  "update_id": 100010,
+  "message": {
+    "message_id": 10,
+    "from": { "id": 90010, "is_bot": false, "username": "qa_unicode" },
+    "chat": { "id": 90010, "type": "private" },
+    "date": 1777777785,
+    "text": "TC-10: кириллица ✅ эмодзи и смесь Latin — https://example.com/tc10 测试"
+  }
+}

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { Copy, Save, Trash2, ShieldAlert, Search, Users, Upload, FileText, Link as LinkIcon, ChevronDown, ChevronRight } from 'lucide-react'
+import { Copy, Save, Trash2, ShieldAlert, Search, Users, Upload, FileText, Link as LinkIcon, ChevronDown, ChevronRight, Send } from 'lucide-react'
+import {
+  CHAT_AGENT_DEFAULT_SALES_PROMPT,
+  CHAT_AGENT_DEFAULT_SUPPORT_PROMPT,
+} from '../lib/chatAgentDefaultPrompts'
 
 type Profile = { id: string; email: string; role: string }
 
@@ -14,6 +18,7 @@ type ChatAgent = {
   n8n_webhook_url: string | null
   telegram_bot_token: string | null
   whatsapp_phone_id: string | null
+  bot_role: string | null
   created_at: string
 }
 
@@ -60,11 +65,16 @@ export function AdminChatAgents() {
 
   // domainInput removed (admin UI does not edit per-bot domains)
   const [saving, setSaving] = useState(false)
+  const [telegramBusy, setTelegramBusy] = useState(false)
+  const [telegramMsg, setTelegramMsg] = useState<string | null>(null)
   const [baseKb, setBaseKb] = useState<BaseKbItem[]>([])
   const [baseKbUploading, setBaseKbUploading] = useState(false)
   const [baseKbUrl, setBaseKbUrl] = useState('')
   const [baseKbRole, setBaseKbRole] = useState<'support' | 'sales'>('support')
   const [botDetailsOpen, setBotDetailsOpen] = useState(false)
+  const [salesPrompt, setSalesPrompt] = useState('')
+  const [supportPrompt, setSupportPrompt] = useState('')
+  const [promptsSaving, setPromptsSaving] = useState(false)
 
   const ownerEmailById = useMemo(() => {
     const m = new Map<string, string>()
@@ -201,6 +211,14 @@ export function AdminChatAgents() {
     if (kbErr) console.error(kbErr)
     setBaseKb((kbData || []) as any)
 
+    const { data: promptRows, error: promptErr } = await supabase
+      .from('chat_agent_role_prompts')
+      .select('role,system_prompt')
+    if (promptErr) console.error(promptErr)
+    const promptList = (promptRows || []) as Array<{ role?: string; system_prompt?: string }>
+    setSalesPrompt(String(promptList.find((r) => r.role === 'sales')?.system_prompt || ''))
+    setSupportPrompt(String(promptList.find((r) => r.role === 'support')?.system_prompt || ''))
+
     setLoading(false)
   }
 
@@ -208,6 +226,26 @@ export function AdminChatAgents() {
     fetchAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const saveRolePrompts = async () => {
+    setPromptsSaving(true)
+    try {
+      const { data: auth } = await supabase.auth.getUser()
+      const uid = auth?.user?.id || null
+      const rows = [
+        { role: 'sales', system_prompt: salesPrompt, updated_by: uid, updated_at: new Date().toISOString() },
+        { role: 'support', system_prompt: supportPrompt, updated_by: uid, updated_at: new Date().toISOString() },
+      ]
+      const { error } = await supabase.from('chat_agent_role_prompts').upsert(rows, { onConflict: 'role' })
+      if (error) throw error
+      alert('Промпты сохранены. Tenant-боты подхватят их в течение ~30 секунд.')
+    } catch (e: any) {
+      console.error(e)
+      alert(`Не удалось сохранить промпты: ${e.message || 'unknown error'}`)
+    } finally {
+      setPromptsSaving(false)
+    }
+  }
 
   const saveSelected = async () => {
     if (!selected) return
@@ -223,6 +261,7 @@ export function AdminChatAgents() {
           n8n_webhook_url: selected.n8n_webhook_url,
           telegram_bot_token: selected.telegram_bot_token,
           whatsapp_phone_id: selected.whatsapp_phone_id,
+          bot_role: selected.bot_role === 'sales' ? 'sales' : 'support',
         })
         .eq('id', selected.id)
       if (error) throw error
@@ -232,6 +271,36 @@ export function AdminChatAgents() {
       alert(`Ошибка сохранения: ${e.message || 'unknown error'}`)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const connectTelegram = async () => {
+    if (!selected) return
+    const token = (selected.telegram_bot_token || '').trim()
+    if (!token) return alert('Сначала вставьте Telegram Bot Token и сохраните')
+    setTelegramBusy(true)
+    setTelegramMsg(null)
+    try {
+      const { error } = await supabase
+        .from('chat_agents')
+        .update({ telegram_bot_token: token })
+        .eq('id', selected.id)
+      if (error) throw error
+      const res = await fetch(
+        `https://chat.autoro.tech/v1/chat-agent/telegram/setup?bot_id=${encodeURIComponent(selected.id)}`,
+        { method: 'POST' },
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.ok) {
+        setTelegramMsg(data?.error || data?.description || `HTTP ${res.status}`)
+        return
+      }
+      const uname = data.bot_username ? `@${data.bot_username}` : 'бот'
+      setTelegramMsg(`Подключено: ${uname}\n${data.webhook_url}`)
+    } catch (e: any) {
+      setTelegramMsg(e.message || 'не удалось подключить Telegram')
+    } finally {
+      setTelegramBusy(false)
     }
   }
 
@@ -355,6 +424,58 @@ export function AdminChatAgents() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Admin: Chat Agent</h1>
         <p className="text-sm text-gray-500 mt-1">Админ‑панель клиентов: email → список ботов → домены → статус → snippet. Поиск по email/домену/боту.</p>
+      </div>
+
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-lg font-semibold text-gray-900">Промпты по роли</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Общие для всех tenant-ботов. Пустое поле = дефолт роли. sales - консультант, 2-3 варианта из RAG, Soft CTA; support - ответы по базе без продаж. Каждый бот читает только свою RAG.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSalesPrompt(CHAT_AGENT_DEFAULT_SALES_PROMPT)
+                setSupportPrompt(CHAT_AGENT_DEFAULT_SUPPORT_PROMPT)
+              }}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Подставить дефолт роли
+            </button>
+            <button
+              type="button"
+              onClick={saveRolePrompts}
+              disabled={promptsSaving}
+              className="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-60 text-sm flex items-center gap-2"
+            >
+              <Save size={16} />
+              {promptsSaving ? 'Saving…' : 'Save prompts'}
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="block">
+            <div className="text-xs font-medium text-gray-700 mb-1">sales</div>
+            <textarea
+              className="w-full min-h-[220px] border rounded-md px-3 py-2 text-xs font-mono"
+              value={salesPrompt}
+              onChange={(e) => setSalesPrompt(e.target.value)}
+              placeholder="Пусто = дефолт консультанта (sales)"
+            />
+          </label>
+          <label className="block">
+            <div className="text-xs font-medium text-gray-700 mb-1">support</div>
+            <textarea
+              className="w-full min-h-[220px] border rounded-md px-3 py-2 text-xs font-mono"
+              value={supportPrompt}
+              onChange={(e) => setSupportPrompt(e.target.value)}
+              placeholder="Пусто = дефолт поддержки (без воронки)"
+            />
+          </label>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -621,6 +742,15 @@ export function AdminChatAgents() {
                           <option value="ru">ru</option>
                         </select>
 
+                        <select
+                          className="border rounded-md px-3 py-2 text-sm md:col-span-2"
+                          value={selected.bot_role || 'support'}
+                          onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, bot_role: e.target.value } : a))}
+                        >
+                          <option value="support">support — ответы по базе знаний, без воронки</option>
+                          <option value="sales">sales — консультант, ведёт к заявке / покупке</option>
+                        </select>
+
                         <input
                           className="border rounded-md px-3 py-2 text-sm md:col-span-2"
                           placeholder="n8n Webhook Production URL"
@@ -633,6 +763,15 @@ export function AdminChatAgents() {
                           value={selected.telegram_bot_token || ''}
                           onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, telegram_bot_token: e.target.value } : a))}
                         />
+                        <button
+                          type="button"
+                          onClick={connectTelegram}
+                          disabled={telegramBusy || !(selected.telegram_bot_token || '').trim()}
+                          className="border rounded-md px-3 py-2 text-sm bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 flex items-center gap-2 justify-center"
+                        >
+                          <Send size={16} />
+                          {telegramBusy ? 'Connecting…' : 'Connect Telegram'}
+                        </button>
                         <input
                           className="border rounded-md px-3 py-2 text-sm"
                           placeholder="WhatsApp Phone ID (Optional)"
@@ -640,6 +779,9 @@ export function AdminChatAgents() {
                           onChange={(e) => setAgents(prev => prev.map(a => a.id === selected.id ? { ...a, whatsapp_phone_id: e.target.value } : a))}
                         />
                       </div>
+                      {telegramMsg && (
+                        <pre className="text-xs font-mono bg-gray-50 border rounded-md p-2 overflow-x-auto whitespace-pre-wrap">{telegramMsg}</pre>
+                      )}
 
                       <div className="bg-gray-50 border rounded-lg p-3">
                         <div className="flex items-center justify-between gap-3 flex-wrap">

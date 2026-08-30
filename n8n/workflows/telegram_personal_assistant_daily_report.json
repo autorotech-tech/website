@@ -1,0 +1,388 @@
+{
+  "id": "AsstDailyRptA28x6Q",
+  "name": "Telegram Personal Assistant Daily Report",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        }
+      },
+      "id": "cron_daily",
+      "name": "Cron Daily 09:00",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://swoop.autoro.tech/supabase/rest/v1/service_settings?id=eq.1&select=openrouter_keys,openrouter_default_model",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_get_settings",
+      "name": "Get Swoop Settings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://swoop.autoro.tech/supabase/rest/v1/personal_assistant_project_snapshots?select=name,stage,progress_percent,next_step,updated_at&order=updated_at.desc&limit=10",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_get_snapshots",
+      "name": "Get Project Snapshots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://swoop.autoro.tech/supabase/rest/v1/personal_assistant_memory?select=id,created_at&source=eq.telegram&order=created_at.desc&limit=200",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{$env.SUPABASE_SERVICE_ROLE_KEY}}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http_get_memory",
+      "name": "Get Memory Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://swoop.autoro.tech/api/v1/health",
+        "options": {
+          "ignoreResponseCode": true
+        }
+      },
+      "id": "http_health_swoop",
+      "name": "Health Swoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://autoro.tech",
+        "options": {
+          "ignoreResponseCode": true
+        }
+      },
+      "id": "http_health_autoro",
+      "name": "Health Autoro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge_settings_snapshots",
+      "name": "Merge Settings + Snapshots",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        930,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge_plus_memory",
+      "name": "Merge + Memory",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1160,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge_plus_swoop_health",
+      "name": "Merge + Swoop Health",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1390,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "merge_all_data",
+      "name": "Merge + Autoro Health",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1620,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node: Build Daily Structured Report — fetch shim для task runner\n\nasync function fetchShim(url, init = {}) {\n  const method = (init.method || 'GET').toUpperCase();\n  const headers = { ...(init.headers || {}) };\n  let body = init.body;\n  if (typeof body === 'string') {\n    try {\n      body = JSON.parse(body);\n    } catch {\n      /* строка как есть */\n    }\n  }\n  const opts = {\n    method,\n    url,\n    headers,\n    json: true,\n    returnFullResponse: true,\n  };\n  if (body !== undefined && method !== 'GET' && method !== 'HEAD') {\n    opts.body = body;\n  }\n  try {\n    const full = await this.helpers.httpRequest(opts);\n    const statusCode = full.statusCode ?? full.status ?? 200;\n    return buildFetchLikeResponse(statusCode, full.body);\n  } catch (err) {\n    const statusCode =\n      err.statusCode ??\n      err.response?.status ??\n      err.status ??\n      err.cause?.statusCode ??\n      0;\n    const raw =\n      err.response?.body ??\n      err.error ??\n      err.message ??\n      '';\n    if (raw && typeof raw === 'object') {\n      return buildFetchLikeResponse(statusCode || 500, raw);\n    }\n    return buildFetchLikeResponse(statusCode || 500, String(raw));\n  }\n}\n\nfunction buildFetchLikeResponse(statusCode, rawBody) {\n  const ok = statusCode >= 200 && statusCode < 300;\n  let parsed = rawBody;\n  if (typeof rawBody === 'string') {\n    try {\n      parsed = JSON.parse(rawBody);\n    } catch {\n      parsed = rawBody;\n    }\n  }\n  return {\n    ok,\n    status: statusCode,\n    async json() {\n      return parsed;\n    },\n    async text() {\n      return typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody ?? '');\n    },\n  };\n}\n\nconst fetch = fetchShim.bind(this);\n\nconst data = $json;\nconst settingsRows = Array.isArray(data['Get Swoop Settings']) ? data['Get Swoop Settings'] : (Array.isArray(data) ? data : []);\nconst snapshots = Array.isArray(data['Get Project Snapshots']) ? data['Get Project Snapshots'] : [];\nconst memory = Array.isArray(data['Get Memory Records']) ? data['Get Memory Records'] : [];\nconst healthSwoop = data['Health Swoop'] || {};\nconst healthAutoro = data['Health Autoro'] || {};\n\nconst settings = Array.isArray(settingsRows) && settingsRows.length ? settingsRows[0] : (Array.isArray(data) && data[0] ? data[0] : {});\nconst keysRaw = settings?.openrouter_keys;\nconst keys = Array.isArray(keysRaw)\n  ? keysRaw.map((x) => String(x || '').trim()).filter(Boolean)\n  : [];\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.keyRotation) staticData.keyRotation = {};\nconst keyIndex = keys.length ? (Number(staticData.keyRotation.openrouter || 0) % keys.length) : -1;\nconst key = keyIndex >= 0 ? keys[keyIndex] : null;\n\nconst today = new Date();\nconst dayAgo = new Date(today.getTime() - 24 * 60 * 60 * 1000);\nconst memoryLast24h = memory.filter((x) => new Date(x.created_at).getTime() >= dayAgo.getTime()).length;\n\nconst baseSteps = [];\nfor (const p of snapshots.slice(0, 5)) {\n  if (p.next_step) baseSteps.push(`${p.name}: ${p.next_step}`);\n}\nif (!baseSteps.length) {\n  baseSteps.push('Обновить статусы проектов в snapshot-таблице.');\n  baseSteps.push('Проверить новые сообщения в Telegram-памяти.');\n  baseSteps.push('Сверить риски и блокеры по активным проектам.');\n}\n\nlet llmSteps = [];\nif (key) {\n  const model = settings?.openrouter_default_model || 'openai/gpt-4o-mini';\n  const prompt = [\n    'Сформируй 3 коротких следующих шага для операционного ассистента.',\n    'Контекст проектов:',\n    ...snapshots.slice(0, 8).map((p) => `- ${p.name}: ${p.progress_percent}% | ${p.stage} | ${p.next_step || 'n/a'}`),\n    `Сообщений в памяти за 24ч: ${memoryLast24h}`\n  ].join('\\n');\n\n  try {\n    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {\n      method: 'POST',\n      headers: {\n        Authorization: `Bearer ${key}`,\n        'Content-Type': 'application/json'\n      },\n      body: JSON.stringify({\n        model,\n        temperature: 0.2,\n        messages: [\n          {\n            role: 'system',\n            content: 'Верни только 3 пункта списка, каждый с новой строки, без заголовков.'\n          },\n          {\n            role: 'user',\n            content: prompt\n          }\n        ]\n      })\n    });\n\n    if (resp.ok) {\n      const body = await resp.json();\n      const content = body?.choices?.[0]?.message?.content || '';\n      llmSteps = content\n        .split('\\n')\n        .map((x) => x.replace(/^[\\-\\d\\.\\)\\s]+/, '').trim())\n        .filter(Boolean)\n        .slice(0, 3);\n    } else {\n      const txt = await resp.text();\n      if (resp.status === 429 || resp.status === 402 || /rate|quota|limit/i.test(txt)) {\n        if (keys.length) staticData.keyRotation.openrouter = (keyIndex + 1) % keys.length;\n      }\n    }\n  } catch (e) {\n    // silent fallback\n  }\n}\n\nconst nextSteps = llmSteps.length ? llmSteps : baseSteps.slice(0, 3);\nconst dateStr = today.toISOString().slice(0, 10);\nconst swCode = healthSwoop.statusCode || healthSwoop.code || 'n/a';\nconst auCode = healthAutoro.statusCode || healthAutoro.code || 'n/a';\n\nconst lines = [\n  `🤖 *Autoro Personal Assistant* \\\\(${dateStr}\\\\)`,\n  '',\n  '*1\\\\. Общие показатели состояния сервера*',\n  `• swoop status: \\\\`${swCode}\\\\``,\n  `• autoro status: \\\\`${auCode}\\\\``,\n  `• memory items \\\\(24h\\\\): \\\\`${memoryLast24h}\\\\``,\n  '',\n  '*2\\\\. Процент/этап проектов \\\\(Swoop/Obsidian\\\\)*'\n];\n\nif (snapshots.length) {\n  for (const p of snapshots.slice(0, 8)) {\n    lines.push(`• \\\\`${String(p.name).replace(/`/g, '')}\\\\`: \\\\`${p.progress_percent}%\\\\` \\\\| stage: \\\\`${String(p.stage).replace(/`/g, '')}\\\\``);\n  }\n} else {\n  lines.push('• \\\\`n/a\\\\` нет данных в personal_assistant_project_snapshots');\n}\n\nlines.push('', '*3\\\\. Краткий план дальнейших шагов*');\nfor (let i = 0; i < nextSteps.length; i++) {\n  lines.push(`${i + 1}\\\\) ${nextSteps[i].replace(/([_\\*\\[\\]\\(\\)~`>#+\\-=|{}\\.\\!])/g, '\\\\\\\\$1')}`);\n}\n\nreturn [{\n  report_text: lines.join('\\n'),\n  chat_id: String(settings?.telegram_report_chat_id || settings?.telegram_chat_id || '51564804'),\n  key_slot: keyIndex + 1,\n  key_total: keys.length\n}];\n"
+      },
+      "id": "code_build_daily_report",
+      "name": "Build Daily Structured Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1860,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + ($env.TELEGRAM_BOT_TOKEN || '') + '/sendMessage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": $json.chat_id,\n  \"text\": $json.report_text,\n  \"parse_mode\": \"MarkdownV2\",\n  \"disable_web_page_preview\": true\n}",
+        "options": {}
+      },
+      "id": "http_send_daily_report",
+      "name": "Send Daily Telegram Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2100,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Cron Daily 09:00": {
+      "main": [
+        [
+          {
+            "node": "Get Swoop Settings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Project Snapshots",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Memory Records",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Health Swoop",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Health Autoro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Swoop Settings": {
+      "main": [
+        [
+          {
+            "node": "Merge Settings + Snapshots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Snapshots": {
+      "main": [
+        [
+          {
+            "node": "Merge Settings + Snapshots",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Settings + Snapshots": {
+      "main": [
+        [
+          {
+            "node": "Merge + Memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Memory Records": {
+      "main": [
+        [
+          {
+            "node": "Merge + Memory",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge + Memory": {
+      "main": [
+        [
+          {
+            "node": "Merge + Swoop Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Swoop": {
+      "main": [
+        [
+          {
+            "node": "Merge + Swoop Health",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge + Swoop Health": {
+      "main": [
+        [
+          {
+            "node": "Merge + Autoro Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Health Autoro": {
+      "main": [
+        [
+          {
+            "node": "Merge + Autoro Health",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge + Autoro Health": {
+      "main": [
+        [
+          {
+            "node": "Build Daily Structured Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily Structured Report": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "telegram-personal-assistant-daily-report-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

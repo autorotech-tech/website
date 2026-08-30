@@ -8,7 +8,7 @@ import job_responder_crag as crag
 
 def test_should_attempt_mini_profile_retry_on_empty_not_only_timeout():
     assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=10.0) is True
-    assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=7.0) is True
+    assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=8.0) is True
     assert budget.should_attempt_mini_profile_retry(has_text=False, remaining_sec=4.0) is False
     assert budget.should_attempt_mini_profile_retry(has_text=True, remaining_sec=20.0) is False
 
@@ -26,11 +26,10 @@ def test_choose_profile_cap_early_compress_for_many_sources():
 
 
 def test_cascade_max_providers_rotates_with_budget():
-    """Fail-fast slices allow 2–3 cascade steps when soft budget remains."""
+    """Race size: 3 when rem≥14, 2 when rem≥9, else 1. Retry always 1."""
     assert (
         budget.cascade_max_providers(profile_compressed=True, remaining_sec=28.0, is_retry=False) == 3
     )
-    # After ~4–5s pre-LLM work rem≈19 must still allow 3 steps (gemini after haiku hang).
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=19.0, is_retry=False) == 3
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=14.0, is_retry=False) == 3
     assert budget.cascade_max_providers(profile_compressed=False, remaining_sec=10.0, is_retry=False) == 2
@@ -54,6 +53,16 @@ def test_provider_timeout_primary_gets_fail_fast_slice():
     assert retry <= 11.5
 
 
+def test_race_timeout_shared_wall():
+    race = budget.race_timeout_for(remaining_sec=25.0, is_retry=False)
+    assert race == budget.LLM_RACE_TIMEOUT_SEC
+    assert race <= budget.LLM_PROVIDER_CAP_SEC
+    tight = budget.race_timeout_for(remaining_sec=10.0, is_retry=False)
+    assert tight <= 9.5
+    retry = budget.race_timeout_for(remaining_sec=20.0, is_retry=True)
+    assert retry <= budget.LLM_MINI_RETRY_TIMEOUT_SEC
+
+
 def test_truncation_retry_min_budget():
     assert budget.COVER_TRUNCATION_RETRY_MIN_SEC >= 10.0
 
@@ -64,16 +73,19 @@ def test_summarize_provider_errors_tail():
     assert s == "e9; e10; e11"
 
 
-def test_generate_budget_tighter_than_cf_soft():
-    assert budget.GENERATE_BUDGET_SEC <= 28.0
-    assert budget.LLM_PRIMARY_TIMEOUT_SEC <= 10.0
-    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
-    assert budget.GENERATE_HARD_WALL_SEC <= 30.0
+def test_generate_budget_race_friendly():
+    """Parallel race needs ~16s shared wall; soft budget must cover race + pre-LLM."""
+    assert budget.GENERATE_BUDGET_SEC >= 28.0
+    assert budget.GENERATE_BUDGET_SEC <= 35.0
+    assert budget.LLM_RACE_TIMEOUT_SEC >= 14.0
+    assert budget.LLM_RACE_TIMEOUT_SEC <= budget.LLM_PROVIDER_CAP_SEC
+    assert budget.LLM_PRIMARY_TIMEOUT_SEC >= 12.0
     assert budget.GENERATE_HARD_WALL_SEC > budget.GENERATE_BUDGET_SEC
+    assert budget.GENERATE_HARD_WALL_SEC <= 40.0
     assert budget.JR_OPENMODEL_FAST_MODEL
-    # HTTP openmodel must die with the soft slice (no 45s zombies → 502).
-    assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
-    assert budget.LLM_PRIMARY_TIMEOUT_SEC + budget.LLM_FALLBACK_TIMEOUT_SEC <= 16.0
+    assert budget.JR_OPENROUTER_FAST_MODEL
+    # Race wall fits in soft budget with room for pre-LLM (~4–6s).
+    assert budget.LLM_RACE_TIMEOUT_SEC + 6.0 <= budget.GENERATE_BUDGET_SEC
 
 
 def test_crag_refine_skipped_when_compressed_or_low_budget():

@@ -68,6 +68,7 @@
 | `BOOKMARKS_LMARENA_API_BASE` | `http://127.0.0.1:8000/api/v1` | LMArenaBridge OpenAI-compatible base |
 | `BOOKMARKS_MIMO_API_BASE` | `https://api.xiaomimimo.com/v1` | [Xiaomi MiMo API](https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call); Token Plan: `https://token-plan-cn.xiaomimimo.com/v1` |
 | `BOOKMARKS_KIMI_API_BASE` | `https://api.moonshot.ai/v1` | [Kimi Open Platform](https://platform.kimi.ai/docs/api/overview) |
+| `BOOKMARKS_SEEKAI_API_BASE` | `https://api.seekapi.ai/v1` | [SeekAI API](https://seekai.cc / https://seekapi.ai) |
 | `BOOKMARKS_GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | REST Gemini |
 | `BOOKMARKS_GEMINI_CHAT_MODEL` | `gemini-2.5-flash` | `generateContent` |
 

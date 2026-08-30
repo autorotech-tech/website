@@ -106,4 +106,5 @@ npm run ai-engineering-coach:install  # autorotech-tech/AI-Engineering-Coach →
 - `GEMINI.md` — краткие настройки для Google Antigravity.
 - `scripts/link-antigravity-skills.sh` — симлинки Cursor skills → Antigravity.
 - **Keep It For Me (keept.me):** handoff для Antigravity — `docs/bookmarks-bro/ANTIGRAVITY-HANDOFF.md`; синк в AuthRAG — `npm run keept:sync-authrag:apply`; карта кода — `npm run understand-anything:install` → `/understand src/bookmarksBro agent-api extensions/bookmarks-bro`.
+- **Autoro-API (agent-api):** каталог ручек, auth и ротация моделей — `docs/autoro-api.md`.
 

@@ -1,0 +1,156 @@
+Портфолио
+Vlad Xolodin · Август 2026
+Email: autoro.tech@gmail.com
+Telegram: @autoro_tech - https://t.me/autoro_tech
+Канал в Telegram: @autoro_tech_ai - https://t.me/autoro_tech_ai Сайт: https://autoro.tech
+Резюме онлайн: https://autoro.tech/resume/
+LinkedIn: https://www.linkedin.com/in/vlad-autoro-tech/
+YouTube: https://www.youtube.com/@iq_boosted
+Кейсы со скриншотами: AI-платформа, SEO/GEO, контекст, crowd marketing, мульти-аккаунты, e-commerce, B2B- лидогенерация.
+ 
+01 Autoro / Swoop - AI-платформа
+Модульная B2B-платформа для маркетинга: RAG-чат-агенты, исследование, скрапинг, voice AI. Собрана через vibecoding (Cursor, Antigravity), бэкенд на FastAPI. Стек: React 18, TypeScript, Vite, Tailwind, FastAPI, PostgreSQL/Supabase, pgvector, Docker, n8n, OpenRouter/Gemini/GLM, MCP.
+Модули в проде
+Chat Agent (RAG) мультиарендные боты с базой знаний, загрузка файлов и URL, pgvector, виджет на сайт, Telegram/WhatsApp, handoff оператору. Работает на autoro.tech, compod.us, pquoc.com
+AUTORO-API OpenAI-совместимый LLM-gateway: автоподбор модели, tier-routing, ротация ключей round-robin, failover между провайдерами
+Deep Search параллельный поиск по SearXNG, Brave, Wikipedia, ArXiv и новостям; 25+ страниц на запрос, переранжирование, отчет со ссылками
+Marketing Audit загрузка выгрузок и каталогов, векторный RAG, отчет от LLM (Gemini, GLM), очередь задач
+Web Scraping Scrapling и GoLogin Cloud Browser, режимы fetcher/stealth/dynamic/gologin, ротация прокси, извлечение через Gemini
+      Expired Domains Hunter
+score, business score (Majestic)
+AI Blog Engine (beta)
+Dive, EN/RU/ES/IT/FR/VI/KZ
+Merchant Inspector
+поиск освободившихся доменов по ключам и тематике: TF/BL, spam генерация и публикация статей: SEO-мета, AI-изображения, аудио Deep плагин WooCommerce: Product JSON-LD, Merchant schema, XML
+  sitemap, Google Merchant feed (full и delta), AI-контент, алерты по здоровью фида. Прод: compod.us
+ Keept (keept.me)
+Teams, Telegram, WhatsApp
+FinDefender
+знаний, HITL-эскалация
+pquoc.com
+realtime voice AI: TTS Google Journey и ElevenLabs, SIP/VoIP, Zoom, Telegram-бот квалификации лидов по банкротству: юридическая база travel-платформа: 785 отелей со взвешенным рейтингом из Google,
+  Booking, Trip.com, Tripadvisor, Klook; карта, фильтры, 8 языков
+Подробные карточки модулей - в файле Autoro-Swoop-Portfolio-EN.pdf. Демо: https://swoop.autoro.tech
+ 
+02 SEO / GEO аудит: Askona и Lamoda
+Тестовое задание, июль 2026. Две категорийные страницы, 17 ключевых запросов, регион Москва.
+Метод
+Видимость в Google, Яндексе и DuckDuckGo (две языковые настройки). Bing в этот отчет не входил Проверка ответов 15 нейросетей (Claude, GPT, Gemini, DeepSeek, Kimi) по запросам "где купить..."
+Скорость: PageSpeed Insights (поле CrUX за 28 дней + лаборатория) и независимая перепроверка через PR-CY
+Agentic Browsing - готовность сайта к обходу AI-агентами
+Что нашел
+Askona: три близкие категории конкурируют за один спрос ("каннибализация"). Целевая страница "/deshevye-matrasy/" слабо видна в Google, в Яндексе - точечно на брендовых и гео-запросах
+Lamoda: целевая категория стабильно в топ-5 Google и Яндекса; в ответах нейросетей бренд и ссылка на категорию - в 100% случаев
+Lamoda: в заголовке "штаны", люди чаще ищут "спортивные брюки" (508 запросов в месяц против 147)
+Core Web Vitals по полю не пройдены у обоих на mobile: Askona CLS 0,13 и INP 221 ms, Lamoda INP 280 ms
+Блок коротких видео есть почти по всем запросам, но ведет на ролики блогеров и соцсети, а не на страницы категорий
+Agentic Browsing: Askona 1 из 3 проверок, Lamoda 1 из 2
+Рекомендации и цели на 60-90 дней
+Askona: одна каноническая страница категории, 301 с дублей, текст 800+ слов, FAQ с разметкой Schema.org, перелинковка. Цель - +3-5 запросов в топ-10, органика на категорию +15-25%
+Lamoda: Title и H1 под "брюки", meta description 150-160 символов, краткий гид 70-100 слов, сезонный FAQ. Цель - удержать топ-5, доля ответов нейросетей со ссылкой не ниже 80%
+Обоим: FAQPage, ItemList/Product, BreadcrumbList, IndexNow после обновлений, мониторинг упоминаний раз в 2-4 недели
+Полный отчет: SEO-GEO-audit-Askona-Lamoda-2026-07.pdf
+ 
+03 Golden House - SEO и аудит Яндекс.Директ
+Крупный застройщик Узбекистана, https://gh.uz/. Участвовал в работе с SEO Golden House Development
+(Ташкент).
+Яндекс.Метрика, счетчик 48369422, период 23.08.2022 - 23.08.2023: визиты из поиска 154 469 -> 174 449 (+12,93%), посетители 92 461 -> 99 600 (+7,72%), глубина просмотра 3,15 -> 3,38.
+Тот же счетчик, период 22.08.2021 - 22.08.2022, 1 320 поисковых фраз: визиты 16 003 -> 20 485 (+28,01%), достижения целей 253 -> 1 563, конверсия 1,80% -> 6,04%.
+   
+Топ поисковых запросов, рост год к году
+golden house
+golden house в ташкенте голден хаус
+голден хаус ташкент gh.uz
+2 232 -> 2 729 визитов (+22,27%) 759 -> 858 (+13,10%)
+759 -> 994 (+30,95%)
+515 -> 1 156 (+124,56%)
+189 -> 497 (+161,90%)
+     Ядро - запросы на кириллице, латинице и по брендам жилых комплексов (Assalom Sohil, Assalom Havo, Maxtumquli). Часть информационных запросов ("кто глава golden house", "работа инженер пто") отобрана в кандидаты на минус-слова для Директа.
+Аудит рекламных кампаний в Яндекс.Директ
+Общий расход
+Конверсии
+Средний CPA
+CPA на Поиске
+CPA в Сетях (РСЯ)
+CPA ручных ключевых фраз Кампания yd_***
+~137,4 млн UZS
+2 432
+56 482 UZS
+~627 441 UZS - примерно в 11 раз выше среднего ~53 738 UZS
+~849 722 UZS против ~54 158 UZS у автотаргетинга 3 млн UZS расхода, 0 конверсий
+       Вывод: драйвер - РСЯ и автотаргетинг, не Поиск. Ядро аудитории - мужчины 25-34 с CPA ~55 тыс. UZS (женщины ~76 тыс., возраст 45-54 ~106 тыс.). Рекомендации: сократить Поиск, масштабировать РСЯ и автотаргетинг, еженедельно чистить минус-слова ("Испания", "каком банке", "отзывы", "беспроцентная ипотека").
+
+04 GoLogin - crowd marketing, PR, платные размещения
+Рабочие документы 2019-2024 по anti-detect SaaS GoLogin. Скриншоты показывают формат таблиц, не
+полные данные.
+"Места для размещения статей": площадка, язык, инструкция, статус. Facebook, Reddit, Quora, BlackHatWorld и тематические форумы на EN, RU, VN, PT, PL.
+   Платные размещения и линкбилдинг (trafficcardinal, affpaying, fb-killa): статус "Размещен", даты, контакты площадок, трафик в месяц, конкуренты.
+
+ "Темы статей": тема, статус, автор, цена.
+ "Brandmention Table": трекинг упоминаний бренда в crowd marketing.
+
+ "Платное размещение vlad": UTM-метки для Telegram-размещений.
+Как был устроен процесс
+Реестр площадок с языком (EN, RU, VN, PT, PL), инструкцией под каждую и статусом "можно размещать" Отдельная очередь тем статей: тема, автор, цена, статус
+Платные размещения велись со статусом, датой, контактом площадки, оценкой трафика и сравнением с конкурентами (Dolphin, Undetectable, AdsPower)
+Telegram-размещения помечались UTM, чтобы отделять их трафик от органических упоминаний Отдельная таблица упоминаний бренда - для контроля тональности и повторных заходов на площадку
+Каналы: BlackHatWorld, Reddit, Quora, Facebook-группы, нишевые форумы по арбитражу, дропшиппингу и крипте
+
+05 Управление мульти-аккаунтами
+Практика с 2019 года: anti-detect SaaS GoLogin, портфель витрин Easync, outreach Trast Aero, партнерские
+программы proxy- и anti-detect сервисов.
+Anti-detect браузеры. GoLogin: профили, изоляция цифрового отпечатка, разделение cookie, storage и WebRTC между аккаунтами
+Прокси. Резидентные и мобильные прокси, ротация, привязка профиля к геолокации, отдельные партнерские кабинеты proxy-сервисов
+Фарм и прогрев. Сценарии регистрации, постепенный набор активности, разделение платежных, почтовых и телефонных контуров
+Политики площадок. Ограничения Meta, Google, Amazon, eBay и Shopify по количеству и связности аккаунтов; что триггерит проверки и блокировки
+Снижение рисков. Разбор причин банов, чистка связок, отдельные окружения под проект, резервные аккаунты и платежные методы
+Автоматизация. GoLogin API и Scrapling в модуле Web Scraping в Swoop: режимы fetcher, stealth, dynamic, gologin; ротация прокси, очередь задач
+   Кабинет proxy-партнерки: 58 319 записей, из них 58 313 комиссионных начислений.
+Выплаты на BTC: 1 491,33 $ (март 2024), 1 570,02 $ (июнь 2025), 300,00 $ (июль 2026).
+ Партнерская программа GoLogin, ставка 10%: earned 1 694 $, withdrawn 801 $.
+
+06 E-commerce - Easync и compod
+Портфель из 10+ витрин Shopify, Amazon и eBay на рынках US, UK и EU: выбор ниши, оформление
+магазина, платный трафик, unit-экономика, платежи и диспуты.
+Google Analytics, магазин compod, 25.07.2021 - 21.08.2023: 124 тыс. активных пользователей, 121 тыс. новых, 618 тыс. событий, среднее время вовлечения 40 с. Сессии: google/organic 60 тыс., direct 58 тыс., google/cpc 10 тыс.
+SEO на этих витринах практически не велось, отдельная аналитика не настраивалась - данные брались из дашборда Easync. Основные источники трафика: Google Shopping и Bing.
+Демо магазинов (видео): https://youtu.be/v2_zmJrlMks
+  
+07 B2B-лидогенерация - Trast Aero
+https://trast-aero.com/ - авиационные запчасти и расходники, рынки Африки и Азии. Прямые контакты с ЛПР с
+нескольких аккаунтов, автоматизация outreach. Таблицы лидов - рабочий формат, не презентация.
+Лиды из рассылки и LinkedIn (Africa / Asia Research), часть 1: запросы по Nyco, AeroShell, Shell Spirax, тестовому оборудованию Laversab и NAV-AIDS.
+Часть 2: контакты авиакомпаний и MRO (Syphax Airlines, Egyptian Aviation Academy, дистрибьюторы по Магрибу и Танзании) с запросами по P/N.
+   
+08 B2C-каналы
+Нишевые сообщества, форумы и группы плюс платный трафик - Meta Ads, Google Ads, TikTok Ads, YouTube
+Ads. Работа с аудиторией там, где она уже обсуждает продукт, а не только через холодный таргет.
+Travel-направление: Facebook phuquocguide, YouTube, TikTok, Telegram; generative-контент для туристической аудитории
+Local SEO и Google Maps, репутация на отзовиках: Google Reviews, TripAdvisor, Otzovik, Яндекс.Карты, 2GIS
+Кампания ночного клуба: отчет по кампании доступен по ссылке ниже (отчеты Meta и Adwords не сохранялись)
+09 Ссылки и материалы
+Сайт студии - https://autoro.tech
+Резюме онлайн - https://autoro.tech/resume/
+AI-платформа Swoop - https://swoop.autoro.tech
+Realtime voice AI - https://keept.me
+Travel-платформа, 785 отелей, 8 языков - https://pquoc.com
+Магазин и прод Merchant Inspector - https://compod.us
+Golden House, SEO и аудит Директа - https://gh.uz/
+Trast Aero, B2B-лидогенерация - https://trast-aero.com/
+LinkedIn, профессиональный профиль - https://www.linkedin.com/in/vlad-autoro-tech/ YouTube, кейсы и демо - https://www.youtube.com/@iq_boosted
+Видео: демо e-commerce витрин - https://youtu.be/v2_zmJrlMks
+Видео: продуктовая гипотеза travel planner - https://youtu.be/AJtcYfItspM
+Отчет по кампании ночного клуба -
+  https://docs.google.com/spreadsheets/d/1z79vwqa6dGfltFcIQUIQ7vO9rzq7ktkE-CxnoV3R3A0/edit?
+  usp=sharing
+Профиль на BlackHatWorld, форум интернет-маркетинга -
+https://www.blackhatworld.com/members/vlad_x.1811065/
+Facebook, страница проекта - https://www.facebook.com/profile.php?id=61580998221034 Facebook, travel generative content - https://www.facebook.com/phuquocguide
+Telegram - https://t.me/autoro_tech (@autoro_tech)
+Канал в Telegram - https://t.me/autoro_tech_ai (@autoro_tech_ai)
+По запросу могу показать: саммари мануала stealth Amazon, полный аудит рекламных кампаний застройщика, старый инвойс по автоматизации, таблицы лидов LinkedIn.
+  
+10 Сертификация
+  5-Day AI Agents: Intensive Vibe Coding Course With Google. Получен 19.06.2026.
+В рамках интенсива: Ambient Expense Agent - защита PII, защита от prompt injection, HITL-эскалация, оценка 5.0/5.0; AuthRAG knowledge base - безопасный ingestion и подсказки голосовому ассистенту на LiveKit.
+

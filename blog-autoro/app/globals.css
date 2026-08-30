@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: #f7f7f4;
+  color: #26251e;
+}
+
+.prose-autoro h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 1rem; font-weight: 500; }
+.prose-autoro h2 { font-size: 1.35rem; margin: 1.75rem 0 0.75rem; font-weight: 600; }
+.prose-autoro p { margin: 0.85rem 0; color: #5a5852; }
+.prose-autoro a { color: #d04200; text-decoration: underline; }
+.prose-autoro ul { margin: 0.75rem 0 0.75rem 1.2rem; list-style: disc; }
+.prose-autoro .source-cite { margin-top: 2rem; font-size: 0.9rem; color: #807d72; }

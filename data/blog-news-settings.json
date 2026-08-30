@@ -1,0 +1,11 @@
+{
+  "rewritePrompt": "",
+  "model": "openrouter/anthropic/claude-3.7-sonnet",
+  "fallbackModel": "glm/glm-4-flash",
+  "requireAllLangs": true,
+  "ingestLimit": 8,
+  "relevanceMinScore": 0.55,
+  "citeMode": "footer",
+  "scrapeMode": "fetcher",
+  "requireApproval": true
+}

@@ -1,0 +1,708 @@
+[
+  {
+    "updatedAt": "2025-12-15T17:32:11.502Z",
+    "createdAt": "2025-12-15T17:27:42.780Z",
+    "id": "yr9zTyBEGSTTpNZK",
+    "name": "Chat chat.autoro.tech",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "extract-text",
+                "name": "text",
+                "value": "={{$json.text}}",
+                "type": "string"
+              },
+              {
+                "id": "extract-user",
+                "name": "chat_id",
+                "value": "={{$json.chat_id}}",
+                "type": "string"
+              },
+              {
+                "id": "extract-platform",
+                "name": "platform",
+                "value": "={{$json.platform}}",
+                "type": "string"
+              },
+              {
+                "id": "extract-lang",
+                "name": "detected_language",
+                "value": "={{$json.detected_language}}",
+                "type": "string"
+              },
+              {
+                "id": "extract-bot-id",
+                "name": "bot_id",
+                "value": "={{$json.bot_id}}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "09ad7ef6-7838-440c-852e-7d66639acc5f",
+        "name": "Extract Message Data",
+        "type": "n8n-nodes-base.set",
+        "position": [
+          752,
+          560
+        ],
+        "typeVersion": 3.4
+      },
+      {
+        "parameters": {},
+        "id": "85f6254e-25f1-4da2-925f-13425b345653",
+        "name": "Gemini Embeddings",
+        "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+        "position": [
+          1712,
+          1056
+        ],
+        "typeVersion": 1,
+        "credentials": {
+          "googlePalmApi": {
+            "id": "Fx3MfsBJL4LMveKN",
+            "name": "Gemini garciaarmstead"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "tableName": {
+            "__rl": true,
+            "value": "documents_pquoc",
+            "mode": "list",
+            "cachedResultName": "documents_pquoc"
+          },
+          "options": {
+            "queryName": "match_bot_documents",
+            "metadataFilter": "{\"bot_id\": \"={{$('Extract Message Data').item.json.bot_id}}\"}"
+          }
+        },
+        "id": "cb528b95-545e-4303-99e8-e65bbc69e4f7",
+        "name": "Supabase Knowledge Search",
+        "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+        "position": [
+          1616,
+          880
+        ],
+        "typeVersion": 1.3,
+        "credentials": {
+          "supabaseApi": {
+            "id": "pII488jhESchLsNR",
+            "name": "Supabase Local server"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.text }}",
+          "options": {
+            "systemMessage": "={\n  \"role\": \"AI-ассистент-гид по острову Фукуок\",\n  \"task\": \"Дай полный, конкретный ответ. Сначала используй Базу Знаний.\",\n  \"context\": {\n    \"user_question\": \"{{ $json.text }}\",\n    \"user_language\": \"{{ $json.detected_language }}\"\n  },\n  \"instructions\": [\n    \"Язык ответа: СТРОГО {{ $json.detected_language }}.\",\n    \"Запрещена персонификация: пляжи, парки НЕ «советуют».\",\n    \"Полнота: ответ должен быть законченным, не обрезанным.\",\n    \"Контакты: включай ТОЛЬКО из БЗ. В контексте вопроса (VinWonders → контакты для билетов VinWonders).\",\n    \"Формат вывода: ТОЛЬКО JSON без код-блоков: {\\\"answer\\\": string, \\\"contacts\\\": {\\\"telegram\\\": string[], \\\"sites\\\": string[], \\\"phones\\\": string[], \\\"emails\\\": string[]}, \\\"sources\\\": string[]}\",\n    \"answer: кратко, по делу, списки маркерами «• ».\",\n    \"Если точных данных нет — честно скажи; contacts могут быть пустыми.\"\n\"Контакты: ищи в метаданных документов БЗ (metadata.contacts). Если вопрос про «где купить/как связаться» — обязательно верни контакты из метаданных.\"\n  ]\n}",
+            "maxIterations": 3
+          }
+        },
+        "id": "9dd54999-d9d2-4109-8413-7e9605449436",
+        "name": "Multilingual AI Agent",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "position": [
+          1888,
+          544
+        ],
+        "typeVersion": 2
+      },
+      {
+        "parameters": {
+          "modelName": "models/gemini-flash-latest",
+          "options": {
+            "maxOutputTokens": 2048,
+            "temperature": 0.3,
+            "topK": 1
+          }
+        },
+        "id": "1786c347-840c-4d54-b06a-b861a44a752b",
+        "name": "Gemini Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "position": [
+          1888,
+          1056
+        ],
+        "typeVersion": 1,
+        "credentials": {
+          "googlePalmApi": {
+            "id": "Fx3MfsBJL4LMveKN",
+            "name": "Gemini garciaarmstead"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "description": "=Используй этот инструмент, чтобы отвечать на вопросы о путешествиях на остров Фукуок (Phu Quoc), включая туры, цены, визы, транспорт и достопримечательности. Всегда отдавай прприоритет информации в базе знаний, давай в ответах ссылки и контакты из базы знаний, касающихся запроса. в метаданных есть контакты/ссылки и их нужно возвращать",
+          "topK": 8
+        },
+        "type": "@n8n/n8n-nodes-langchain.toolVectorStore",
+        "typeVersion": 1.1,
+        "position": [
+          2080,
+          784
+        ],
+        "id": "ac64f6ce-5c65-4336-a382-d2efeda1d4d3",
+        "name": "Answer questions with a vector store"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "c8d15bfe-e5c2-4999-8cb0-ed6e87a14ba9",
+                "name": "detected_language",
+                "value": "={{$json.detected_language || en}}",
+                "type": "string"
+              },
+              {
+                "id": "4768e082-0399-4970-a332-bb57c594d12a",
+                "name": "text",
+                "value": "={{$('Extract Message Data').item.json.text}}",
+                "type": "string"
+              },
+              {
+                "id": "18bd1acf-34fa-43b6-a793-b27a3e5efd34",
+                "name": "chat_id",
+                "value": "={{$('Extract Message Data').item.json.chat_id}}",
+                "type": "string"
+              },
+              {
+                "id": "b2708728-c57b-4af6-9552-5e0430839ebf",
+                "name": "platform",
+                "value": "={{$('Extract Message Data').item.json.platform}}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1504,
+          544
+        ],
+        "id": "e9aef276-e138-4aa1-8ddd-8295907d4a09",
+        "name": "Process & Combine Data"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "264216c7-beb8-4258-acf4-bfd613389468",
+                "leftValue": "={{ $json.detected_language }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.filter",
+        "typeVersion": 2.2,
+        "position": [
+          1712,
+          544
+        ],
+        "id": "e0e8c42c-ea60-4e75-a1e1-365d3c1e5160",
+        "name": "Filter Chat Action Output"
+      },
+      {
+        "parameters": {
+          "toolDescription": "Используй этот инструмент, чтобы получить детальный прогноз погоды (текущую, на часы, на дни) для указанных координат (latitude, longitude).",
+          "url": "https://api.openweathermap.org/data/3.0/onecall",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "lat",
+                "value": "={{ $json.latitude }}"
+              },
+              {
+                "name": "appid",
+                "value": "86eef80f0d5fa85cb683df457880a593"
+              },
+              {
+                "name": "units",
+                "value": "metric"
+              },
+              {
+                "name": "lang",
+                "value": "ru"
+              },
+              {
+                "name": "lon",
+                "value": "{{ $json.longitude }}"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Include_Response_Headers_and_Status', ``, 'boolean') }}",
+                "neverError": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Never_Error', ``, 'boolean') }}",
+                "responseFormat": "json"
+              }
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequestTool",
+        "typeVersion": 4.2,
+        "position": [
+          2576,
+          1280
+        ],
+        "id": "73da77fa-f010-4332-8274-451256215e76",
+        "name": "Weather Tool"
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "8feba14a-c91f-4141-ba44-cd2e98059120",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          336,
+          560
+        ],
+        "id": "8cfa14a2-36c0-4e0c-8164-073b9a35f2c0",
+        "name": "Webhook",
+        "webhookId": "8feba14a-c91f-4141-ba44-cd2e98059120"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Единая нормализация: сайт + Telegram -> один формат для RAG\nconst items = $input.all().map(i => {\n  const b = i.json.body ?? i.json;\n  const platform = String(b.platform || 'site').toLowerCase();\n  const session = String(b.session || b.session_id || '').slice(0, 80);\n  const lang = String(b.lang || b.detected_language || 'en').slice(0, 2);\n  const text = String(b.message || b.text || '').slice(0, 2000);\n  const chat_id = platform === 'telegram'\n    ? String(b.session_id || b.chat_id || '').slice(0, 80)\n    : (session ? `site:${session}` : 'site:anon');\n  return {\n    json: {\n      text,\n      chat_id,\n      platform,\n      bot_id: b.bot_id,\n      detected_language: lang || 'en',\n      session,\n      lang: b.lang || lang,\n      tz: b.tz,\n      ip: b.ip,\n      userAgent: b.userAgent,\n    }\n  };\n});\nreturn items;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          544,
+          560
+        ],
+        "id": "f93758df-4b92-4fc0-bd20-c284864cb152",
+        "name": "Normalize Input"
+      },
+      {
+        "parameters": {
+          "jsCode": "const items = $input.all();\nreturn items.map(i => {\n  const reply = String(i.json.formatted_reply ?? i.json.output ?? i.json.answer ?? '').trim();\n  return {\n    json: {\n      reply,                          // для фронта (показывается в чате)\n      answer: reply,                  // дублируем\n      contacts: i.json.contacts ?? {},\n      sources: i.json.sources ?? [],\n      detected_language: i.json.detected_language ?? 'en'\n    }\n  };\n});"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2656,
+          544
+        ],
+        "id": "d735be92-12ba-416e-8550-762f24b3152c",
+        "name": "Build Response"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{$json}}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.4,
+        "position": [
+          2864,
+          544
+        ],
+        "id": "c7ab4179-8ab9-4a96-8d63-b090c4bb2e52",
+        "name": "Respond to Webhook"
+      },
+      {
+        "parameters": {
+          "sessionIdType": "customKey",
+          "sessionKey": "={{ $json.chat_id }}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+        "typeVersion": 1.3,
+        "position": [
+          1936,
+          752
+        ],
+        "id": "5550e530-6bf4-4d59-98db-a4b9c8866a49",
+        "name": "Simple Memory"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Форматируем ответ и ДОБАВЛЯЕМ кликабельные контакты из json.contacts\nconst out = [];\nfor (const item of $input.all()) {\n  const lang = item.json.detected_language || item.json.lang || 'en';\n  const contacts = item.json.contacts || {};\n  let text = String(item.json.output || item.json.answer || '').trim();\n\n  if (!text) {\n    out.push({ json: { formatted_reply: 'Спасибо! Скоро ответим.', detected_language: lang } });\n    continue;\n  }\n\n  // 1) Списки '*' → '• '\n  text = text.replace(/^\\s*\\*\\s+/gm, '• ');\n\n  // 2) Ссылки: сначала собираем URL-ы, чтобы не сломать экранирование\n  const urls = [];\n  text = text.replace(/(https?:\\/\\/[^\\s<>\\\"']+)/gi, m => {\n    const u = m.replace(/[.,;:!?]+$/, '');\n    const ph = `__URL__${urls.length}__`;\n    urls.push(u);\n    return ph;\n  });\n\n  // 3) Экранирование HTML\n  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\\"/g,'&quot;');\n  text = esc(text);\n\n  // 4) Вернём URL-ы как кликабельные ссылки\n  urls.forEach((u, i) => {\n    text = text.replace(`__URL__${i}__`, `<a href=\"${u}\" target=\"_blank\" rel=\"noopener noreferrer\">${esc(u)}</a>`);\n  });\n\n  // 5) Markdown bold\n  text = text.replace(/\\*\\*([^*]+?)\\*\\*/g, '<strong>$1</strong>');\n\n  // 6) Переносы\n  text = text.replace(/\\n\\n+/g, '<br><br>').replace(/\\n/g, '<br>').replace(/<br>\\s*•\\s*/g, '<br>• ');\n\n  // 7) Контакты → кликабельные блоки\n  const parts = [text];\n  const phones = Array.isArray(contacts.phones) ? contacts.phones : [];\n  const emails = Array.isArray(contacts.emails) ? contacts.emails : [];\n  const telegram = Array.isArray(contacts.telegram) ? contacts.telegram : [];\n  const sites = Array.isArray(contacts.sites) ? contacts.sites : [];\n\n  const hasAny =\n    phones.length + emails.length + telegram.length + sites.length > 0;\n\n  if (hasAny) {\n    const section = [];\n\n    if (telegram.length) {\n      section.push('• Telegram: ' + telegram.map(t => {\n        const u = /^https?:\\/\\//i.test(t) ? t : `https://t.me/${t.replace(/^@/,'')}`;\n        return `<a href=\"${u}\" target=\"_blank\" rel=\"noopener noreferrer\">${esc(t)}</a>`;\n      }).join(', '));\n    }\n    if (sites.length) {\n      section.push('• Сайты: ' + sites.map(s => {\n        const u = /^https?:\\/\\//i.test(s) ? s : `https://${s}`;\n        return `<a href=\"${u}\" target=\"_blank\" rel=\"noopener noreferrer\">${esc(s)}</a>`;\n      }).join(', '));\n    }\n    if (phones.length) {\n      section.push('• Телефоны: ' + phones.map(p => {\n        const tel = String(p).replace(/\\s+/g,'');\n        return `<a href=\"tel:${esc(tel)}\">${esc(p)}</a>`;\n      }).join(', '));\n    }\n    if (emails.length) {\n      section.push('• Email: ' + emails.map(e => `<a href=\"mailto:${esc(e)}\">${esc(e)}</a>`).join(', '));\n    }\n\n    parts.push('<br><br><strong>Контакты для покупки:</strong><br>' + section.join('<br>'));\n  }\n\n  out.push({ json: { formatted_reply: parts.join(''), detected_language: lang } });\n}\nreturn out;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2448,
+          544
+        ],
+        "id": "ed21ed16-e3c1-4a10-8d0c-badd22ff5e90",
+        "name": "Format Links for Web"
+      },
+      {
+        "parameters": {
+          "builtInTools": {
+            "enableAdaptPlan": true,
+            "enableClarification": true,
+            "enableCreateReport": true,
+            "enableFinalAnswer": true,
+            "enableGeneratePlan": true,
+            "enableReasoning": true
+          },
+          "prompts": {
+            "systemPrompt": "<MAIN_TASK_GUIDELINES>\nYou are an expert researcher with adaptive planning and schema-guided-reasoning capabilities. You get the research task and you neeed to do research and genrete answer\n</MAIN_TASK_GUIDELINES>\n\n<DATE_GUIDELINES>\nPAY ATTENTION TO THE DATE INSIDE THE USER REQUEST\nDATE FORMAT: YYYY-MM-DD HH:MM:SS (ISO 8601)\nIMPORTANT: The date above is in YYYY-MM-DD format (Year-Month-Day). For example, 2025-10-03 means October 3rd, 2025, NOT March 10th.\n</DATE_GUIDELINES>\n\n<IMPORTANT_LANGUAGE_GUIDELINES>: Detect the language from user request and use this LANGUAGE for all responses, searches, and result finalanswertool\nLANGUAGE ADAPTATION: Always respond and create reports in the SAME LANGUAGE as the user's request.\nIf user writes in Russian - respond in Russian, if in English - respond in English.\n</IMPORTANT_LANGUAGE_GUIDELINES>:\n\n<CORE_PRINCIPLES>:\n1. Memorize plan you generated in first step and follow the task inside your plan.\n1. Adapt plan when new data contradicts initial assumptions\n2. Search queries in SAME LANGUAGE as user request\n3. Final Answer ENTIRELY in SAME LANGUAGE as user request\n</CORE_PRINCIPLES>\n\n<REASONING_GUIDELINES>\nADAPTIVITY: Actively change plan when discovering new data.\nANALYSIS EXTRACT DATA: Always analyze data that you took in extractpagecontenttool\n</REASONING_GUIDELINES>\n\n<PRECISION_GUIDELINES>\nCRITICAL FOR FACTUAL ACCURACY:\nWhen answering questions about specific dates, numbers, versions, or names:\n1. EXACT VALUES: Extract the EXACT value from sources (day, month, year for dates; precise numbers for quantities)\n2. VERIFY YEAR: If question mentions a specific year (e.g., \"in 2022\"), verify extracted content is about that SAME year\n3. CROSS-VERIFICATION: When sources provide contradictory information, prefer:\n   - Official sources and primary documentation over secondary sources\n   - Search result snippets that DIRECTLY answer the question over extracted page content\n   - Multiple independent sources confirming the same fact\n4. DATE PRECISION: Pay special attention to exact dates - day matters (October 21 ≠ October 22)\n5. NUMBER PRECISION: For numbers/versions, exact match required (6.88b ≠ 6.88c, Episode 31 ≠ Episode 32)\n6. SNIPPET PRIORITY: If search snippet clearly states the answer, trust it unless extract proves it wrong\n7. TEMPORAL VALIDATION: When extracting page content, check if the page shows data for correct time period\n</PRECISION_GUIDELINES>\n\n<AGENT_TOOL_USAGE_GUIDELINES>:\n{available_tools}\n</AGENT_TOOL_USAGE_GUIDELINES>",
+            "initialUserRequest": "Current Date: {current_date} (Year-Month-Day ISO format: YYYY-MM-DD HH:MM:SS)\nORIGINAL USER REQUEST:\n\n{task}",
+            "clarificationResponse": "Current Date: {current_date} (Year-Month-Day ISO format: YYYY-MM-DD HH:MM:SS)\n\nCLARIFICATIONS:\n\n{clarifications}"
+          },
+          "additionalTools": {
+            "tools": []
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-sgr-tool-calling.sgrToolCalling",
+        "typeVersion": 1,
+        "position": [
+          2816,
+          1264
+        ],
+        "id": "531427ca-cfcb-4a30-bc14-9045f7c2c83b",
+        "name": "SGR Agent"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $input.all();\nif (!Array.isArray(input) || input.length === 0) {\n  return [{ json: { answer: '', contacts: {}, sources: [], detected_language: 'en' } }];\n}\n\nconst out = [];\nfor (const item of input) {\n  let text = String(item.json.output ?? item.json.answer ?? item.json.text ?? '').trim();\n  text = text.replace(/```json/gi, '').replace(/```/g, '').replace(/<br\\s*\\/?>/gi, '\\n').trim();\n\n  let data;\n  try { data = JSON.parse(text); }\n  catch { data = { answer: text, contacts: {}, sources: [] }; }\n\n  out.push({\n    json: {\n      output: data.answer ?? '',\n      answer: data.answer ?? '',\n      contacts: data.contacts ?? {},\n      sources: data.sources ?? [],\n      detected_language: item.json.detected_language ?? item.json.lang ?? 'en'\n    }\n  });\n}\nreturn out;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2240,
+          544
+        ],
+        "id": "404ef6f1-8b65-4ebf-a0da-de66613f473f",
+        "name": "Normalize Agent JSON"
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": false,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "id": "route-telegram",
+                      "leftValue": "={{ $('Extract Message Data').item.json.platform }}",
+                      "rightValue": "telegram",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "telegram"
+              }
+            ]
+          },
+          "options": {
+            "fallbackOutput": "extra",
+            "fallbackOutputName": "site"
+          }
+        },
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          2544,
+          544
+        ],
+        "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "Route by Platform"
+      },
+      {
+        "parameters": {
+          "jsCode": "const out = [];\nfor (const item of $input.all()) {\n  let text = String(item.json.formatted_reply || item.json.reply || item.json.answer || '').trim();\n  text = text.replace(/<br\\s*\\/?>/gi, '\\n').replace(/<\\/p>/gi, '\\n').replace(/<[^>]+>/g, '');\n  text = text.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');\n  text = text.replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 4000);\n  const chat_id = $('Extract Message Data').item.json.chat_id;\n  out.push({ json: { telegram_text: text || 'Спасибо! Скоро ответим.', chat_id } });\n}\nreturn out;"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2752,
+          720
+        ],
+        "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "name": "Format Plain for Telegram"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.telegram.org/bot{{ $env.PQUOC_TELEGRAM_BOT_TOKEN }}/sendMessage",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"chat_id\": {{ $json.chat_id }},\n  \"text\": {{ JSON.stringify($json.telegram_text) }},\n  \"disable_web_page_preview\": false\n}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2960,
+          720
+        ],
+        "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+        "name": "Send Telegram Reply"
+      }
+    ],
+    "connections": {
+      "Gemini Embeddings": {
+        "ai_embedding": [
+          [
+            {
+              "node": "Supabase Knowledge Search",
+              "type": "ai_embedding",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Supabase Knowledge Search": {
+        "ai_vectorStore": [
+          [
+            {
+              "node": "Answer questions with a vector store",
+              "type": "ai_vectorStore",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Multilingual AI Agent": {
+        "main": [
+          [
+            {
+              "node": "Normalize Agent JSON",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Gemini Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Answer questions with a vector store",
+              "type": "ai_languageModel",
+              "index": 0
+            },
+            {
+              "node": "Multilingual AI Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Answer questions with a vector store": {
+        "ai_tool": [
+          [
+            {
+              "node": "Multilingual AI Agent",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Process & Combine Data": {
+        "main": [
+          [
+            {
+              "node": "Filter Chat Action Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter Chat Action Output": {
+        "main": [
+          [
+            {
+              "node": "Multilingual AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Normalize Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Response": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Input": {
+        "main": [
+          [
+            {
+              "node": "Extract Message Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Simple Memory": {
+        "ai_memory": [
+          [
+            {
+              "node": "Multilingual AI Agent",
+              "type": "ai_memory",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Links for Web": {
+        "main": [
+          [
+            {
+              "node": "Route by Platform",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Route by Platform": {
+        "main": [
+          [
+            {
+              "node": "Format Plain for Telegram",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Build Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Plain for Telegram": {
+        "main": [
+          [
+            {
+              "node": "Send Telegram Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Agent JSON": {
+        "main": [
+          [
+            {
+              "node": "Format Links for Web",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Message Data": {
+        "main": [
+          [
+            {
+              "node": "Process & Combine Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner",
+      "executionTimeout": 300,
+      "availableInMCP": false
+    },
+    "staticData": null,
+    "meta": null,
+    "pinData": {},
+    "versionId": "465e2b02-9d58-4ef1-a0f3-634d0576ac73",
+    "activeVersionId": "465e2b02-9d58-4ef1-a0f3-634d0576ac73",
+    "versionCounter": 72,
+    "triggerCount": 1,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2025-12-15T17:27:42.780Z",
+        "createdAt": "2025-12-15T17:27:42.780Z",
+        "role": "workflow:owner",
+        "workflowId": "yr9zTyBEGSTTpNZK",
+        "projectId": "EaF6KCUNj4JSS5eR",
+        "project": {
+          "updatedAt": "2025-05-27T10:21:49.604Z",
+          "createdAt": "2025-05-25T03:47:09.328Z",
+          "id": "EaF6KCUNj4JSS5eR",
+          "name": "Vladislav x <seller.mekker@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,539 @@
+{
+  "name": "Jobhunter HH",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual_trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [160, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "cron_pipeline",
+      "name": "Cron Pipeline 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [160, 520]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "cron_apply",
+      "name": "Cron Apply Gate 1h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [160, 760]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "sheet_id",
+              "value": "={{$env.JOBHUNTER_SHEET_ID || 'YOUR_SHEET_ID'}}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "jobhunter_root",
+              "value": "={{$env.JOBHUNTER_ROOT || '/data/autoro/website'}}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "python",
+              "value": "={{$env.JOBHUNTER_PYTHON || 'python3'}}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "host",
+              "value": "uz",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "mode",
+              "value": "pipeline",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_config_pipeline",
+      "name": "Config Pipeline",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 400]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "filters"
+        },
+        "options": {}
+      },
+      "id": "sheets_read_filters",
+      "name": "Sheets Read Filters",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, 400],
+      "notes": "Replace credential; sheet must exist from docs/jobhunter/sheets-templates"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$('Config Pipeline').item.json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "profile"
+        },
+        "options": {}
+      },
+      "id": "sheets_read_profile",
+      "name": "Sheets Read Profile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [880, 400]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$('Config Pipeline').item.json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "options": {
+          "returnFirstMatch": false
+        }
+      },
+      "id": "sheets_read_vacancies_keys",
+      "name": "Sheets Read Vacancy Keys",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config Pipeline').first().json;\nconst filtersRows = $('Sheets Read Filters').all().map(i => i.json);\nconst profileRows = $('Sheets Read Profile').all().map(i => i.json);\nconst vacRows = $('Sheets Read Vacancy Keys').all().map(i => i.json);\nconst host = cfg.host || 'uz';\nconst filters = filtersRows.find(r => String(r.host || '').toLowerCase() === host) || filtersRows[0] || {};\nconst profile = profileRows.find(r => String(r.active || 'TRUE').toUpperCase() === 'TRUE') || profileRows[0] || {};\nconst existing = vacRows\n  .filter(r => r.vacancy_id)\n  .map(r => `${r.host || host}:${r.vacancy_id}`);\nreturn [{\n  json: {\n    ...cfg,\n    filters,\n    profile,\n    existing_keys: existing.join(','),\n    auto_apply: String(filters.auto_apply || 'FALSE').toUpperCase() === 'TRUE',\n    auto_email: String(filters.auto_email || 'FALSE').toUpperCase() === 'TRUE',\n    daily_cap: Number(filters.daily_cap || 5),\n    pause_on_block: String(filters.pause_on_block || 'TRUE').toUpperCase() !== 'FALSE',\n  }\n}];"
+      },
+      "id": "code_prepare_context",
+      "name": "Prepare Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 400]
+    },
+    {
+      "parameters": {
+        "command": "={{`mkdir -p /tmp/jobhunter && cat > /tmp/jobhunter/filters.json <<'EOF'\\n${JSON.stringify($json.filters)}\\nEOF\\ncat > /tmp/jobhunter/profile.json <<'EOF'\\n${JSON.stringify($json.profile)}\\nEOF\\n${$json.python} ${$json.jobhunter_root}/scripts/jobhunter/cli.py pipeline --host ${$json.host} --filters /tmp/jobhunter/filters.json --profile /tmp/jobhunter/profile.json --existing-keys \"${$json.existing_keys}\" --no-fetch-sites --out /tmp/jobhunter/pipeline_out.json && cat /tmp/jobhunter/pipeline_out.json`}}"
+      },
+      "id": "exec_pipeline",
+      "name": "Exec Pipeline CLI",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1540, 400],
+      "notes": "Uses --no-fetch-sites by default in n8n for speed; enable site fetch in a separate enrich pass"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst stdout = raw.stdout || raw.message || (typeof raw === 'string' ? raw : '');\nlet payload;\ntry {\n  const text = typeof stdout === 'string' ? stdout : JSON.stringify(raw);\n  const start = text.indexOf('{');\n  payload = JSON.parse(text.slice(start));\n} catch (e) {\n  return [{ json: { error: 'parse_failed', raw } }];\n}\nconst items = payload.items || [];\nreturn items.map((row) => ({ json: row }));"
+      },
+      "id": "code_parse_pipeline",
+      "name": "Parse Pipeline JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 400]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$('Prepare Context').item.json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "sheets_append_vacancies",
+      "name": "Sheets Append Vacancies",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1980, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "sheet_id",
+              "value": "={{$env.JOBHUNTER_SHEET_ID || 'YOUR_SHEET_ID'}}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "jobhunter_root",
+              "value": "={{$env.JOBHUNTER_ROOT || '/data/autoro/website'}}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "python",
+              "value": "={{$env.JOBHUNTER_PYTHON || 'python3'}}",
+              "type": "string"
+            },
+            {
+              "id": "b4",
+              "name": "mode",
+              "value": "apply",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set_config_apply",
+      "name": "Config Apply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [420, 760]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "awaiting_approve"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "sheets_read_awaiting",
+      "name": "Sheets Read Awaiting Approve",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, 760]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$('Config Apply').item.json.sheet_id}}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "filters"
+        },
+        "options": {}
+      },
+      "id": "sheets_read_filters_apply",
+      "name": "Sheets Read Filters Apply",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [880, 760]
+    },
+    {
+      "parameters": {
+        "jsCode": "const awaiting = $('Sheets Read Awaiting Approve').all().map(i => i.json);\nconst filtersRows = $('Sheets Read Filters Apply').all().map(i => i.json);\nconst filters = filtersRows[0] || {};\nconst autoApply = String(filters.auto_apply || 'FALSE').toUpperCase() === 'TRUE';\nconst approved = awaiting.filter(r => String(r.approve || '').toUpperCase() === 'YES');\nif (!autoApply) {\n  return [{ json: { skipped: true, reason: 'auto_apply_false', approved_count: approved.length } }];\n}\nif (!approved.length) {\n  return [{ json: { skipped: true, reason: 'no_approved_rows' } }];\n}\nconst cfg = $('Config Apply').first().json;\nreturn [{\n  json: {\n    ...cfg,\n    filters,\n    approved,\n    daily_cap: Number(filters.daily_cap || 5),\n  }\n}];"
+      },
+      "id": "code_gate_apply",
+      "name": "Human Gate Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 760]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.skipped}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_should_apply",
+      "name": "IF Should Apply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, 760]
+    },
+    {
+      "parameters": {
+        "command": "={{`mkdir -p /tmp/jobhunter && cat > /tmp/jobhunter/apply_in.json <<'EOF'\\n${JSON.stringify({items:$json.approved})}\\nEOF\\ncat > /tmp/jobhunter/filters.json <<'EOF'\\n${JSON.stringify($json.filters)}\\nEOF\\n${$json.python} ${$json.jobhunter_root}/scripts/jobhunter/cli.py apply --input /tmp/jobhunter/apply_in.json --filters /tmp/jobhunter/filters.json --daily-cap ${$json.daily_cap} --dry-run --out /tmp/jobhunter/apply_out.json && cat /tmp/jobhunter/apply_out.json`}}"
+      },
+      "id": "exec_apply_dry",
+      "name": "Exec Apply Dry-Run",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1560, 700],
+      "notes": "Default dry-run. Switch to --real only after go-live checklist. Keep test account tokens."
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, note: 'apply skipped by human gate or auto_apply=false', detail: $json } }];"
+      },
+      "id": "noop_skip_apply",
+      "name": "Skip Apply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 860]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Pipeline 6h": {
+      "main": [
+        [
+          {
+            "node": "Config Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Sheets Read Filters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Read Filters": {
+      "main": [
+        [
+          {
+            "node": "Sheets Read Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Read Profile": {
+      "main": [
+        [
+          {
+            "node": "Sheets Read Vacancy Keys",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Read Vacancy Keys": {
+      "main": [
+        [
+          {
+            "node": "Prepare Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Context": {
+      "main": [
+        [
+          {
+            "node": "Exec Pipeline CLI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exec Pipeline CLI": {
+      "main": [
+        [
+          {
+            "node": "Parse Pipeline JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Pipeline JSON": {
+      "main": [
+        [
+          {
+            "node": "Sheets Append Vacancies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Apply Gate 1h": {
+      "main": [
+        [
+          {
+            "node": "Config Apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config Apply": {
+      "main": [
+        [
+          {
+            "node": "Sheets Read Awaiting Approve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Read Awaiting Approve": {
+      "main": [
+        [
+          {
+            "node": "Sheets Read Filters Apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets Read Filters Apply": {
+      "main": [
+        [
+          {
+            "node": "Human Gate Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Gate Check": {
+      "main": [
+        [
+          {
+            "node": "IF Should Apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Should Apply": {
+      "main": [
+        [
+          {
+            "node": "Exec Apply Dry-Run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "pinsData": {},
+  "versionId": "jobhunter-hh-v1"
+}

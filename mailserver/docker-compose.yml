@@ -1,0 +1,29 @@
+services:
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    container_name: autoro-mailserver
+    hostname: mail
+    domainname: autoro.tech
+    env_file:
+      - ./mailserver.env
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+      - "143:143"
+      - "993:993"
+    volumes:
+      - ./docker-data/mail-data/:/var/mail/
+      - ./docker-data/mail-state/:/var/mail-state/
+      - ./docker-data/mail-logs/:/var/log/mail/
+      - ./config/:/tmp/docker-mailserver/
+      - ./config/opendkim/SigningTable:/etc/opendkim/SigningTable
+      - ./config/opendkim/KeyTable:/etc/opendkim/KeyTable
+      - ./config/opendkim/TrustedHosts:/etc/opendkim/TrustedHosts
+      - ./config/opendkim/keys/:/etc/opendkim/keys/
+      - /home/vladx/nginx-proxy/certs/tech.autoro.tech:/etc/ssl/mail:ro
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    stop_grace_period: 1m
+    cap_add:
+      - NET_ADMIN

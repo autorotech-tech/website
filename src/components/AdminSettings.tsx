@@ -10,6 +10,7 @@ import {
   type OpenRouterModelMeta,
   type ProviderCatalogs,
   type SerpApiAdminStatus,
+  type ApifyAdminStatus,
 } from './ProviderApiKeysPanel'
 import { ModelSearchCombobox, buildOpenRouterMetaMap } from './ModelSearchCombobox'
 import { formatAgentApiError } from '../lib/formatAgentApiError'
@@ -46,6 +47,10 @@ interface ServiceSettings {
   kimi_keys: string[]
   kimi_base_url: string
   kimi_default_model: string
+  /** API keys для [SeekAI (seekai.cc / seekapi.ai)](https://seekai.cc). */
+  seekai_keys: string[]
+  seekai_base_url: string
+  seekai_default_model: string
   /** API keys для [OpenModel](https://console.openmodel.ai/) (om-…, multi-provider gateway). */
   openmodel_keys: string[]
   openmodel_base_url: string
@@ -54,7 +59,12 @@ interface ServiceSettings {
   tavily_keys: string[]
   serpapi_keys: string[]
   serpapi_default_engine: string
+  google_cse_keys: string[]
+  google_cse_cx: string
+  bing_webmaster_keys: string[]
+  bing_webmaster_site_url: string
   apify_keys: string[]
+  apify_user_id: string
   apify_default_actor: string
   brightdata_keys: string[]
   brightdata_zone: string
@@ -222,6 +232,9 @@ export function AdminSettings() {
     kimi_keys: [],
     kimi_base_url: '',
     kimi_default_model: 'kimi-k2-turbo-preview',
+    seekai_keys: [],
+    seekai_base_url: '',
+    seekai_default_model: 'deepseek-chat',
     openmodel_keys: [],
     openmodel_base_url: '',
     openmodel_default_model: 'deepseek-v4-flash',
@@ -229,7 +242,12 @@ export function AdminSettings() {
     tavily_keys: [],
     serpapi_keys: [],
     serpapi_default_engine: 'google',
+    google_cse_keys: [],
+    google_cse_cx: '',
+    bing_webmaster_keys: [],
+    bing_webmaster_site_url: 'https://autoro.tech',
     apify_keys: [],
+    apify_user_id: '',
     apify_default_actor: 'compass/crawler-google-places',
     brightdata_keys: [],
     brightdata_zone: '',
@@ -263,6 +281,9 @@ export function AdminSettings() {
   const [serpapiStatus, setSerpapiStatus] = useState<SerpApiAdminStatus | null>(null)
   const [serpapiStatusLoading, setSerpapiStatusLoading] = useState(false)
   const [serpapiStatusError, setSerpapiStatusError] = useState<string | null>(null)
+  const [apifyStatus, setApifyStatus] = useState<ApifyAdminStatus | null>(null)
+  const [apifyStatusLoading, setApifyStatusLoading] = useState(false)
+  const [apifyStatusError, setApifyStatusError] = useState<string | null>(null)
   const [verifyingKeys, setVerifyingKeys] = useState(false)
   const [llmRoutingDraft, setLlmRoutingDraft] = useState(() => JSON.stringify(DEFAULT_AGENT_LLM_ROUTING, null, 2))
   const openrouterMetaById = useMemo(() => buildOpenRouterMetaMap(openrouterMeta), [openrouterMeta])
@@ -467,12 +488,45 @@ export function AdminSettings() {
     }
   }
 
+  const fetchApifyStatus = async (apiKey: string) => {
+    const key = String(apiKey || '').trim()
+    if (!key) {
+      setApifyStatus(null)
+      setApifyStatusError(null)
+      return
+    }
+    setApifyStatusLoading(true)
+    setApifyStatusError(null)
+    try {
+      const resp = await fetch('/api/v1/admin/apify/status', {
+        headers: { 'X-API-Key': key },
+      })
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => '')
+        throw new Error(formatAgentApiError(detail, resp.status))
+      }
+      const body = (await resp.json()) as ApifyAdminStatus
+      setApifyStatus(body)
+      if (body.configured && body.account_ok === false && body.account_error) {
+        setApifyStatusError(`Apify: ${body.account_error}`)
+      } else if (body.account_ok && body.account?.userId && !settings.apify_user_id) {
+        // Auto-fill apify_user_id if discovered from token
+        setSettings((s) => ({ ...s, apify_user_id: body.account?.userId || s.apify_user_id }))
+      }
+    } catch (e: unknown) {
+      setApifyStatusError(e instanceof Error ? e.message : 'Не удалось загрузить статус Apify')
+    } finally {
+      setApifyStatusLoading(false)
+    }
+  }
+
   const refreshAdminKeyInsights = async (apiKey: string) => {
     await Promise.all([
       fetchKeyHealth(apiKey),
       fetchProviderCatalogs(apiKey),
       fetchOpenModelStatus(apiKey),
       fetchSerpapiStatus(apiKey),
+      fetchApifyStatus(apiKey),
     ])
   }
 
@@ -543,6 +597,9 @@ export function AdminSettings() {
           kimi_keys: ((data as Record<string, unknown>).kimi_keys as string[] || []).filter((k: string) => k && k.trim()),
           kimi_base_url: String((data as Record<string, unknown>).kimi_base_url || '').trim(),
           kimi_default_model: String((data as Record<string, unknown>).kimi_default_model || 'kimi-k2-turbo-preview').trim(),
+          seekai_keys: ((data as Record<string, unknown>).seekai_keys as string[] || []).filter((k: string) => k && k.trim()),
+          seekai_base_url: String((data as Record<string, unknown>).seekai_base_url || '').trim(),
+          seekai_default_model: String((data as Record<string, unknown>).seekai_default_model || 'deepseek-chat').trim(),
           openmodel_keys: ((data as Record<string, unknown>).openmodel_keys as string[] || []).filter((k: string) => k && k.trim()),
           openmodel_base_url: String((data as Record<string, unknown>).openmodel_base_url || '').trim(),
           openmodel_default_model: String((data as Record<string, unknown>).openmodel_default_model || 'deepseek-v4-flash').trim(),
@@ -550,7 +607,12 @@ export function AdminSettings() {
           tavily_keys: (data.tavily_keys || []).filter((k: string) => k && k.trim()),
           serpapi_keys: ((data as Record<string, unknown>).serpapi_keys as string[] || []).filter((k: string) => k && k.trim()),
           serpapi_default_engine: String((data as Record<string, unknown>).serpapi_default_engine || 'google').trim() || 'google',
+          google_cse_keys: ((data as Record<string, unknown>).google_cse_keys as string[] || []).filter((k: string) => k && k.trim()),
+          google_cse_cx: String((data as Record<string, unknown>).google_cse_cx || '').trim(),
+          bing_webmaster_keys: ((data as Record<string, unknown>).bing_webmaster_keys as string[] || []).filter((k: string) => k && k.trim()),
+          bing_webmaster_site_url: String((data as Record<string, unknown>).bing_webmaster_site_url || 'https://autoro.tech').trim() || 'https://autoro.tech',
           apify_keys: ((data as Record<string, unknown>).apify_keys as string[] || []).filter((k: string) => k && k.trim()),
+          apify_user_id: String((data as Record<string, unknown>).apify_user_id || '').trim(),
           apify_default_actor: String((data as Record<string, unknown>).apify_default_actor || 'compass/crawler-google-places').trim(),
           brightdata_keys: ((data as Record<string, unknown>).brightdata_keys as string[] || []).filter((k: string) => k && k.trim()),
           brightdata_zone: String((data as Record<string, unknown>).brightdata_zone || '').trim(),
@@ -786,6 +848,10 @@ export function AdminSettings() {
           serpapiStatusLoading={serpapiStatusLoading}
           serpapiStatusError={serpapiStatusError}
           onRefreshSerpapiStatus={() => void fetchSerpapiStatus(settings.agent_api_key || '')}
+          apifyStatus={apifyStatus}
+          apifyStatusLoading={apifyStatusLoading}
+          apifyStatusError={apifyStatusError}
+          onRefreshApifyStatus={() => void fetchApifyStatus(settings.agent_api_key || '')}
           onSettingsChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
           onMetaChange={(api_key_pool_meta) => setSettings((s) => ({ ...s, api_key_pool_meta }))}
           onCopy={copyToClipboard}
@@ -976,6 +1042,9 @@ export function AdminSettings() {
                 kimi_keys: settings.kimi_keys,
                 kimi_base_url: settings.kimi_base_url.trim(),
                 kimi_default_model: settings.kimi_default_model.trim(),
+                seekai_keys: settings.seekai_keys,
+                seekai_base_url: settings.seekai_base_url.trim(),
+                seekai_default_model: settings.seekai_default_model.trim(),
                 openmodel_keys: settings.openmodel_keys,
                 openmodel_base_url: settings.openmodel_base_url.trim(),
                 openmodel_default_model: settings.openmodel_default_model.trim(),
@@ -983,7 +1052,12 @@ export function AdminSettings() {
                 tavily_keys: settings.tavily_keys,
                 serpapi_keys: settings.serpapi_keys,
                 serpapi_default_engine: settings.serpapi_default_engine.trim() || 'google',
+                google_cse_keys: settings.google_cse_keys,
+                google_cse_cx: settings.google_cse_cx.trim(),
+                bing_webmaster_keys: settings.bing_webmaster_keys,
+                bing_webmaster_site_url: settings.bing_webmaster_site_url.trim() || 'https://autoro.tech',
                 apify_keys: settings.apify_keys,
+                apify_user_id: settings.apify_user_id.trim(),
                 apify_default_actor: settings.apify_default_actor.trim() || 'compass/crawler-google-places',
                 brightdata_keys: settings.brightdata_keys,
                 brightdata_zone: settings.brightdata_zone.trim(),
