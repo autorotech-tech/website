@@ -303,7 +303,7 @@ def post_openmodel_messages_text(
     text = _assistant_text_from_message(msg)
     if text:
         return text, code, "ok"
-    return " ", code, "ok"
+    return None, code, "empty_content"
 
 
 def verify_openmodel_key(settings: Dict[str, Any], key: str, timeout: int = 25) -> Tuple[bool, int, str]:

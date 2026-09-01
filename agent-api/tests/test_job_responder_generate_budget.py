@@ -70,10 +70,43 @@ def test_generate_budget_tighter_than_cf_soft():
     assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
     assert budget.GENERATE_HARD_WALL_SEC <= 30.0
     assert budget.GENERATE_HARD_WALL_SEC > budget.GENERATE_BUDGET_SEC
-    assert budget.JR_OPENMODEL_FAST_MODEL
+    assert budget.JR_OPENMODEL_FAST_MODEL == "fable-5"
+    assert budget.JR_GEMINI_MODEL == "gemini-3.7-flash"
+    assert budget.JR_OPENMODEL_FALLBACK_MODEL == "claude-sonnet-4-6"
+    assert budget.COVER_MAX_TOKENS == 1200
     # HTTP openmodel must die with the soft slice (no 45s zombies → 502).
     assert budget.LLM_PROVIDER_CAP_SEC <= 10.0
     assert budget.LLM_PRIMARY_TIMEOUT_SEC + budget.LLM_FALLBACK_TIMEOUT_SEC <= 16.0
+
+
+def test_cover_output_tokens_cover_and_qa():
+    assert budget.cover_output_tokens(mode="cover_letter") == 1200
+    assert budget.cover_output_tokens(mode="question_answers") == budget.QA_MAX_TOKENS
+    assert budget.cover_output_tokens(mode="cover_letter", tokens_override=900) == 900
+
+
+def test_empty_content_sequential_failover_does_not_spend_slot():
+    assert budget.should_failover_empty_content("empty_content") is True
+    assert budget.should_failover_empty_content("empty") is True
+    assert budget.should_failover_empty_content("timeout") is False
+    assert budget.cascade_slot_consumed(had_text=False, error_detail="empty_content") is False
+    assert budget.cascade_slot_consumed(had_text=False, error_detail="timeout") is True
+    attempts = budget.generate_cascade_attempts()
+    assert len(attempts) == 3
+    models = [a["route_model_override"] for a in attempts]
+    assert models == ["fable-5", "gemini-3.7-flash", "claude-sonnet-4-6"]
+    # With max_providers=1, two empty_content replies still walk the rest of the list.
+    tried = 0
+    max_providers = 1
+    visited = []
+    for step in attempts:
+        if tried >= max_providers:
+            break
+        visited.append(step["route_model_override"])
+        if not budget.cascade_slot_consumed(had_text=False, error_detail="empty_content"):
+            continue
+        tried += 1
+    assert visited == models
 
 
 def test_crag_refine_skipped_when_compressed_or_low_budget():
