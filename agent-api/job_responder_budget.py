@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Soft wall-clock for generate: finish JSON before CF/proxy kills the connection.
 # Evidence (VPS 2026-08-27): openmodel urlopen default was 45s while FuturesTimeout was
@@ -47,8 +47,62 @@ GEMINI_RAG_MIN_BUDGET_SEC = 20.0
 GENERATE_HARD_WALL_SEC = 27.0
 
 # Explicit fast OpenModel slug - admin default kimi-k3 is too slow for CF soft budget.
-JR_OPENMODEL_FAST_MODEL = "claude-haiku-4-5-20251001"
-JR_OPENMODEL_FALLBACK_MODEL = "deepseek-v4-flash"
+JR_OPENMODEL_FAST_MODEL = "fable-5"
+JR_GEMINI_MODEL = "gemini-3.7-flash"
+JR_OPENMODEL_FALLBACK_MODEL = "claude-sonnet-4-6"
+# Cover output cap: enough for HH letter + contacts/links; still fail-fast per slice.
+COVER_MAX_TOKENS = 1200
+QA_MAX_TOKENS = 700
+COVER_TRUNCATION_RETRY_TOKENS = 900
+# One fat generate across uvicorn --workers 2 (lock lives in the generate thread).
+JR_GENERATE_LOCKFILE = "/tmp/autoro-jr-generate.lock"
+JR_GENERATE_EXECUTOR_WORKERS = 1
+JR_RELEVANCE_EXECUTOR_WORKERS = 2
+
+
+def generate_cascade_attempts() -> Tuple[Dict[str, Any], ...]:
+    """Sequential generate cascade: fable-5 → gemini-3.7-flash → sonnet-4-6."""
+    return (
+        {
+            "tier_override": "fast",
+            "route_provider_override": "openmodel",
+            "route_model_override": JR_OPENMODEL_FAST_MODEL,
+            "route_strict": True,
+        },
+        {
+            "tier_override": "fast",
+            "route_provider_override": "gemini",
+            "route_model_override": JR_GEMINI_MODEL,
+            "route_strict": True,
+        },
+        {
+            "tier_override": "fast",
+            "route_provider_override": "openmodel",
+            "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
+            "route_strict": True,
+        },
+    )
+
+
+def should_failover_empty_content(detail: str) -> bool:
+    """True when the last LLM call returned no text — try the next model immediately."""
+    d = str(detail or "").strip().lower()
+    return d in {"empty_content", "empty"} or "empty_content" in d
+
+
+def cascade_slot_consumed(*, had_text: bool, error_detail: str) -> bool:
+    """Timeouts/errors spend a cascade slot; empty_content does not (sequential failover)."""
+    if had_text:
+        return True
+    return not should_failover_empty_content(error_detail)
+
+
+def cover_output_tokens(*, mode: str, tokens_override: Optional[int] = None) -> int:
+    if tokens_override is not None:
+        return max(1, int(tokens_override))
+    if str(mode or "") in {"qa", "question_answers"}:
+        return QA_MAX_TOKENS
+    return COVER_MAX_TOKENS
 
 
 def should_attempt_mini_profile_retry(*, has_text: bool, remaining_sec: float) -> bool:
@@ -67,7 +121,7 @@ def choose_profile_cap(source_count: int) -> Tuple[int, bool]:
 
 
 def cascade_max_providers(*, profile_compressed: bool, remaining_sec: float, is_retry: bool = False) -> int:
-    """How many cascade steps (haiku → deepseek → gemini) fit in remaining soft budget.
+    """How many cascade steps (fable-5 → gemini → sonnet) fit in remaining soft budget.
 
     Each step uses a short HTTP timeout so a hung key/provider fails fast and rotates
     instead of burning one urlopen until CF 502. Mini-profile retry stays single-step.

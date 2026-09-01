@@ -15,12 +15,47 @@ const JR_API = (() => {
 
   function networkFailMessage(kind, url, detail) {
     const path = String(url || '').split('?')[0];
-    const hint =
-      kind === 'relevance'
-        ? 'Проверьте сеть и что API доступен (swoop.autoro.tech). Затем Reload расширения.'
-        : 'Проверьте сеть / VPN и базовый URL API, затем повторите.';
     const extra = detail && !/failed to fetch/i.test(detail) ? ` (${detail})` : '';
-    return `Нет ответа от сервера${extra}: ${path}. ${hint}`;
+    if (kind === 'relevance') {
+      return (
+        `Нет ответа от сервера${extra}: ${path}. ` +
+        'Повторите «Оценить предложение» — оценка дешёвая и не требует Reload.'
+      );
+    }
+    return `Нет ответа от сервера${extra}: ${path}. Проверьте сеть / VPN и базовый URL API, затем повторите.`;
+  }
+
+  let fatRequestTail = Promise.resolve();
+
+  function enqueueFatRequest(task) {
+    const run = fatRequestTail.then(task, task);
+    fatRequestTail = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  function isFatJobResponderPost(url, errorKind) {
+    const u = String(url || '');
+    if (errorKind === 'generate' || errorKind === 'upload') return true;
+    if (/\/job-responder\/generate(?:\?|$|\/)/i.test(u)) return true;
+    if (/\/job-responder\/relevance\/batch/i.test(u)) return true;
+    if (/file-capture|drive-import|text-capture|link-capture|\/optimize/i.test(u)) return true;
+    return false;
+  }
+
+  function shouldRetryGateway(status, raw, kind) {
+    if (kind !== 'relevance' && kind !== 'generate') return false;
+    const code = Number(status) || 0;
+    if ([408, 425, 429, 502, 503, 504, 524].includes(code)) return true;
+    if ((code < 200 || code >= 300) && looksLikeHtml(raw)) return true;
+    if (looksLikeHtml(raw) && (code === 0 || code === 200)) return true;
+    return false;
+  }
+
+  function retryDelayMs(attempt) {
+    return Math.min(1600, 400 * (attempt + 1));
   }
 
   /** Prefer service-worker fetch (host_permissions); fall back to page fetch. */
@@ -98,21 +133,34 @@ const JR_API = (() => {
   }
 
   async function fetchJson(url, options = {}) {
-    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
     const errorKind = options.errorKind || inferErrorKind(url);
-    const retries = Number(options.retries) >= 0 ? Number(options.retries) : errorKind === 'relevance' ? 1 : 0;
+    const run = () => fetchJsonAttemptLoop(url, options, errorKind);
+    if (isFatJobResponderPost(url, errorKind)) {
+      return enqueueFatRequest(run);
+    }
+    return run();
+  }
+
+  async function fetchJsonAttemptLoop(url, options, errorKind) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 45000;
+    const defaultRetries = errorKind === 'relevance' ? 3 : errorKind === 'generate' ? 1 : 0;
+    const retries = Number(options.retries) >= 0 ? Number(options.retries) : defaultRetries;
     const { timeoutMs: _ignored, errorKind: _kindIgnored, retries: _retriesIgnored, ...fetchOpts } = options;
 
     let lastFail = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const result = await rawFetchViaExtension(url, fetchOpts, timeoutMs);
       if (result.aborted) {
+        if (errorKind === 'relevance' && attempt < retries) {
+          await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
+          continue;
+        }
         throw new Error(localTimeoutMessage(errorKind, timeoutMs));
       }
       if (!result.ok || result.proxyError) {
         lastFail = result.error || result.proxyError || 'Failed to fetch';
         if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+          await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
           continue;
         }
         throw new Error(networkFailMessage(errorKind, url, lastFail));
@@ -121,9 +169,17 @@ const JR_API = (() => {
       const raw = result.raw || '';
       const data = result.data;
       if (status < 200 || status >= 300) {
+        if (shouldRetryGateway(status, raw, errorKind) && attempt < retries) {
+          await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
+          continue;
+        }
         throw new Error(formatApiError(status, data, raw, url, errorKind));
       }
       if (data == null && looksLikeHtml(raw)) {
+        if (shouldRetryGateway(status, raw, errorKind) && attempt < retries) {
+          await new Promise((r) => setTimeout(r, retryDelayMs(attempt)));
+          continue;
+        }
         throw new Error(gatewayMessage(status, errorKind));
       }
       return data || {};
@@ -195,7 +251,7 @@ const JR_API = (() => {
     if (kind === 'relevance') {
       return (
         `Сервер оценки не ответил (HTTP ${code}). ` +
-        'Нажмите «Оценить предложение» ещё раз.'
+        'Повторите «Оценить предложение» — Reload не нужен.'
       );
     }
     return `Сервер не ответил (HTTP ${code}). Повторите попытку.`;
@@ -493,9 +549,8 @@ const JR_API = (() => {
         ...(eff ? { effectivenessPrompt: eff } : {}),
         ...(useLlmEffectiveness === true ? { useLlmEffectiveness: true } : {}),
       }),
-      timeoutMs: 30000,
+      timeoutMs: 12000,
       errorKind: 'relevance',
-      retries: 1,
     });
   }
 
@@ -507,9 +562,8 @@ const JR_API = (() => {
       method: 'POST',
       headers,
       body: JSON.stringify({ workspaceId, vacancies, selectedSourceIds }),
-      timeoutMs: 60000,
+      timeoutMs: 45000,
       errorKind: 'relevance',
-      retries: 1,
     });
   }
 

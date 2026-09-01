@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
+import functools
 import hashlib
 import html as html_lib
 import json
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -22,8 +25,6 @@ from urllib.request import urlopen
 from fastapi import BackgroundTasks, Header, HTTPException, Request
 from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-import os
 
 from kb_file_ingest import MAX_FILE_BYTES, sanitize_extracted_text
 from job_responder_format import (
@@ -225,17 +226,24 @@ from job_responder_budget import (
     COMPACT_PROFILE_CHARS_RETRY,
     COVER_TEMPLATE_CHARS,
     COVER_TEMPLATE_CHARS_RETRY,
+    COVER_TRUNCATION_RETRY_MIN_SEC,
+    COVER_TRUNCATION_RETRY_TOKENS,
     GEMINI_RAG_EARLY_SEC,
     GEMINI_RAG_MIN_BUDGET_SEC,
-    COVER_TRUNCATION_RETRY_MIN_SEC,
     GENERATE_BUDGET_SEC,
     GENERATE_HARD_WALL_SEC,
+    JR_GENERATE_EXECUTOR_WORKERS,
+    JR_GENERATE_LOCKFILE,
+    JR_GEMINI_MODEL,
     JR_OPENMODEL_FAST_MODEL,
-    JR_OPENMODEL_FALLBACK_MODEL,
+    JR_RELEVANCE_EXECUTOR_WORKERS,
     LLM_PROVIDER_CAP_SEC,
     PROMPT_EXTRA_PRESSURE_CHARS,
     cascade_max_providers,
+    cascade_slot_consumed,
     choose_profile_cap,
+    cover_output_tokens,
+    generate_cascade_attempts,
     provider_timeout_for,
     should_attempt_mini_profile_retry,
     should_shrink_for_pressure,
@@ -281,8 +289,16 @@ LINK_PREVIEW_TIMEOUT_SEC = 5.0
 LINK_PREVIEW_MAX = 5
 EMBED_REQUEST_TIMEOUT_SEC = 6.0
 GEMINI_RAG_COOLDOWN_SEC = 120.0
-# gemini-2.0-flash is retired (404). Prefer current catalog flash.
-JR_GEMINI_MODEL = "gemini-3.5-flash"
+# Dedicated pools so long generate cannot occupy uvicorn's event loop / default executor.
+# workers=2: generate serialized via lockfile so the other worker stays free for /relevance.
+JR_GENERATE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(1, int(JR_GENERATE_EXECUTOR_WORKERS)),
+    thread_name_prefix="jr-gen",
+)
+JR_RELEVANCE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(1, int(JR_RELEVANCE_EXECUTOR_WORKERS)),
+    thread_name_prefix="jr-rel",
+)
 # Process-local: skip File Search briefly after a hang so cascade stays fast.
 _gemini_rag_last_timeout_mono = 0.0
 # Debounce background KB optimize so ingest bursts don't starve generate workers.
@@ -2089,6 +2105,26 @@ def call_with_timeout(fn, timeout_sec: float, *args, **kwargs):
         raise
     pool.shutdown(wait=True)
     return result
+
+
+def run_serialized_generate(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """At most one fat /generate across uvicorn workers. Wait happens in this thread, not the event loop."""
+    path = str(os.environ.get("JR_GENERATE_LOCKFILE") or JR_GENERATE_LOCKFILE)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+async def run_in_jr_executor(executor: ThreadPoolExecutor, fn: Callable[..., Any], *args: Any, **kwargs: Any):
+    loop = asyncio.get_running_loop()
+    bound = functools.partial(fn, *args, **kwargs)
+    return await loop.run_in_executor(executor, bound)
 
 
 def cap_rag_items(rows: List[Dict[str, Any]], *, max_n: int = SELECTED_SOURCES_MAX) -> Tuple[List[Dict[str, Any]], bool]:
@@ -5690,12 +5726,11 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         """Deterministic semantic relevance. Never LLM. Always JSON (no origin 502 HTML)."""
         started = time.monotonic()
         try:
-            auth_ctx = _auth(request, x_api_key, authorization)
-            workspace_id = _parse_workspace_id(payload.workspaceId)
-            _guard_workspace(auth_ctx, workspace_id)
-            vacancy = payload.vacancy.to_score_vacancy()
-
             def _compute() -> Dict[str, Any]:
+                auth_ctx = _auth(request, x_api_key, authorization)
+                workspace_id = _parse_workspace_id(payload.workspaceId)
+                _guard_workspace(auth_ctx, workspace_id)
+                vacancy = payload.vacancy.to_score_vacancy()
                 conn = pg_connect()
                 try:
                     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -5729,7 +5764,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 scored["elapsedSec"] = round(time.monotonic() - started, 3)
                 return scored
 
-            return await asyncio.to_thread(_compute)
+            return await run_in_jr_executor(JR_RELEVANCE_EXECUTOR, _compute)
         except HTTPException:
             raise
         except Exception as exc:
@@ -5757,21 +5792,21 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         """Score many HH search-list cards vs Resume KB (deterministic, zero LLM)."""
         started = time.monotonic()
         try:
-            auth_ctx = _auth(request, x_api_key, authorization)
-            workspace_id = _parse_workspace_id(payload.workspaceId)
-            _guard_workspace(auth_ctx, workspace_id)
-
-            vacancies = list(payload.vacancies or [])[:80]
-            if not vacancies:
-                return {
-                    "ok": True,
-                    "scores": [],
-                    "workspaceId": str(workspace_id),
-                    "count": 0,
-                    "message": "empty vacancies",
-                }
-
             def _compute_batch() -> Dict[str, Any]:
+                auth_ctx = _auth(request, x_api_key, authorization)
+                workspace_id = _parse_workspace_id(payload.workspaceId)
+                _guard_workspace(auth_ctx, workspace_id)
+
+                vacancies = list(payload.vacancies or [])[:80]
+                if not vacancies:
+                    return {
+                        "ok": True,
+                        "scores": [],
+                        "workspaceId": str(workspace_id),
+                        "count": 0,
+                        "message": "empty vacancies",
+                    }
+
                 conn = pg_connect()
                 try:
                     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -5863,7 +5898,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     "elapsedSec": round(time.monotonic() - started, 3),
                 }
 
-            return await asyncio.to_thread(_compute_batch)
+            return await run_in_jr_executor(JR_RELEVANCE_EXECUTOR, _compute_batch)
         except HTTPException:
             raise
         except Exception as exc:
@@ -5969,11 +6004,13 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
         started = time.monotonic()
         deadline = started + GENERATE_BUDGET_SEC
         workspace_id_out = str(getattr(payload, "workspaceId", "") or "")
-        # Run blocking LLM/DB work off the event loop. With uvicorn --workers 2,
-        # sync generate previously starved both workers → nginx/CF HTML 502.
+        # Dedicated generate executor (max 1 thread) + cross-worker lockfile.
+        # Event loop stays free so /relevance on the other worker cannot 502.
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(
+                run_in_jr_executor(
+                    JR_GENERATE_EXECUTOR,
+                    run_serialized_generate,
                     _job_responder_generate_impl,
                     payload=payload,
                     request=request,
@@ -6203,31 +6240,9 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-            # Cover ~550 keeps full letter under CF; 360 truncated mid-word (e.g. "сценарии использ").
-            default_tokens = 700 if mode == "question_answers" else 550
-            max_tokens = int(tokens_override) if tokens_override else default_tokens
-            # Cascade: haiku → gemini → deepseek. VPS: deepseek often empty_content after
-            # haiku hang; gemini must run before cascade:max_providers cuts the list.
-            attempts = (
-                {
-                    "tier_override": "fast",
-                    "route_provider_override": "openmodel",
-                    "route_model_override": JR_OPENMODEL_FAST_MODEL,
-                    "route_strict": True,
-                },
-                {
-                    "tier_override": "fast",
-                    "route_provider_override": "gemini",
-                    "route_model_override": JR_GEMINI_MODEL,
-                    "route_strict": True,
-                },
-                {
-                    "tier_override": "fast",
-                    "route_provider_override": "openmodel",
-                    "route_model_override": JR_OPENMODEL_FALLBACK_MODEL,
-                    "route_strict": True,
-                },
-            )
+            # Cover COVER_MAX_TOKENS=1200; empty_content sequentially failovers (does not spend a slot).
+            max_tokens = cover_output_tokens(mode=mode, tokens_override=tokens_override)
+            attempts = generate_cascade_attempts()
             chat_result = None
             last_err = ""
             tried = 0
@@ -6252,7 +6267,6 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     last_err = "timeout"
                     provider_errors.append(f"{provider}:no_time")
                     break
-                tried += 1
                 http_cap = max(5.0, min(t_cap - 0.5, LLM_PROVIDER_CAP_SEC))
                 try:
                     chat_result = call_with_timeout(
@@ -6266,6 +6280,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     )
                 except FuturesTimeout:
                     last_err = "timeout"
+                    tried += 1
                     provider_errors.append(f"{provider}/{model_label}:timeout>{t_cap:.0f}s")
                     _LOG.warning(
                         "generate provider timeout provider=%s model=%s timeout=%.1f profile=%d remaining=%.1f",
@@ -6280,6 +6295,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     continue
                 except Exception as exc:
                     last_err = f"{type(exc).__name__}: {exc}"
+                    tried += 1
                     provider_errors.append(
                         f"{provider}/{model_label}:{type(exc).__name__}:{str(exc)[:80]}"
                     )
@@ -6288,15 +6304,16 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                     continue
                 if chat_result and str(getattr(chat_result, "content", None) or "").strip():
                     return chat_result, "", compact_text, has_template
-                empty_detail = "empty"
-                if chat_result is not None:
-                    empty_detail = "empty_content"
+                empty_detail = "empty_content" if chat_result is not None else "empty"
                 last_err = last_err or empty_detail
                 provider_errors.append(f"{provider}/{model_label}:{empty_detail}")
                 chat_result = None
+                # Sequential failover: empty_content does not consume a cascade slot.
+                if cascade_slot_consumed(had_text=False, error_detail=empty_detail):
+                    tried += 1
             return chat_result, last_err, compact_text, has_template
 
-        # Rotate on hang/empty: haiku → gemini → deepseek (short HTTP caps; wall ≤ ~24–27s).
+        # Rotate on hang/empty: fable-5 → gemini-3.7-flash → sonnet-4-6 (short HTTP caps).
         first_max_providers = cascade_max_providers(
             profile_compressed=profile_compressed,
             remaining_sec=deadline - time.monotonic(),
@@ -6442,7 +6459,7 @@ def register_job_responder_routes(app, deps: Dict[str, Any]) -> None:
                 retry_cover,
                 max_providers=1,
                 is_retry=True,
-                tokens_override=650,
+                tokens_override=COVER_TRUNCATION_RETRY_TOKENS,
             )
             retry_text = str(getattr(chat_retry, "content", None) or "").strip() if chat_retry else ""
             if retry_text and (
